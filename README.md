@@ -27,7 +27,7 @@ Pull the published image and run it:
 docker run --rm \
   -p 3714:3714 \
   -e STUB_MODE=true \
-  ghcr.io/pete-builds/mcp-unifi:0.1.0
+  ghcr.io/pete-builds/mcp-unifi:0.2.0
 ```
 
 The server starts in **stub mode** by default, which returns realistic mock data and requires no UniFi hardware. Register it with Claude Code:
@@ -46,7 +46,7 @@ docker run --rm \
   -e STUB_MODE=false \
   -e UNIFI_HOST=192.168.1.1 \
   -e UNIFI_API_KEY=<your-local-api-key> \
-  ghcr.io/pete-builds/mcp-unifi:0.1.0
+  ghcr.io/pete-builds/mcp-unifi:0.2.0
 ```
 
 Generate the API key under **Settings → Control Plane → Integrations** on the gateway.
