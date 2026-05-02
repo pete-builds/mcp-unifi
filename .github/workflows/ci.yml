@@ -63,7 +63,7 @@ jobs:
         run: pytest --cov-report=term --cov-report=xml --cov-fail-under=80
 
       - name: Upload coverage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-xml
           path: coverage.xml
@@ -91,7 +91,7 @@ jobs:
       - name: Save image for scan job
         run: docker save mcp-unifi:ci -o /tmp/mcp-unifi.tar
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: docker-image
           path: /tmp/mcp-unifi.tar
