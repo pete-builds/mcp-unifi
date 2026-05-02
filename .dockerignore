@@ -1,0 +1,60 @@
+# Version control
+.git
+.gitignore
+.gitattributes
+
+# CI / hosting
+.github
+
+# Python build & cache
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+.coverage.*
+coverage.xml
+htmlcov
+.tox
+.nox
+*.egg-info
+*.egg
+build
+dist
+.eggs
+
+# Virtual envs
+.venv
+venv
+env
+
+# IDE / OS
+.vscode
+.idea
+.DS_Store
+*.swp
+
+# Tests + dev-only files
+tests
+docker-compose.override.yml
+docker-compose.example.yml
+
+# Docs that don't belong in the image
+SESSION-RESUME.md
+CHANGELOG.md
+SECURITY.md
+LICENSE
+
+# Local secrets — never bake these into a layer
+.env
+.env.*
+!.env.example
+
+# Pipfile / poetry artefacts (we use plain pip + locks)
+Pipfile
+Pipfile.lock
+poetry.lock

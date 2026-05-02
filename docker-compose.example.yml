@@ -1,0 +1,36 @@
+# Example: build the image locally instead of pulling from GHCR.
+# Drop this in as docker-compose.yml (or docker-compose.override.yml) when you
+# want to hack on the source without publishing a new image.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  mcp-unifi:
+    build: .
+    image: mcp-unifi:dev
+    container_name: mcp-unifi
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16M
+    ports:
+      - "${MCP_PORT:-3714}:${MCP_PORT:-3714}"
+    env_file:
+      - .env
+    environment:
+      MCP_HOST: "0.0.0.0"
+      MCP_PORT: "${MCP_PORT:-3714}"
+      TZ: "${TZ:-UTC}"
+      LOG_FORMAT: "text"
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD", "python", "-m", "mcp_unifi.healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
