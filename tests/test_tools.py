@@ -190,6 +190,89 @@ async def test_list_port_profiles_stub(stub_server: FastMCP) -> None:
 
 
 # ---------------------------------------------------------------------------
+# update_wlan, delete_wlan, delete_firewall_rule, list_clients (new in 0.2.0)
+# ---------------------------------------------------------------------------
+
+
+async def test_update_wlan_stub(stub_server: FastMCP, stub_state: StubState) -> None:
+    wlan_id = stub_state.list_wlans()[0]["_id"]
+    result = await _call(
+        stub_server,
+        "update_wlan",
+        {"wlan_id": wlan_id, "updates": {"name": "Renamed", "hide_ssid": True}},
+    )
+    assert result["name"] == "Renamed"
+    assert result["hide_ssid"] is True
+
+
+async def test_update_wlan_redacts_passphrase(stub_server: FastMCP, stub_state: StubState) -> None:
+    """Updating x_passphrase via update_wlan should redact in the response."""
+    wlan_id = stub_state.list_wlans()[0]["_id"]
+    result = await _call(
+        stub_server,
+        "update_wlan",
+        {"wlan_id": wlan_id, "updates": {"x_passphrase": "rotated-secret-xyz"}},
+    )
+    assert result["x_passphrase"] == "[REDACTED]"
+    assert "rotated-secret-xyz" not in json.dumps(result)
+
+
+async def test_update_wlan_missing(stub_server: FastMCP) -> None:
+    result = await _call(
+        stub_server,
+        "update_wlan",
+        {"wlan_id": "ghost", "updates": {"name": "X"}},
+    )
+    assert "not found" in result["error"]
+
+
+async def test_delete_wlan_stub(stub_server: FastMCP, stub_state: StubState) -> None:
+    wlan_id = stub_state.list_wlans()[0]["_id"]
+    result = await _call(stub_server, "delete_wlan", {"wlan_id": wlan_id})
+    assert result["deleted"] is True
+    assert result["wlan_id"] == wlan_id
+    assert stub_state.list_wlans() == []
+
+
+async def test_delete_wlan_missing(stub_server: FastMCP) -> None:
+    result = await _call(stub_server, "delete_wlan", {"wlan_id": "ghost"})
+    assert result["deleted"] is False
+
+
+async def test_delete_firewall_rule_stub(stub_server: FastMCP, stub_state: StubState) -> None:
+    rule_id = stub_state.list_firewall_rules()[0]["_id"]
+    result = await _call(stub_server, "delete_firewall_rule", {"rule_id": rule_id})
+    assert result["deleted"] is True
+    assert result["rule_id"] == rule_id
+    assert stub_state.list_firewall_rules() == []
+
+
+async def test_delete_firewall_rule_missing(stub_server: FastMCP) -> None:
+    result = await _call(stub_server, "delete_firewall_rule", {"rule_id": "ghost"})
+    assert result["deleted"] is False
+
+
+async def test_list_clients_stub(stub_server: FastMCP) -> None:
+    """Stub mode should return a realistic mix of wireless and wired clients."""
+    clients = await _call(stub_server, "list_clients")
+    assert isinstance(clients, list)
+    assert 3 <= len(clients) <= 5
+    by_mac = {c["mac"]: c for c in clients}
+    # Required fields on every client
+    for c in clients:
+        assert {"_id", "mac", "hostname", "ip", "is_wired", "last_seen"}.issubset(c)
+    # At least one wireless client with signal/satisfaction
+    wireless = [c for c in clients if not c["is_wired"]]
+    assert wireless, "stub data should include at least one wireless client"
+    assert all("signal" in c and "satisfaction" in c for c in wireless)
+    # At least one wired client
+    wired = [c for c in clients if c["is_wired"]]
+    assert wired, "stub data should include at least one wired client"
+    # Sanity: known seed MACs are present
+    assert "aa:bb:cc:00:00:01" in by_mac
+
+
+# ---------------------------------------------------------------------------
 # create_iot_network — happy path + every rollback path
 # ---------------------------------------------------------------------------
 
@@ -507,6 +590,83 @@ async def test_real_create_firewall_rule(real_server: FastMCP) -> None:
         {"name": "R", "ruleset": "LAN_IN", "action": "drop"},
     )
     assert result["_id"] == "f1"
+
+
+@respx.mock
+async def test_real_update_wlan(real_server: FastMCP) -> None:
+    respx.put(f"{BASE}/rest/wlanconf/w1").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "w1", "name": "Renamed"}]})
+    )
+    result = await _call(
+        real_server,
+        "update_wlan",
+        {"wlan_id": "w1", "updates": {"name": "Renamed"}},
+    )
+    assert result["name"] == "Renamed"
+
+
+@respx.mock
+async def test_real_delete_wlan(real_server: FastMCP) -> None:
+    respx.delete(f"{BASE}/rest/wlanconf/w1").mock(return_value=httpx.Response(200))
+    result = await _call(real_server, "delete_wlan", {"wlan_id": "w1"})
+    assert result["deleted"] is True
+    assert result["wlan_id"] == "w1"
+
+
+@respx.mock
+async def test_real_delete_firewall_rule(real_server: FastMCP) -> None:
+    respx.delete(f"{BASE}/rest/firewallrule/r1").mock(return_value=httpx.Response(200))
+    result = await _call(real_server, "delete_firewall_rule", {"rule_id": "r1"})
+    assert result["deleted"] is True
+    assert result["rule_id"] == "r1"
+
+
+@respx.mock
+async def test_real_list_clients(real_server: FastMCP) -> None:
+    respx.get(f"{BASE}/stat/sta").mock(
+        return_value=httpx.Response(
+            200,
+            json={"data": [{"_id": "c1", "mac": "aa:bb:cc:00:00:01", "is_wired": False}]},
+        )
+    )
+    result = await _call(real_server, "list_clients")
+    assert result[0]["_id"] == "c1"
+
+
+@respx.mock
+async def test_real_list_clients_handles_500(real_server: FastMCP) -> None:
+    respx.get(f"{BASE}/stat/sta").mock(return_value=httpx.Response(500))
+    result = await _call(real_server, "list_clients")
+    assert "error" in result
+
+
+@respx.mock
+async def test_real_update_wlan_handles_404(real_server: FastMCP) -> None:
+    respx.put(f"{BASE}/rest/wlanconf/missing").mock(
+        return_value=httpx.Response(404, text="not found")
+    )
+    result = await _call(
+        real_server,
+        "update_wlan",
+        {"wlan_id": "missing", "updates": {"name": "X"}},
+    )
+    assert "error" in result
+
+
+@respx.mock
+async def test_real_delete_wlan_handles_409(real_server: FastMCP) -> None:
+    respx.delete(f"{BASE}/rest/wlanconf/w1").mock(return_value=httpx.Response(409, text="in use"))
+    result = await _call(real_server, "delete_wlan", {"wlan_id": "w1"})
+    assert "error" in result
+
+
+@respx.mock
+async def test_real_delete_firewall_rule_handles_404(real_server: FastMCP) -> None:
+    respx.delete(f"{BASE}/rest/firewallrule/missing").mock(
+        return_value=httpx.Response(404, text="not found")
+    )
+    result = await _call(real_server, "delete_firewall_rule", {"rule_id": "missing"})
+    assert "error" in result
 
 
 # ---------------------------------------------------------------------------

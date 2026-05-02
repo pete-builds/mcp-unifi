@@ -144,6 +144,96 @@ def _seed_port_profiles() -> list[UniFiRecord]:
     ]
 
 
+def _seed_clients() -> list[UniFiRecord]:
+    """Realistic snapshot of clients on a small home network.
+
+    Field names follow the legacy controller ``/stat/sta`` shape: a mix of
+    wireless and wired clients, with signal/satisfaction populated only for
+    wireless. Last-seen timestamps fan out across the past day so callers can
+    test recency filters meaningfully.
+    """
+    now = _ts()
+    return [
+        {
+            "_id": _oid(),
+            "mac": "aa:bb:cc:00:00:01",
+            "hostname": "petes-laptop",
+            "name": "Pete's MacBook",
+            "ip": "192.168.1.101",
+            "is_wired": False,
+            "network": "Default",
+            "essid": "Home",
+            "ap_mac": "f4:e2:c6:00:00:02",
+            "channel": 36,
+            "radio": "na",
+            "signal": -52,
+            "rssi": 42,
+            "satisfaction": 96,
+            "tx_rate": 866000,
+            "rx_rate": 866000,
+            "uptime": 14523,
+            "last_seen": now - 5,
+            "first_seen": now - 14523,
+        },
+        {
+            "_id": _oid(),
+            "mac": "aa:bb:cc:00:00:02",
+            "hostname": "iphone-15",
+            "name": "iPhone 15",
+            "ip": "192.168.1.102",
+            "is_wired": False,
+            "network": "Default",
+            "essid": "Home",
+            "ap_mac": "f4:e2:c6:00:00:02",
+            "channel": 36,
+            "radio": "na",
+            "signal": -64,
+            "rssi": 30,
+            "satisfaction": 88,
+            "tx_rate": 433000,
+            "rx_rate": 433000,
+            "uptime": 86342,
+            "last_seen": now - 12,
+            "first_seen": now - 86342,
+        },
+        {
+            "_id": _oid(),
+            "mac": "aa:bb:cc:00:00:03",
+            "hostname": "nas",
+            "name": "Synology NAS",
+            "ip": "192.168.1.10",
+            "is_wired": True,
+            "network": "Default",
+            "sw_mac": "f4:e2:c6:00:00:01",
+            "sw_port": 5,
+            "uptime": 2580412,
+            "last_seen": now - 1,
+            "first_seen": now - 2580412,
+        },
+        {
+            "_id": _oid(),
+            "mac": "aa:bb:cc:00:00:04",
+            "hostname": "echo-dot",
+            "name": "Echo Dot",
+            "ip": "192.168.1.150",
+            "is_wired": False,
+            "network": "Default",
+            "essid": "Home",
+            "ap_mac": "f4:e2:c6:00:00:02",
+            "channel": 6,
+            "radio": "ng",
+            "signal": -71,
+            "rssi": 23,
+            "satisfaction": 72,
+            "tx_rate": 144400,
+            "rx_rate": 144400,
+            "uptime": 432198,
+            "last_seen": now - 30,
+            "first_seen": now - 432198,
+        },
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Stub state container
 # ---------------------------------------------------------------------------
@@ -164,6 +254,7 @@ class StubState:
         self.wlans: list[UniFiRecord] = _seed_wlans(default_net_id)
         self.firewall_rules: list[UniFiRecord] = _seed_firewall_rules()
         self.port_profiles: list[UniFiRecord] = _seed_port_profiles()
+        self.clients: list[UniFiRecord] = _seed_clients()
 
     # ----- Devices --------------------------------------------------------
     def list_devices(self) -> list[UniFiRecord]:
@@ -207,6 +298,15 @@ class StubState:
         self.wlans.append(record)
         return record
 
+    def update_wlan(self, wlan_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        for wlan in self.wlans:
+            if wlan.get("_id") == wlan_id:
+                wlan.update(patch)
+                if "x_passphrase" in wlan:
+                    wlan["x_passphrase"] = "[REDACTED]"  # noqa: S105 - redaction sentinel
+                return wlan
+        return None
+
     def delete_wlan(self, wlan_id: str) -> bool:
         before = len(self.wlans)
         self.wlans = [w for w in self.wlans if w.get("_id") != wlan_id]
@@ -229,6 +329,10 @@ class StubState:
     # ----- Port profiles --------------------------------------------------
     def list_port_profiles(self) -> list[UniFiRecord]:
         return self.port_profiles
+
+    # ----- Clients --------------------------------------------------------
+    def list_clients(self) -> list[UniFiRecord]:
+        return self.clients
 
 
 # Module-level singleton — server.py imports this directly so create/update/

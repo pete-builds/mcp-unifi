@@ -155,6 +155,9 @@ class UniFiClient:
     async def create_wlan(self, payload: dict[str, Any]) -> UniFiRecord:
         return self._first_record(await self._post("/rest/wlanconf", payload))
 
+    async def update_wlan(self, wlan_id: str, payload: dict[str, Any]) -> UniFiRecord:
+        return self._first_record(await self._put(f"/rest/wlanconf/{wlan_id}", payload))
+
     async def delete_wlan(self, wlan_id: str) -> bool:
         await self._delete(f"/rest/wlanconf/{wlan_id}")
         return True
@@ -171,3 +174,12 @@ class UniFiClient:
 
     async def list_port_profiles(self) -> list[UniFiRecord]:
         return await self._get("/rest/portconf") or []
+
+    async def list_clients(self) -> list[UniFiRecord]:
+        """Return currently active wireless and wired clients on the gateway.
+
+        Wraps the ``/stat/sta`` endpoint, which the controller uses to power the
+        Insights → Clients view. Returns an empty list when no clients are
+        connected (e.g. fresh deployment).
+        """
+        return await self._get("/stat/sta") or []

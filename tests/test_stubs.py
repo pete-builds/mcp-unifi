@@ -13,6 +13,7 @@ def test_seed_data_present(stub_state: StubState) -> None:
     assert len(stub_state.list_wlans()) == 1
     assert len(stub_state.list_firewall_rules()) == 1
     assert len(stub_state.list_port_profiles()) == 2
+    assert 3 <= len(stub_state.list_clients()) <= 5
 
 
 def test_each_instance_is_independent() -> None:
@@ -90,6 +91,31 @@ def test_delete_wlan(stub_state: StubState) -> None:
     assert stub_state.delete_wlan(rec["_id"]) is False
 
 
+def test_update_wlan_patches_existing(stub_state: StubState) -> None:
+    net = stub_state.list_networks()[0]
+    rec = stub_state.create_wlan(
+        {"name": "Pre", "x_passphrase": "p1", "networkconf_id": net["_id"]}
+    )
+    updated = stub_state.update_wlan(rec["_id"], {"name": "Post", "hide_ssid": True})
+    assert updated is not None
+    assert updated["name"] == "Post"
+    assert updated["hide_ssid"] is True
+
+
+def test_update_wlan_returns_none_when_missing(stub_state: StubState) -> None:
+    assert stub_state.update_wlan("nonexistent", {"name": "X"}) is None
+
+
+def test_update_wlan_redacts_passphrase_on_change(stub_state: StubState) -> None:
+    net = stub_state.list_networks()[0]
+    rec = stub_state.create_wlan(
+        {"name": "Pre", "x_passphrase": "old-secret", "networkconf_id": net["_id"]}
+    )
+    updated = stub_state.update_wlan(rec["_id"], {"x_passphrase": "rotated-secret"})
+    assert updated is not None
+    assert updated["x_passphrase"] == "[REDACTED]"
+
+
 # ---------------------------------------------------------------------------
 # Firewall CRUD
 # ---------------------------------------------------------------------------
@@ -127,8 +153,28 @@ def test_delete_firewall_rule(stub_state: StubState) -> None:
         "list_wlans",
         "list_firewall_rules",
         "list_port_profiles",
+        "list_clients",
     ],
 )
 def test_list_methods_return_lists(stub_state: StubState, method: str) -> None:
     result = getattr(stub_state, method)()
     assert isinstance(result, list)
+
+
+# ---------------------------------------------------------------------------
+# Clients seed shape
+# ---------------------------------------------------------------------------
+
+
+def test_clients_seed_mix_of_wireless_and_wired(stub_state: StubState) -> None:
+    clients = stub_state.list_clients()
+    assert any(not c["is_wired"] for c in clients), "expected at least one wireless"
+    assert any(c["is_wired"] for c in clients), "expected at least one wired"
+
+
+def test_wireless_clients_have_signal_metrics(stub_state: StubState) -> None:
+    for c in stub_state.list_clients():
+        if not c["is_wired"]:
+            assert "signal" in c
+            assert "satisfaction" in c
+            assert "ap_mac" in c

@@ -1,9 +1,9 @@
 """MCP UniFi — local-API gateway management for self-hosted UniFi.
 
-Eleven tools covering devices, networks/VLANs, WLANs, firewall rules, switch
-port profiles, and a higher-level :func:`create_iot_network` that provisions a
-fully isolated IoT VLAN + SSID + firewall block in one call (with rollback on
-partial failure).
+Fifteen tools covering devices, networks/VLANs, WLANs (CRUD), firewall rules
+(CRUD), switch port profiles, connected clients, and a higher-level
+:func:`create_iot_network` that provisions a fully isolated IoT VLAN + SSID +
+firewall block in one call (with rollback on partial failure).
 
 Stub mode (``STUB_MODE=true``, default) returns realistic mock payloads so the
 server is useful before the gateway hardware is on the network. Flip
@@ -70,7 +70,7 @@ def build_server(
     stub: StubState | None = None,
     unifi: UniFiClient | None = None,
 ) -> FastMCP:
-    """Construct a FastMCP instance with all 11 tools wired up.
+    """Construct a FastMCP instance with all 15 tools wired up.
 
     Tests use this to build an isolated server bound to a custom ``StubState``
     or a mocked ``UniFiClient`` (via ``respx``) without touching module-level
@@ -307,6 +307,56 @@ def build_server(
             return err(str(exc))
 
     @mcp.tool()
+    async def update_wlan(wlan_id: str, updates: dict[str, Any]) -> str:
+        """Update fields on an existing WiFi SSID.
+
+        Only the fields you supply are changed; everything else is preserved.
+        Passphrases are accepted via the ``x_passphrase`` key in ``updates``
+        and are redacted in the response.
+
+        Args:
+            wlan_id: The ``_id`` from list_wlans.
+            updates: Partial WLAN record. Common keys: name, enabled,
+                x_passphrase, wpa_mode, hide_ssid, wlan_band, is_guest.
+
+        Returns:
+            JSON of the updated WLAN record, or error if not found.
+        """
+        try:
+            if settings.stub_mode:
+                updated = state.update_wlan(wlan_id, updates)
+                if updated is None:
+                    return err(f"wlan {wlan_id} not found")
+                return _format(updated)
+            assert client is not None
+            return _format(await client.update_wlan(wlan_id, updates))
+        except UniFiError as exc:
+            logger.exception("update_wlan failed", extra={"wlan_id": wlan_id})
+            return err(str(exc))
+
+    @mcp.tool()
+    async def delete_wlan(wlan_id: str) -> str:
+        """Delete a WiFi SSID.
+
+        Args:
+            wlan_id: The ``_id`` from list_wlans.
+
+        Returns:
+            JSON ``{"deleted": true, "wlan_id": "..."}`` on success, or an
+            error object if the gateway rejects the request.
+        """
+        try:
+            if settings.stub_mode:
+                ok = state.delete_wlan(wlan_id)
+                return _format({"deleted": ok, "wlan_id": wlan_id})
+            assert client is not None
+            await client.delete_wlan(wlan_id)
+            return _format({"deleted": True, "wlan_id": wlan_id})
+        except UniFiError as exc:
+            logger.exception("delete_wlan failed", extra={"wlan_id": wlan_id})
+            return err(str(exc))
+
+    @mcp.tool()
     async def list_firewall_rules() -> str:
         """List all firewall rules on the gateway.
 
@@ -386,6 +436,28 @@ def build_server(
             return err(str(exc))
 
     @mcp.tool()
+    async def delete_firewall_rule(rule_id: str) -> str:
+        """Delete a firewall rule.
+
+        Args:
+            rule_id: The ``_id`` from list_firewall_rules.
+
+        Returns:
+            JSON ``{"deleted": true, "rule_id": "..."}`` on success, or an
+            error object if the gateway rejects the request.
+        """
+        try:
+            if settings.stub_mode:
+                ok = state.delete_firewall_rule(rule_id)
+                return _format({"deleted": ok, "rule_id": rule_id})
+            assert client is not None
+            await client.delete_firewall_rule(rule_id)
+            return _format({"deleted": True, "rule_id": rule_id})
+        except UniFiError as exc:
+            logger.exception("delete_firewall_rule failed", extra={"rule_id": rule_id})
+            return err(str(exc))
+
+    @mcp.tool()
     async def list_port_profiles() -> str:
         """List switch port profiles configured on the gateway.
 
@@ -403,6 +475,27 @@ def build_server(
             return _format(await client.list_port_profiles())
         except UniFiError as exc:
             logger.exception("list_port_profiles failed")
+            return err(str(exc))
+
+    @mcp.tool()
+    async def list_clients() -> str:
+        """List currently active wireless and wired clients on the gateway.
+
+        Returns the same data the controller's Insights → Clients view shows:
+        MAC, hostname, IP, network, signal/satisfaction (wireless only), AP
+        or switch port (when wired), and uptime/last_seen timestamps.
+
+        Returns:
+            JSON list of client records. Empty list if no clients are
+            connected.
+        """
+        try:
+            if settings.stub_mode:
+                return _format(state.list_clients())
+            assert client is not None
+            return _format(await client.list_clients())
+        except UniFiError as exc:
+            logger.exception("list_clients failed")
             return err(str(exc))
 
     @mcp.tool()

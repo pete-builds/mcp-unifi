@@ -7,9 +7,11 @@
 [![MCP](https://img.shields.io/badge/MCP-Streamable%20HTTP-brightgreen.svg)](https://modelcontextprotocol.io/)
 [![Coverage](https://img.shields.io/badge/coverage-95%25-brightgreen.svg)](#tests)
 
-An [MCP server](https://modelcontextprotocol.io/) for self-hosted UniFi gateway management. Eleven tools covering devices, networks/VLANs, WiFi SSIDs, firewall rules, switch port profiles, plus a one-shot `create_iot_network` tool that provisions an isolated IoT subnet (VLAN, SSID, and firewall block) in a single call with automatic rollback on partial failure.
+An [MCP server](https://modelcontextprotocol.io/) for self-hosted UniFi gateway management. Fifteen tools covering devices, networks/VLANs, WiFi SSIDs (full CRUD), firewall rules (full CRUD), switch port profiles, connected clients, plus a one-shot `create_iot_network` tool that provisions an isolated IoT subnet (VLAN, SSID, and firewall block) in a single call with automatic rollback on partial failure.
 
 Built on FastMCP with Streamable HTTP transport. Talks to a UCG-Fiber, UDM Pro, or any other UniFi OS gateway via the local API key. No Site Manager / cloud account required.
+
+Every tool returns JSON. Errors come back as a structured `{"error": "...", "stub_mode": bool}` object so the MCP loop never crashes on a gateway hiccup.
 
 ## Why
 
@@ -60,9 +62,13 @@ Generate the API key under **Settings → Control Plane → Integrations** on th
 | `delete_vlan` | `(network_id)` | Delete a VLAN. |
 | `list_wlans` | `()` | List all WiFi SSIDs. |
 | `create_wlan` | `(name, passphrase, network_id, security?, wpa_mode?, is_guest?, hide_ssid?, wlan_band?)` | Create a new SSID bound to a specific VLAN. |
+| `update_wlan` | `(wlan_id, updates)` | Patch fields on an existing SSID (name, passphrase, hide_ssid, etc.). |
+| `delete_wlan` | `(wlan_id)` | Delete a WiFi SSID. |
 | `list_firewall_rules` | `()` | List all firewall rules. |
 | `create_firewall_rule` | `(name, ruleset, action, rule_index?, protocol?, src_address?, dst_address?, src_networkconf_id?, dst_networkconf_id?, enabled?)` | Create a firewall rule. |
+| `delete_firewall_rule` | `(rule_id)` | Delete a firewall rule. |
 | `list_port_profiles` | `()` | List switch port profiles (PoE mode, native VLAN, forwarding). |
+| `list_clients` | `()` | List currently connected wireless and wired clients (MAC, hostname, IP, signal/satisfaction, AP or switch port, uptime). |
 | `create_iot_network` | `(name, vlan_id, passphrase, main_lan_subnet?, subnet?, isolate?, hide_ssid?)` | One-shot: VLAN + SSID + isolation rule, with rollback on failure. |
 
 Every tool returns a JSON string. Errors are returned as a structured `{"error": "...", "stub_mode": bool}` object so Claude can render the failure without crashing the MCP loop.

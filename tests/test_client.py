@@ -122,9 +122,34 @@ async def test_create_wlan(client: UniFiClient) -> None:
 
 
 @respx.mock
+async def test_update_wlan_uses_put(client: UniFiClient) -> None:
+    route = respx.put(f"{BASE}/rest/wlanconf/w1").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "w1", "name": "Renamed"}]})
+    )
+    result = await client.update_wlan("w1", {"name": "Renamed"})
+    assert route.called
+    assert result["name"] == "Renamed"
+
+
+@respx.mock
 async def test_delete_wlan(client: UniFiClient) -> None:
     respx.delete(f"{BASE}/rest/wlanconf/w1").mock(return_value=httpx.Response(200))
     assert await client.delete_wlan("w1") is True
+
+
+@respx.mock
+async def test_list_clients(client: UniFiClient) -> None:
+    respx.get(f"{BASE}/stat/sta").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "c1", "mac": "aa:bb:cc:00:00:01"}]})
+    )
+    result = await client.list_clients()
+    assert result[0]["_id"] == "c1"
+
+
+@respx.mock
+async def test_list_clients_empty(client: UniFiClient) -> None:
+    respx.get(f"{BASE}/stat/sta").mock(return_value=httpx.Response(200, json={"data": []}))
+    assert await client.list_clients() == []
 
 
 @respx.mock

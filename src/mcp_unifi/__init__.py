@@ -1,8 +1,9 @@
 """mcp-unifi — MCP server for self-hosted UniFi gateways.
 
-Eleven tools covering devices, networks/VLANs, WLANs, firewall rules, switch
-port profiles, and a one-shot ``create_iot_network`` composite that provisions
-an isolated IoT subnet in a single call.
+Fifteen tools covering devices, networks/VLANs, WLANs (full CRUD), firewall
+rules (full CRUD), switch port profiles, connected clients, and a one-shot
+``create_iot_network`` composite that provisions an isolated IoT subnet in a
+single call.
 
 Stub mode (``STUB_MODE=true``, default) returns realistic in-memory mock data
 so the server is useful before any UniFi hardware is on the network. Flip
