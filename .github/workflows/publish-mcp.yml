@@ -1,0 +1,50 @@
+name: Publish to MCP Registry
+
+# Publishes server.json to the official Model Context Protocol Registry
+# (https://registry.modelcontextprotocol.io). Uses OIDC for authentication
+# so no secrets are needed beyond the default GITHUB_TOKEN.
+#
+# Triggers:
+#   - On v*.*.* tag push (after the Release workflow has built the image)
+#   - Manual via workflow_dispatch
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: publish-mcp-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish server.json to MCP Registry
+    runs-on: ubuntu-latest
+    # If triggered by a tag push, give the Release workflow time to publish
+    # the image to GHCR before the registry tries to verify the OCI label.
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install mcp-publisher
+        run: |
+          set -euo pipefail
+          OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+          ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_${OS}_${ARCH}.tar.gz" \
+            | tar xz mcp-publisher
+          ./mcp-publisher --help
+
+      - name: Authenticate (GitHub OIDC)
+        run: ./mcp-publisher login github-oidc
+
+      - name: Validate server.json
+        run: ./mcp-publisher validate
+
+      - name: Publish to MCP Registry
+        run: ./mcp-publisher publish
