@@ -1,0 +1,61 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.pete-builds/unifi",
+  "title": "UniFi Gateway",
+  "description": "Self-hosted UniFi gateway management: VLANs, WLANs, firewall, clients, DHCP, observability.",
+  "repository": {
+    "url": "https://github.com/pete-builds/mcp-unifi",
+    "source": "github"
+  },
+  "version": "0.3.0",
+  "websiteUrl": "https://github.com/pete-builds/mcp-unifi",
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/pete-builds/mcp-unifi:0.3.0",
+      "transport": {
+        "type": "streamable-http",
+        "url": "http://localhost:3714/mcp"
+      },
+      "runtimeHint": "docker",
+      "environmentVariables": [
+        {
+          "name": "STUB_MODE",
+          "description": "When true, the server returns realistic mock data and requires no UniFi hardware. Defaults to true so the image is functional out of the box.",
+          "isRequired": false,
+          "default": "true",
+          "format": "string",
+          "choices": ["true", "false"]
+        },
+        {
+          "name": "UNIFI_HOST",
+          "description": "IP address or hostname of the UniFi OS gateway (UCG-Fiber, UDM Pro, etc). Required when STUB_MODE=false.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "UNIFI_API_KEY",
+          "description": "Local API key generated under Settings -> Control Plane -> Integrations on the gateway. Required when STUB_MODE=false.",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "UNIFI_SITE",
+          "description": "UniFi controller site name. Defaults to 'default'.",
+          "isRequired": false,
+          "default": "default",
+          "format": "string"
+        },
+        {
+          "name": "UNIFI_VERIFY_SSL",
+          "description": "Whether to verify the gateway's TLS certificate. Defaults to false because most home gateways use a self-signed cert.",
+          "isRequired": false,
+          "default": "false",
+          "format": "string",
+          "choices": ["true", "false"]
+        }
+      ]
+    }
+  ]
+}

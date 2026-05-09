@@ -1,9 +1,14 @@
 """MCP UniFi — local-API gateway management for self-hosted UniFi.
 
-Fifteen tools covering devices, networks/VLANs, WLANs (CRUD), firewall rules
-(CRUD), switch port profiles, connected clients, and a higher-level
-:func:`create_iot_network` that provisions a fully isolated IoT VLAN + SSID +
-firewall block in one call (with rollback on partial failure).
+Forty-one tools covering devices, networks/VLANs, WLANs (CRUD), firewall rules
+(CRUD), switch port profiles (CRUD), connected clients (block/unblock/
+reconnect), per-port state (PoE + enable + profile assignment), static DHCP
+leases (CRUD), port forwarding (CRUD), site health, WAN status, events,
+alarms, speed tests, DPI top talkers, and four composite operations:
+:func:`create_iot_network`, :func:`provision_homelab_service`,
+:func:`quarantine_client`, :func:`create_guest_network`, and the read-only
+:func:`audit_open_ports`. Composites with multiple write steps roll back on
+partial failure.
 
 Stub mode (``STUB_MODE=true``, default) returns realistic mock payloads so the
 server is useful before the gateway hardware is on the network. Flip
@@ -436,6 +441,34 @@ def build_server(
             return err(str(exc))
 
     @mcp.tool()
+    async def update_firewall_rule(rule_id: str, updates: dict[str, Any]) -> str:
+        """Update fields on an existing firewall rule.
+
+        Only the fields you supply are changed. Common partial keys:
+        ``enabled``, ``action``, ``protocol``, ``rule_index``, ``src_address``,
+        ``dst_address``, ``src_networkconf_id``, ``dst_networkconf_id``,
+        ``name``.
+
+        Args:
+            rule_id: The ``_id`` from ``list_firewall_rules``.
+            updates: Partial firewall-rule record.
+
+        Returns:
+            JSON of the updated rule, or an error if not found.
+        """
+        try:
+            if settings.stub_mode:
+                updated = state.update_firewall_rule(rule_id, updates)
+                if updated is None:
+                    return err(f"firewall rule {rule_id} not found")
+                return _format(updated)
+            assert client is not None
+            return _format(await client.update_firewall_rule(rule_id, updates))
+        except UniFiError as exc:
+            logger.exception("update_firewall_rule failed", extra={"rule_id": rule_id})
+            return err(str(exc))
+
+    @mcp.tool()
     async def delete_firewall_rule(rule_id: str) -> str:
         """Delete a firewall rule.
 
@@ -478,6 +511,98 @@ def build_server(
             return err(str(exc))
 
     @mcp.tool()
+    async def create_port_profile(
+        name: str,
+        native_networkconf_id: str = "",
+        forward: str = "all",
+        poe_mode: str = "auto",
+        tagged_networkconf_ids: list[str] | None = None,
+    ) -> str:
+        """Create a new switch port profile.
+
+        Port profiles define how a switch port behaves: which VLAN is native,
+        which are tagged, whether PoE is on, and how traffic is forwarded.
+
+        Args:
+            name: Display name for the profile.
+            native_networkconf_id: ``_id`` of the native (untagged) network.
+                Empty for trunk ports.
+            forward: ``"all"`` (default), ``"native"``, ``"customize"``, or
+                ``"disabled"``.
+            poe_mode: ``"auto"`` (default), ``"passive24v"``, ``"passthrough"``,
+                or ``"off"``.
+            tagged_networkconf_ids: Optional list of network ``_id``s carried as
+                tagged VLANs.
+
+        Returns:
+            JSON of the created profile (with assigned ``_id``).
+        """
+        payload: dict[str, Any] = {
+            "name": name,
+            "forward": forward,
+            "poe_mode": poe_mode,
+        }
+        if native_networkconf_id:
+            payload["native_networkconf_id"] = native_networkconf_id
+        if tagged_networkconf_ids:
+            payload["tagged_networkconf_ids"] = tagged_networkconf_ids
+        try:
+            if settings.stub_mode:
+                return _format(state.create_port_profile(payload))
+            assert client is not None
+            return _format(await client.create_port_profile(payload))
+        except UniFiError as exc:
+            logger.exception("create_port_profile failed", extra={"name": name})
+            return err(str(exc))
+
+    @mcp.tool()
+    async def update_port_profile(profile_id: str, updates: dict[str, Any]) -> str:
+        """Update fields on an existing port profile.
+
+        Args:
+            profile_id: The ``_id`` from ``list_port_profiles``.
+            updates: Partial profile record. Common keys: ``name``, ``forward``,
+                ``poe_mode``, ``native_networkconf_id``, ``tagged_networkconf_ids``.
+
+        Returns:
+            JSON of the updated profile, or an error if not found.
+        """
+        try:
+            if settings.stub_mode:
+                updated = state.update_port_profile(profile_id, updates)
+                if updated is None:
+                    return err(f"port profile {profile_id} not found")
+                return _format(updated)
+            assert client is not None
+            return _format(await client.update_port_profile(profile_id, updates))
+        except UniFiError as exc:
+            logger.exception("update_port_profile failed", extra={"profile_id": profile_id})
+            return err(str(exc))
+
+    @mcp.tool()
+    async def delete_port_profile(profile_id: str) -> str:
+        """Delete a switch port profile.
+
+        Args:
+            profile_id: The ``_id`` from ``list_port_profiles``. The controller
+                will reject the delete if any switch port still references the
+                profile.
+
+        Returns:
+            JSON ``{"deleted": true, "profile_id": "..."}`` on success.
+        """
+        try:
+            if settings.stub_mode:
+                ok = state.delete_port_profile(profile_id)
+                return _format({"deleted": ok, "profile_id": profile_id})
+            assert client is not None
+            await client.delete_port_profile(profile_id)
+            return _format({"deleted": True, "profile_id": profile_id})
+        except UniFiError as exc:
+            logger.exception("delete_port_profile failed", extra={"profile_id": profile_id})
+            return err(str(exc))
+
+    @mcp.tool()
     async def list_clients() -> str:
         """List currently active wireless and wired clients on the gateway.
 
@@ -496,6 +621,546 @@ def build_server(
             return _format(await client.list_clients())
         except UniFiError as exc:
             logger.exception("list_clients failed")
+            return err(str(exc))
+
+    # ------------------------------------------------------------------
+    # Tier 2 — high-frequency client and device ops
+    # ------------------------------------------------------------------
+
+    @mcp.tool()
+    async def block_client(mac: str) -> str:
+        """Block a client by MAC. The client cannot rejoin until unblocked.
+
+        Args:
+            mac: Client MAC address (e.g. ``"aa:bb:cc:00:00:01"``).
+
+        Returns:
+            JSON of the blocked client record, or an error if not found.
+        """
+        try:
+            if settings.stub_mode:
+                blocked = state.block_client(mac)
+                if blocked is None:
+                    return err(f"client {mac} not found")
+                return _format(blocked)
+            assert client is not None
+            return _format(await client.block_client(mac))
+        except UniFiError as exc:
+            logger.exception("block_client failed", extra={"mac": mac})
+            return err(str(exc))
+
+    @mcp.tool()
+    async def unblock_client(mac: str) -> str:
+        """Unblock a previously-blocked client by MAC.
+
+        Args:
+            mac: Client MAC address.
+
+        Returns:
+            JSON of the unblocked client record, or an error if not found.
+        """
+        try:
+            if settings.stub_mode:
+                unblocked = state.unblock_client(mac)
+                if unblocked is None:
+                    return err(f"client {mac} not found")
+                return _format(unblocked)
+            assert client is not None
+            return _format(await client.unblock_client(mac))
+        except UniFiError as exc:
+            logger.exception("unblock_client failed", extra={"mac": mac})
+            return err(str(exc))
+
+    @mcp.tool()
+    async def reconnect_client(mac: str) -> str:
+        """Force a client to reconnect (kick-sta).
+
+        Useful for fixing a stuck client without having to power-cycle it.
+
+        Args:
+            mac: Client MAC address.
+
+        Returns:
+            JSON ``{"reconnected": true, "mac": "..."}`` on success.
+        """
+        try:
+            if settings.stub_mode:
+                ok = state.reconnect_client(mac)
+                return _format({"reconnected": ok, "mac": mac})
+            assert client is not None
+            await client.reconnect_client(mac)
+            return _format({"reconnected": True, "mac": mac})
+        except UniFiError as exc:
+            logger.exception("reconnect_client failed", extra={"mac": mac})
+            return err(str(exc))
+
+    @mcp.tool()
+    async def restart_device(mac: str) -> str:
+        """Restart an adopted UniFi device (gateway, AP, or switch).
+
+        Args:
+            mac: Device MAC address (from ``list_devices``).
+
+        Returns:
+            JSON ``{"restarted": true, "mac": "..."}`` on success.
+        """
+        try:
+            if settings.stub_mode:
+                ok = state.restart_device(mac)
+                if not ok:
+                    return err(f"device {mac} not found")
+                return _format({"restarted": True, "mac": mac})
+            assert client is not None
+            await client.restart_device(mac)
+            return _format({"restarted": True, "mac": mac})
+        except UniFiError as exc:
+            logger.exception("restart_device failed", extra={"mac": mac})
+            return err(str(exc))
+
+    @mcp.tool()
+    async def locate_device(mac: str, on: bool = True) -> str:
+        """Toggle the LED locate beacon on a device.
+
+        Helpful for finding which physical AP or switch maps to a record in the
+        controller.
+
+        Args:
+            mac: Device MAC address.
+            on: ``True`` (default) flashes the LED; ``False`` stops the flash.
+
+        Returns:
+            JSON ``{"locating": bool, "mac": "..."}`` on success.
+        """
+        try:
+            if settings.stub_mode:
+                ok = state.locate_device(mac, on)
+                if not ok:
+                    return err(f"device {mac} not found")
+                return _format({"locating": on, "mac": mac})
+            assert client is not None
+            await client.locate_device(mac, on)
+            return _format({"locating": on, "mac": mac})
+        except UniFiError as exc:
+            logger.exception("locate_device failed", extra={"mac": mac})
+            return err(str(exc))
+
+    @mcp.tool()
+    async def set_port_state(
+        device_mac: str,
+        port_idx: int,
+        enable: bool | None = None,
+        poe_mode: str = "",
+        portconf_id: str = "",
+    ) -> str:
+        """Override settings on a single switch port.
+
+        UniFi switches store per-port overrides on the device record. This tool
+        modifies one port's ``enable``, ``poe_mode``, and/or ``portconf_id``
+        without touching the others.
+
+        Args:
+            device_mac: Switch MAC address (from ``list_devices``).
+            port_idx: 1-based port index.
+            enable: ``True`` to bring the port up, ``False`` to disable. Pass
+                ``None`` (the default) to leave it unchanged.
+            poe_mode: ``"auto"``, ``"passive24v"``, ``"passthrough"``, ``"off"``,
+                or empty to leave unchanged.
+            portconf_id: ``_id`` of a port profile to apply, or empty to leave
+                unchanged.
+
+        Returns:
+            JSON of the updated port record, or an error if device/port not found.
+        """
+        if enable is None and not poe_mode and not portconf_id:
+            return err("set_port_state requires at least one of enable, poe_mode, portconf_id")
+        try:
+            if settings.stub_mode:
+                updated = state.set_port_state(
+                    device_mac,
+                    port_idx,
+                    enable=enable,
+                    poe_mode=poe_mode or None,
+                    portconf_id=portconf_id or None,
+                )
+                if updated is None:
+                    return err(f"device {device_mac} or port {port_idx} not found")
+                return _format(updated)
+
+            assert client is not None
+            # Real mode: read the device, merge overrides, PUT back.
+            device = state.find_device_by_mac(device_mac) if settings.stub_mode else None
+            # In real mode we have to look up the device id from /stat/device.
+            devices = await client.list_devices()
+            target = next((d for d in devices if d.get("mac") == device_mac), device)
+            if target is None:
+                return err(f"device {device_mac} not found")
+            device_id = target.get("_id")
+            if not device_id:
+                return err(f"device {device_mac} has no _id")
+            existing = list(target.get("port_overrides") or [])
+            override: dict[str, Any] = {"port_idx": port_idx}
+            if enable is not None:
+                override["enable"] = enable
+            if poe_mode:
+                override["poe_mode"] = poe_mode
+            if portconf_id:
+                override["portconf_id"] = portconf_id
+            # Replace any existing override for this port_idx.
+            existing = [o for o in existing if o.get("port_idx") != port_idx]
+            existing.append(override)
+            return _format(await client.set_port_state(device_id, existing))
+        except UniFiError as exc:
+            logger.exception(
+                "set_port_state failed",
+                extra={"mac": device_mac, "port_idx": port_idx},
+            )
+            return err(str(exc))
+
+    # ------------------------------------------------------------------
+    # Tier 2 — static DHCP leases
+    # ------------------------------------------------------------------
+
+    @mcp.tool()
+    async def list_dhcp_leases() -> str:
+        """List static DHCP reservations on the gateway.
+
+        UniFi stores fixed leases on the user object with ``use_fixedip=true``.
+        This returns just those entries.
+
+        Returns:
+            JSON list of lease records: ``_id``, ``mac``, ``name``,
+            ``hostname``, ``fixed_ip``, ``network_id``.
+        """
+        try:
+            if settings.stub_mode:
+                return _format(state.list_dhcp_leases())
+            assert client is not None
+            return _format(await client.list_dhcp_leases())
+        except UniFiError as exc:
+            logger.exception("list_dhcp_leases failed")
+            return err(str(exc))
+
+    @mcp.tool()
+    async def create_static_dhcp_lease(
+        mac: str,
+        ip: str,
+        network_id: str,
+        name: str = "",
+        hostname: str = "",
+    ) -> str:
+        """Reserve a fixed IP for a client.
+
+        Args:
+            mac: Client MAC address.
+            ip: IPv4 address to reserve. Must fall inside the network's subnet.
+            network_id: ``_id`` of the network/VLAN this client lives on.
+            name: Friendly display name (optional).
+            hostname: DHCP hostname (optional).
+
+        Returns:
+            JSON of the created reservation.
+        """
+        payload: dict[str, Any] = {
+            "mac": mac,
+            "use_fixedip": True,
+            "fixed_ip": ip,
+            "network_id": network_id,
+        }
+        if name:
+            payload["name"] = name
+        if hostname:
+            payload["hostname"] = hostname
+        try:
+            if settings.stub_mode:
+                return _format(state.create_dhcp_lease(payload))
+            assert client is not None
+            return _format(await client.create_dhcp_lease(payload))
+        except UniFiError as exc:
+            logger.exception("create_static_dhcp_lease failed", extra={"mac": mac})
+            return err(str(exc))
+
+    @mcp.tool()
+    async def delete_static_dhcp_lease(lease_id: str) -> str:
+        """Delete a static DHCP reservation.
+
+        Args:
+            lease_id: The ``_id`` from ``list_dhcp_leases``.
+
+        Returns:
+            JSON ``{"deleted": true, "lease_id": "..."}``.
+        """
+        try:
+            if settings.stub_mode:
+                ok = state.delete_dhcp_lease(lease_id)
+                return _format({"deleted": ok, "lease_id": lease_id})
+            assert client is not None
+            await client.delete_dhcp_lease(lease_id)
+            return _format({"deleted": True, "lease_id": lease_id})
+        except UniFiError as exc:
+            logger.exception("delete_static_dhcp_lease failed", extra={"lease_id": lease_id})
+            return err(str(exc))
+
+    # ------------------------------------------------------------------
+    # Tier 2 — port forwarding (CRUD)
+    # ------------------------------------------------------------------
+
+    @mcp.tool()
+    async def list_port_forwards() -> str:
+        """List all port-forward (DNAT) rules.
+
+        Returns:
+            JSON list of records: ``_id``, ``name``, ``enabled``, ``proto``,
+            ``src``, ``fwd``, ``fwd_port``, ``dst_port``.
+        """
+        try:
+            if settings.stub_mode:
+                return _format(state.list_port_forwards())
+            assert client is not None
+            return _format(await client.list_port_forwards())
+        except UniFiError as exc:
+            logger.exception("list_port_forwards failed")
+            return err(str(exc))
+
+    @mcp.tool()
+    async def create_port_forward(
+        name: str,
+        fwd: str,
+        fwd_port: str,
+        dst_port: str,
+        proto: str = "tcp",
+        src: str = "any",
+        enabled: bool = True,
+        log: bool = False,
+    ) -> str:
+        """Create a port-forward (DNAT) rule.
+
+        Args:
+            name: Display name.
+            fwd: Internal IP to forward to.
+            fwd_port: Internal port (string; UniFi accepts ranges like
+                ``"8000-8010"``).
+            dst_port: External / WAN port to listen on.
+            proto: ``"tcp"``, ``"udp"``, or ``"tcp_udp"``.
+            src: Source restriction. ``"any"`` (default) or a CIDR.
+            enabled: ``True`` to enable immediately.
+            log: ``True`` to log forwarded packets.
+
+        Returns:
+            JSON of the created rule.
+        """
+        payload: dict[str, Any] = {
+            "name": name,
+            "fwd": fwd,
+            "fwd_port": fwd_port,
+            "dst_port": dst_port,
+            "proto": proto,
+            "src": src,
+            "enabled": enabled,
+            "log": log,
+        }
+        try:
+            if settings.stub_mode:
+                return _format(state.create_port_forward(payload))
+            assert client is not None
+            return _format(await client.create_port_forward(payload))
+        except UniFiError as exc:
+            logger.exception("create_port_forward failed", extra={"name": name})
+            return err(str(exc))
+
+    @mcp.tool()
+    async def update_port_forward(forward_id: str, updates: dict[str, Any]) -> str:
+        """Update a port-forward rule.
+
+        Args:
+            forward_id: The ``_id`` from ``list_port_forwards``.
+            updates: Partial record. Common keys: ``enabled``, ``fwd_port``,
+                ``dst_port``, ``proto``, ``src``, ``fwd``, ``name``.
+
+        Returns:
+            JSON of the updated rule, or an error if not found.
+        """
+        try:
+            if settings.stub_mode:
+                updated = state.update_port_forward(forward_id, updates)
+                if updated is None:
+                    return err(f"port forward {forward_id} not found")
+                return _format(updated)
+            assert client is not None
+            return _format(await client.update_port_forward(forward_id, updates))
+        except UniFiError as exc:
+            logger.exception("update_port_forward failed", extra={"forward_id": forward_id})
+            return err(str(exc))
+
+    @mcp.tool()
+    async def delete_port_forward(forward_id: str) -> str:
+        """Delete a port-forward rule.
+
+        Args:
+            forward_id: The ``_id`` from ``list_port_forwards``.
+
+        Returns:
+            JSON ``{"deleted": true, "forward_id": "..."}``.
+        """
+        try:
+            if settings.stub_mode:
+                ok = state.delete_port_forward(forward_id)
+                return _format({"deleted": ok, "forward_id": forward_id})
+            assert client is not None
+            await client.delete_port_forward(forward_id)
+            return _format({"deleted": True, "forward_id": forward_id})
+        except UniFiError as exc:
+            logger.exception("delete_port_forward failed", extra={"forward_id": forward_id})
+            return err(str(exc))
+
+    # ------------------------------------------------------------------
+    # Tier 3 — observability
+    # ------------------------------------------------------------------
+
+    @mcp.tool()
+    async def get_site_health() -> str:
+        """Per-subsystem health (wan, lan, wlan, www, vpn).
+
+        Returns:
+            JSON list with one record per subsystem: ``subsystem``, ``status``,
+            and subsystem-specific metrics (e.g. WAN throughput, LAN client
+            counts).
+        """
+        try:
+            if settings.stub_mode:
+                return _format(state.get_site_health())
+            assert client is not None
+            return _format(await client.get_site_health())
+        except UniFiError as exc:
+            logger.exception("get_site_health failed")
+            return err(str(exc))
+
+    @mcp.tool()
+    async def get_wan_status() -> str:
+        """Current WAN status: link state, ISP, public IP, throughput, latency.
+
+        Convenience wrapper around ``get_site_health`` that returns just the
+        WAN subsystem record.
+
+        Returns:
+            JSON object for the WAN subsystem, or ``{"subsystem": "wan",
+            "status": "unknown"}`` if not reported.
+        """
+        try:
+            if settings.stub_mode:
+                return _format(state.get_wan_status())
+            assert client is not None
+            health = await client.get_site_health()
+            for h in health:
+                if isinstance(h, dict) and h.get("subsystem") == "wan":
+                    return _format(h)
+            return _format({"subsystem": "wan", "status": "unknown"})
+        except UniFiError as exc:
+            logger.exception("get_wan_status failed")
+            return err(str(exc))
+
+    @mcp.tool()
+    async def list_events(limit: int = 50) -> str:
+        """List recent controller events (connections, disconnections, etc.).
+
+        Args:
+            limit: Max number of events to return (default 50, max 1000).
+
+        Returns:
+            JSON list of event records.
+        """
+        if not 1 <= limit <= 1000:
+            return err("limit must be between 1 and 1000")
+        try:
+            if settings.stub_mode:
+                return _format(state.list_events(limit))
+            assert client is not None
+            return _format(await client.list_events(limit))
+        except UniFiError as exc:
+            logger.exception("list_events failed")
+            return err(str(exc))
+
+    @mcp.tool()
+    async def list_alarms(limit: int = 50, archived: bool = False) -> str:
+        """List controller alarms.
+
+        Args:
+            limit: Max number of alarms to return (default 50, max 1000).
+            archived: ``True`` to list dismissed/archived alarms; ``False``
+                (default) for active alarms only.
+
+        Returns:
+            JSON list of alarm records.
+        """
+        if not 1 <= limit <= 1000:
+            return err("limit must be between 1 and 1000")
+        try:
+            if settings.stub_mode:
+                return _format(state.list_alarms(limit, archived))
+            assert client is not None
+            return _format(await client.list_alarms(limit, archived))
+        except UniFiError as exc:
+            logger.exception("list_alarms failed")
+            return err(str(exc))
+
+    @mcp.tool()
+    async def trigger_speedtest() -> str:
+        """Kick off a UniFi speed test on the WAN link.
+
+        The test runs server-side; this returns when the controller acks the
+        command. Use ``get_speedtest_results`` to read the results once the
+        test finishes (typically 30-60 seconds).
+
+        Returns:
+            JSON of the controller's response.
+        """
+        try:
+            if settings.stub_mode:
+                return _format(state.trigger_speedtest())
+            assert client is not None
+            return _format(await client.trigger_speedtest())
+        except UniFiError as exc:
+            logger.exception("trigger_speedtest failed")
+            return err(str(exc))
+
+    @mcp.tool()
+    async def get_speedtest_results(limit: int = 10) -> str:
+        """Return recent speed-test results, newest first.
+
+        Args:
+            limit: Max number of results to return (default 10).
+
+        Returns:
+            JSON list of speed-test records: ``time``, ``xput_up``,
+            ``xput_download``, ``latency``, ``server``.
+        """
+        if not 1 <= limit <= 1000:
+            return err("limit must be between 1 and 1000")
+        try:
+            if settings.stub_mode:
+                return _format(state.get_speedtest_results(limit))
+            assert client is not None
+            return _format(await client.get_speedtest_results(limit))
+        except UniFiError as exc:
+            logger.exception("get_speedtest_results failed")
+            return err(str(exc))
+
+    @mcp.tool()
+    async def list_top_talkers(limit: int = 10) -> str:
+        """Top clients by total bytes (DPI by-station report).
+
+        Returns:
+            JSON list ranked by ``total_bytes`` descending: ``mac``,
+            ``hostname``, ``ip``, ``tx_bytes``, ``rx_bytes``, ``total_bytes``.
+        """
+        if not 1 <= limit <= 1000:
+            return err("limit must be between 1 and 1000")
+        try:
+            if settings.stub_mode:
+                return _format(state.top_talkers(limit))
+            assert client is not None
+            return _format(await client.list_top_talkers(limit))
+        except UniFiError as exc:
+            logger.exception("list_top_talkers failed")
             return err(str(exc))
 
     @mcp.tool()
@@ -690,6 +1355,428 @@ def build_server(
                 **created,
             }
         )
+
+    # ------------------------------------------------------------------
+    # Tier 4 — composite operations
+    # ------------------------------------------------------------------
+
+    async def _delete_resource(kind: str, resource_id: str) -> bool:
+        """Best-effort cleanup helper shared by the composites."""
+        try:
+            if settings.stub_mode:
+                if kind == "network":
+                    return state.delete_network(resource_id)
+                if kind == "wlan":
+                    return state.delete_wlan(resource_id)
+                if kind == "firewall_rule":
+                    return state.delete_firewall_rule(resource_id)
+                if kind == "dhcp_lease":
+                    return state.delete_dhcp_lease(resource_id)
+                if kind == "port_forward":
+                    return state.delete_port_forward(resource_id)
+                return False
+            assert client is not None
+            if kind == "network":
+                return await client.delete_network(resource_id)
+            if kind == "wlan":
+                return await client.delete_wlan(resource_id)
+            if kind == "firewall_rule":
+                return await client.delete_firewall_rule(resource_id)
+            if kind == "dhcp_lease":
+                return await client.delete_dhcp_lease(resource_id)
+            if kind == "port_forward":
+                return await client.delete_port_forward(resource_id)
+            return False
+        except UniFiError as exc:
+            logger.error(
+                "rollback delete failed",
+                extra={"kind": kind, "resource_id": resource_id, "error": str(exc)},
+            )
+            return False
+
+    @mcp.tool()
+    async def provision_homelab_service(
+        name: str,
+        mac: str,
+        ip: str,
+        network_id: str,
+        ports: list[int] | None = None,
+        wan_expose: bool = False,
+    ) -> str:
+        """Stand up a homelab service end-to-end: lease + firewall allow + (optional) port forwards.
+
+        Creates a static DHCP reservation for ``mac`` at ``ip``, an
+        ``accept`` LAN_LOCAL firewall rule pinned to that IP for the requested
+        ports, and (when ``wan_expose=True``) one port-forward rule per port.
+        On any partial failure the tool **rolls back** what it created so far,
+        in reverse order.
+
+        Args:
+            name: Display name (used for both the lease and the firewall rule).
+            mac: Client MAC address.
+            ip: IPv4 address to reserve.
+            network_id: ``_id`` of the network/VLAN this service lives on.
+            ports: TCP ports the service listens on (e.g. ``[80, 443]``). Empty
+                list creates only the lease.
+            wan_expose: If ``True``, also create port-forward rules so the
+                service is reachable from the WAN. Default ``False`` (LAN-only).
+
+        Returns:
+            JSON with keys ``lease``, ``firewall_rule``, ``port_forwards``
+            (list). On failure the response includes ``error``, ``partial``
+            (what was created), and ``rolled_back`` (cleanup actions).
+        """
+        ports = ports or []
+        created: dict[str, Any] = {
+            "lease": None,
+            "firewall_rule": None,
+            "port_forwards": [],
+        }
+
+        async def _rollback(failed_step: str) -> list[dict[str, Any]]:
+            actions: list[dict[str, Any]] = []
+            for pf in reversed(created["port_forwards"]):
+                pf_id = pf.get("_id")
+                if pf_id:
+                    ok = await _delete_resource("port_forward", pf_id)
+                    actions.append({"port_forward": pf_id, "deleted": ok})
+            if created["firewall_rule"] and (fw_id := created["firewall_rule"].get("_id")):
+                ok = await _delete_resource("firewall_rule", fw_id)
+                actions.append({"firewall_rule": fw_id, "deleted": ok})
+            if created["lease"] and (lease_id := created["lease"].get("_id")):
+                ok = await _delete_resource("dhcp_lease", lease_id)
+                actions.append({"dhcp_lease": lease_id, "deleted": ok})
+            logger.warning(
+                "provision_homelab_service rolled back",
+                extra={"failed_step": failed_step, "rolled_back": actions},
+            )
+            return actions
+
+        async def _fail(step: str, exc: Exception) -> str:
+            rolled_back = await _rollback(step)
+            return _format(
+                {
+                    "error": f"provision_homelab_service failed at {step}: {exc}",
+                    "stub_mode": settings.stub_mode,
+                    "partial": created,
+                    "rolled_back": rolled_back,
+                }
+            )
+
+        # Step 1: lease
+        lease_payload: dict[str, Any] = {
+            "mac": mac,
+            "use_fixedip": True,
+            "fixed_ip": ip,
+            "network_id": network_id,
+            "name": name,
+        }
+        try:
+            if settings.stub_mode:
+                created["lease"] = state.create_dhcp_lease(lease_payload)
+            else:
+                assert client is not None
+                created["lease"] = await client.create_dhcp_lease(lease_payload)
+        except UniFiError as exc:
+            return await _fail("lease", exc)
+
+        # Step 2: firewall allow rule (LAN_LOCAL accept to the service IP)
+        if ports:
+            fw_payload: dict[str, Any] = {
+                "name": f"Allow {name}",
+                "ruleset": "LAN_LOCAL",
+                "rule_index": 2400,
+                "action": "accept",
+                "protocol": "tcp",
+                "enabled": True,
+                "dst_address": f"{ip}/32",
+                "dst_port": ",".join(str(p) for p in ports),
+            }
+            try:
+                if settings.stub_mode:
+                    created["firewall_rule"] = state.create_firewall_rule(fw_payload)
+                else:
+                    assert client is not None
+                    created["firewall_rule"] = await client.create_firewall_rule(fw_payload)
+            except UniFiError as exc:
+                return await _fail("firewall_rule", exc)
+
+        # Step 3: port forwards (optional)
+        if wan_expose and ports:
+            for port in ports:
+                pf_payload: dict[str, Any] = {
+                    "name": f"{name} :{port}",
+                    "fwd": ip,
+                    "fwd_port": str(port),
+                    "dst_port": str(port),
+                    "proto": "tcp",
+                    "src": "any",
+                    "enabled": True,
+                    "log": False,
+                }
+                try:
+                    if settings.stub_mode:
+                        created["port_forwards"].append(state.create_port_forward(pf_payload))
+                    else:
+                        assert client is not None
+                        created["port_forwards"].append(
+                            await client.create_port_forward(pf_payload)
+                        )
+                except UniFiError as exc:
+                    return await _fail("port_forward", exc)
+
+        return _format(
+            {
+                "summary": (
+                    f"Provisioned '{name}' at {ip}"
+                    + (f" with {len(ports)} port(s)" if ports else "")
+                    + (" (WAN-exposed)" if wan_expose and ports else "")
+                ),
+                **created,
+            }
+        )
+
+    @mcp.tool()
+    async def quarantine_client(mac: str, reason: str = "") -> str:
+        """Block a client and log the action with a reason.
+
+        Equivalent to ``block_client`` but appends a structured audit log
+        entry. The reason flows into structured logs for later forensics.
+
+        Args:
+            mac: Client MAC address.
+            reason: Free-form justification (kept in logs only).
+
+        Returns:
+            JSON ``{"quarantined": true, "mac": "...", "reason": "..."}``, or
+            an error if the client is not found.
+        """
+        try:
+            if settings.stub_mode:
+                blocked = state.block_client(mac)
+                if blocked is None:
+                    return err(f"client {mac} not found")
+            else:
+                assert client is not None
+                await client.block_client(mac)
+            logger.warning(
+                "client quarantined",
+                extra={"mac": mac, "reason": reason or "(none provided)"},
+            )
+            return _format({"quarantined": True, "mac": mac, "reason": reason})
+        except UniFiError as exc:
+            logger.exception("quarantine_client failed", extra={"mac": mac})
+            return err(str(exc))
+
+    @mcp.tool()
+    async def create_guest_network(
+        name: str,
+        ssid: str,
+        passphrase: str,
+        vlan_id: int,
+        main_lan_subnet: str = "192.168.1.0/24",
+        subnet: str = "",
+        schedule: str = "",
+        hide_ssid: bool = False,
+    ) -> str:
+        """One-shot guest network: VLAN + guest SSID + LAN_IN drop rule.
+
+        Like ``create_iot_network`` but provisions a *guest* SSID (client
+        isolation enabled by default) and supports an optional schedule string
+        echoed back in the SSID record.
+
+        Args:
+            name: Display name for the network record.
+            ssid: SSID to broadcast.
+            passphrase: WPA2 PSK (8-63 chars).
+            vlan_id: 802.1Q VLAN ID, 2-4094.
+            main_lan_subnet: CIDR of your main LAN. The drop rule blocks
+                guest → this subnet.
+            subnet: Override the guest subnet. Empty uses the IoT subnet
+                template (``10.0.<vlan>.0/24`` by default).
+            schedule: Optional schedule descriptor (controller field
+                ``schedule``). Empty = always on.
+            hide_ssid: ``True`` to suppress SSID broadcast (rare for guest).
+
+        Returns:
+            JSON with ``network``, ``wlan``, ``firewall_rule``. Rolls back on
+            partial failure (firewall → WLAN → VLAN).
+        """
+        if not 2 <= vlan_id <= 4094:
+            return err(f"vlan_id {vlan_id} out of range (2-4094)")
+
+        guest_subnet = subnet or settings.iot_subnet_template.format(vlan_id=vlan_id)
+        _, dhcp_start, dhcp_stop = _subnet_to_dhcp(
+            guest_subnet,
+            settings.iot_dhcp_start_offset,
+            settings.iot_dhcp_stop_offset,
+        )
+
+        created: dict[str, Any] = {
+            "network": None,
+            "wlan": None,
+            "firewall_rule": None,
+        }
+
+        async def _rollback(failed_step: str) -> list[dict[str, Any]]:
+            actions: list[dict[str, Any]] = []
+            if created["firewall_rule"] and (fw_id := created["firewall_rule"].get("_id")):
+                ok = await _delete_resource("firewall_rule", fw_id)
+                actions.append({"firewall_rule": fw_id, "deleted": ok})
+            if created["wlan"] and (wlan_id := created["wlan"].get("_id")):
+                ok = await _delete_resource("wlan", wlan_id)
+                actions.append({"wlan": wlan_id, "deleted": ok})
+            if created["network"] and (net_id := created["network"].get("_id")):
+                ok = await _delete_resource("network", net_id)
+                actions.append({"network": net_id, "deleted": ok})
+            logger.warning(
+                "create_guest_network rolled back",
+                extra={"failed_step": failed_step, "rolled_back": actions},
+            )
+            return actions
+
+        async def _fail(step: str, exc: Exception) -> str:
+            rolled_back = await _rollback(step)
+            return _format(
+                {
+                    "error": f"create_guest_network failed at {step}: {exc}",
+                    "stub_mode": settings.stub_mode,
+                    "partial": created,
+                    "rolled_back": rolled_back,
+                }
+            )
+
+        # VLAN — guest purpose
+        net_payload: dict[str, Any] = {
+            "name": name,
+            "purpose": "guest",
+            "vlan_enabled": True,
+            "vlan": vlan_id,
+            "ip_subnet": guest_subnet,
+            "dhcpd_enabled": True,
+            "dhcpd_start": dhcp_start,
+            "dhcpd_stop": dhcp_stop,
+            "enabled": True,
+        }
+        try:
+            if settings.stub_mode:
+                created["network"] = state.create_network(net_payload)
+            else:
+                assert client is not None
+                created["network"] = await client.create_network(net_payload)
+        except UniFiError as exc:
+            return await _fail("vlan", exc)
+
+        net_id = (created["network"] or {}).get("_id")
+        if not net_id:
+            return await _fail("vlan", UniFiError("VLAN created but no _id returned"))
+
+        # Guest WLAN
+        wlan_payload: dict[str, Any] = {
+            "name": ssid,
+            "enabled": True,
+            "security": "wpapsk",
+            "wpa_mode": "wpa2",
+            "x_passphrase": passphrase,
+            "networkconf_id": net_id,
+            "is_guest": True,
+            "hide_ssid": hide_ssid,
+            "wlan_band": "both",
+        }
+        if schedule:
+            wlan_payload["schedule"] = schedule
+        try:
+            if settings.stub_mode:
+                created["wlan"] = state.create_wlan(wlan_payload)
+            else:
+                assert client is not None
+                created["wlan"] = await client.create_wlan(wlan_payload)
+        except UniFiError as exc:
+            return await _fail("wlan", exc)
+
+        # Isolation rule
+        fw_payload: dict[str, Any] = {
+            "name": f"Block {name} -> Main LAN",
+            "ruleset": "LAN_IN",
+            "rule_index": 2000 + vlan_id,
+            "action": "drop",
+            "protocol": "all",
+            "enabled": True,
+            "src_address": guest_subnet,
+            "dst_address": main_lan_subnet,
+        }
+        try:
+            if settings.stub_mode:
+                created["firewall_rule"] = state.create_firewall_rule(fw_payload)
+            else:
+                assert client is not None
+                created["firewall_rule"] = await client.create_firewall_rule(fw_payload)
+        except UniFiError as exc:
+            return await _fail("firewall_rule", exc)
+
+        return _format(
+            {
+                "summary": (
+                    f"Guest network '{name}' (VLAN {vlan_id}) on {guest_subnet}"
+                    f"{' with schedule' if schedule else ''}"
+                ),
+                **created,
+            }
+        )
+
+    @mcp.tool()
+    async def audit_open_ports() -> str:
+        """Read-only audit of WAN-facing exposure.
+
+        Cross-references firewall rules and port forwards to summarise:
+        - Active port forwards (DNAT into the LAN).
+        - WAN_IN ``accept`` rules (anything reachable from the internet).
+
+        No writes, no rollback. Useful as a "did I leave something open?"
+        sanity check.
+
+        Returns:
+            JSON ``{"port_forwards": [...], "wan_accept_rules": [...],
+            "summary": "..."}``.
+        """
+        try:
+            if settings.stub_mode:
+                fw_rules = state.list_firewall_rules()
+                port_forwards = state.list_port_forwards()
+            else:
+                assert client is not None
+                fw_rules = await client.list_firewall_rules()
+                port_forwards = await client.list_port_forwards()
+
+            active_pfs = [pf for pf in port_forwards if pf.get("enabled", True)]
+            wan_accept_rules = [
+                r
+                for r in fw_rules
+                if isinstance(r, dict)
+                and r.get("ruleset", "").startswith("WAN_")
+                and r.get("action") == "accept"
+                and r.get("enabled", True)
+                and not (
+                    # Filter out the boilerplate "accept established/related" rule
+                    r.get("state_established") and r.get("state_related")
+                )
+            ]
+
+            summary_parts: list[str] = []
+            summary_parts.append(f"{len(active_pfs)} active port forward(s)")
+            summary_parts.append(f"{len(wan_accept_rules)} WAN accept rule(s)")
+            summary = "; ".join(summary_parts)
+
+            return _format(
+                {
+                    "port_forwards": active_pfs,
+                    "wan_accept_rules": wan_accept_rules,
+                    "summary": summary,
+                }
+            )
+        except UniFiError as exc:
+            logger.exception("audit_open_ports failed")
+            return err(str(exc))
 
     return mcp
 

@@ -1,13 +1,15 @@
 # mcp-unifi
 
+<!-- mcp-name: io.github.pete-builds/unifi -->
+
 [![CI](https://github.com/pete-builds/mcp-unifi/actions/workflows/ci.yml/badge.svg)](https://github.com/pete-builds/mcp-unifi/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/pete-builds/mcp-unifi)](https://github.com/pete-builds/mcp-unifi/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.13-blue.svg)](pyproject.toml)
 [![MCP](https://img.shields.io/badge/MCP-Streamable%20HTTP-brightgreen.svg)](https://modelcontextprotocol.io/)
-[![Coverage](https://img.shields.io/badge/coverage-95%25-brightgreen.svg)](#tests)
+[![Coverage](https://img.shields.io/badge/coverage-90%25-brightgreen.svg)](#tests)
 
-An [MCP server](https://modelcontextprotocol.io/) for self-hosted UniFi gateway management. Fifteen tools covering devices, networks/VLANs, WiFi SSIDs (full CRUD), firewall rules (full CRUD), switch port profiles, connected clients, plus a one-shot `create_iot_network` tool that provisions an isolated IoT subnet (VLAN, SSID, and firewall block) in a single call with automatic rollback on partial failure.
+An [MCP server](https://modelcontextprotocol.io/) for self-hosted UniFi gateway management. Forty-one tools covering devices, networks/VLANs, WiFi SSIDs (full CRUD), firewall rules (full CRUD), switch port profiles (full CRUD), per-client commands (block / unblock / reconnect / quarantine), per-port state (PoE + enable + profile assignment), static DHCP leases, port forwarding (full CRUD), site health, WAN status, events, alarms, speed tests, DPI top talkers, plus four composite tools with automatic rollback on partial failure: `create_iot_network`, `provision_homelab_service`, `create_guest_network`, and the read-only `audit_open_ports`.
 
 Built on FastMCP with Streamable HTTP transport. Talks to a UCG-Fiber, UDM Pro, or any other UniFi OS gateway via the local API key. No Site Manager / cloud account required.
 
@@ -27,7 +29,7 @@ Pull the published image and run it:
 docker run --rm \
   -p 3714:3714 \
   -e STUB_MODE=true \
-  ghcr.io/pete-builds/mcp-unifi:0.2.0
+  ghcr.io/pete-builds/mcp-unifi:0.3.0
 ```
 
 The server starts in **stub mode** by default, which returns realistic mock data and requires no UniFi hardware. Register it with Claude Code:
@@ -46,7 +48,7 @@ docker run --rm \
   -e STUB_MODE=false \
   -e UNIFI_HOST=192.168.1.1 \
   -e UNIFI_API_KEY=<your-local-api-key> \
-  ghcr.io/pete-builds/mcp-unifi:0.2.0
+  ghcr.io/pete-builds/mcp-unifi:0.3.0
 ```
 
 Generate the API key under **Settings → Control Plane → Integrations** on the gateway.
@@ -69,7 +71,35 @@ Generate the API key under **Settings → Control Plane → Integrations** on th
 | `delete_firewall_rule` | `(rule_id)` | Delete a firewall rule. |
 | `list_port_profiles` | `()` | List switch port profiles (PoE mode, native VLAN, forwarding). |
 | `list_clients` | `()` | List currently connected wireless and wired clients (MAC, hostname, IP, signal/satisfaction, AP or switch port, uptime). |
+| `update_firewall_rule` | `(rule_id, updates)` | Patch fields on an existing firewall rule. |
+| `create_port_profile` | `(name, native_networkconf_id?, forward?, poe_mode?, tagged_networkconf_ids?)` | Create a switch port profile. |
+| `update_port_profile` | `(profile_id, updates)` | Patch fields on a port profile. |
+| `delete_port_profile` | `(profile_id)` | Delete a port profile. |
+| `block_client` | `(mac)` | Block a client by MAC. |
+| `unblock_client` | `(mac)` | Unblock a previously-blocked client. |
+| `reconnect_client` | `(mac)` | Force a client to reconnect (kick-sta). |
+| `restart_device` | `(mac)` | Restart an adopted device (gateway, AP, or switch). |
+| `locate_device` | `(mac, on?)` | Toggle the LED locate beacon on a device. |
+| `set_port_state` | `(device_mac, port_idx, enable?, poe_mode?, portconf_id?)` | Override settings on one switch port (PoE, enable, profile). Real mode preserves other ports' overrides. |
+| `list_dhcp_leases` | `()` | List static DHCP reservations. |
+| `create_static_dhcp_lease` | `(mac, ip, network_id, name?, hostname?)` | Reserve a fixed IP for a client. |
+| `delete_static_dhcp_lease` | `(lease_id)` | Delete a static reservation. |
+| `list_port_forwards` | `()` | List all port-forward (DNAT) rules. |
+| `create_port_forward` | `(name, fwd, fwd_port, dst_port, proto?, src?, enabled?, log?)` | Create a port-forward rule. |
+| `update_port_forward` | `(forward_id, updates)` | Patch a port-forward rule. |
+| `delete_port_forward` | `(forward_id)` | Delete a port-forward rule. |
+| `get_site_health` | `()` | Per-subsystem health (wan, lan, wlan, www, vpn). |
+| `get_wan_status` | `()` | Just the WAN subsystem record (link, ISP, public IP, throughput, latency). |
+| `list_events` | `(limit?)` | Recent controller events. |
+| `list_alarms` | `(limit?, archived?)` | Active or archived alarms. |
+| `trigger_speedtest` | `()` | Kick off a UniFi WAN speed test. |
+| `get_speedtest_results` | `(limit?)` | Recent speed-test results, newest first. |
+| `list_top_talkers` | `(limit?)` | Top clients by total bytes (DPI by-station report). |
 | `create_iot_network` | `(name, vlan_id, passphrase, main_lan_subnet?, subnet?, isolate?, hide_ssid?)` | One-shot: VLAN + SSID + isolation rule, with rollback on failure. |
+| `provision_homelab_service` | `(name, mac, ip, network_id, ports?, wan_expose?)` | Lease + LAN_LOCAL accept + (optional) port forwards. Rolls back on failure. |
+| `quarantine_client` | `(mac, reason)` | Block client + structured warning log carrying the reason. |
+| `create_guest_network` | `(name, ssid, passphrase, vlan_id, main_lan_subnet?, subnet?, schedule?, hide_ssid?)` | Guest VLAN + guest SSID + isolation rule, with rollback on failure. |
+| `audit_open_ports` | `()` | Read-only review of WAN-facing exposure (active port forwards + non-boilerplate WAN accept rules). |
 
 Every tool returns a JSON string. Errors are returned as a structured `{"error": "...", "stub_mode": bool}` object so Claude can render the failure without crashing the MCP loop.
 
@@ -172,7 +202,7 @@ python -m venv .venv && source .venv/bin/activate
 pip install --require-hashes -r requirements-dev.lock
 pip install -e . --no-deps
 
-# Run the test suite (101 tests, ~95% coverage)
+# Run the test suite (224 tests, ~90% coverage)
 pytest
 
 # Lint and format
@@ -193,21 +223,21 @@ docker compose up --build
 ### Tests
 
 ```text
-======================= 101 passed in 1.5s =======================
+======================= 224 passed in 9s =======================
 
-Name                          Stmts  Miss  Branch  BrPart  Cover
------------------------------------------------------------------
-src/mcp_unifi/__init__.py         2     0       0       0   100%
-src/mcp_unifi/clients/__init__    3     0       0       0   100%
-src/mcp_unifi/clients/stubs.py   70     1       6       0    99%
-src/mcp_unifi/clients/unifi.py   82     0      12       0   100%
-src/mcp_unifi/config.py          38     1       8       0    98%
-src/mcp_unifi/healthcheck.py     18     1       0       0    94%
-src/mcp_unifi/logging_setup.py   33     1      12       2    93%
-src/mcp_unifi/models.py           6     0       0       0   100%
-src/mcp_unifi/server.py         232    15      70       5    92%
------------------------------------------------------------------
-TOTAL                           484    19     108       7    95%
+Name                              Stmts  Miss  Branch  BrPart  Cover
+---------------------------------------------------------------------
+src/mcp_unifi/__init__.py             2     0       0       0   100%
+src/mcp_unifi/clients/__init__.py     3     0       0       0   100%
+src/mcp_unifi/clients/stubs.py      234     2      64       8    97%
+src/mcp_unifi/clients/unifi.py      147     5      14       0    96%
+src/mcp_unifi/config.py              38     1       8       0    98%
+src/mcp_unifi/healthcheck.py         18     1       0       0    94%
+src/mcp_unifi/logging_setup.py       33     1      12       2    93%
+src/mcp_unifi/models.py               6     0       0       0   100%
+src/mcp_unifi/server.py             761   107     242      18    87%
+---------------------------------------------------------------------
+TOTAL                              1242   117     340      28    90%
 ```
 
 CI gates on **80% coverage minimum**, ruff lint, ruff format, mypy strict, and a Trivy fs+image scan that fails on any HIGH or CRITICAL finding.

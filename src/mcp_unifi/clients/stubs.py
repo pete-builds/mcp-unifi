@@ -49,6 +49,7 @@ def _seed_devices() -> list[UniFiRecord]:
             "uptime": 482311,
             "num_sta": 12,
             "satisfaction": 99,
+            "locating": False,
         },
         {
             "_id": _oid(),
@@ -63,10 +64,30 @@ def _seed_devices() -> list[UniFiRecord]:
             "uptime": 482010,
             "num_sta": 12,
             "satisfaction": 98,
+            "locating": False,
             "radio_table": [
                 {"radio": "ng", "channel": 6, "ht": 20, "tx_power": 23},
                 {"radio": "na", "channel": 36, "ht": 80, "tx_power": 26},
                 {"radio": "6e", "channel": 37, "ht": 160, "tx_power": 24},
+            ],
+        },
+        {
+            "_id": _oid(),
+            "mac": "f4:e2:c6:00:00:03",
+            "type": "usw",
+            "model": "USW24PoE",
+            "name": "Switch - Office",
+            "ip": "192.168.1.3",
+            "version": "7.0.50",
+            "adopted": True,
+            "state": 1,
+            "uptime": 481000,
+            "num_sta": 6,
+            "satisfaction": 97,
+            "locating": False,
+            "port_table": [
+                {"port_idx": i, "enable": True, "poe_mode": "auto", "portconf_id": ""}
+                for i in range(1, 25)
             ],
         },
     ]
@@ -161,6 +182,7 @@ def _seed_clients() -> list[UniFiRecord]:
             "name": "Pete's MacBook",
             "ip": "192.168.1.101",
             "is_wired": False,
+            "blocked": False,
             "network": "Default",
             "essid": "Home",
             "ap_mac": "f4:e2:c6:00:00:02",
@@ -171,6 +193,8 @@ def _seed_clients() -> list[UniFiRecord]:
             "satisfaction": 96,
             "tx_rate": 866000,
             "rx_rate": 866000,
+            "tx_bytes": 1_200_000_000,
+            "rx_bytes": 8_400_000_000,
             "uptime": 14523,
             "last_seen": now - 5,
             "first_seen": now - 14523,
@@ -182,6 +206,7 @@ def _seed_clients() -> list[UniFiRecord]:
             "name": "iPhone 15",
             "ip": "192.168.1.102",
             "is_wired": False,
+            "blocked": False,
             "network": "Default",
             "essid": "Home",
             "ap_mac": "f4:e2:c6:00:00:02",
@@ -192,6 +217,8 @@ def _seed_clients() -> list[UniFiRecord]:
             "satisfaction": 88,
             "tx_rate": 433000,
             "rx_rate": 433000,
+            "tx_bytes": 240_000_000,
+            "rx_bytes": 1_900_000_000,
             "uptime": 86342,
             "last_seen": now - 12,
             "first_seen": now - 86342,
@@ -203,9 +230,12 @@ def _seed_clients() -> list[UniFiRecord]:
             "name": "Synology NAS",
             "ip": "192.168.1.10",
             "is_wired": True,
+            "blocked": False,
             "network": "Default",
-            "sw_mac": "f4:e2:c6:00:00:01",
+            "sw_mac": "f4:e2:c6:00:00:03",
             "sw_port": 5,
+            "tx_bytes": 18_000_000_000,
+            "rx_bytes": 4_500_000_000,
             "uptime": 2580412,
             "last_seen": now - 1,
             "first_seen": now - 2580412,
@@ -217,6 +247,7 @@ def _seed_clients() -> list[UniFiRecord]:
             "name": "Echo Dot",
             "ip": "192.168.1.150",
             "is_wired": False,
+            "blocked": False,
             "network": "Default",
             "essid": "Home",
             "ap_mac": "f4:e2:c6:00:00:02",
@@ -227,9 +258,121 @@ def _seed_clients() -> list[UniFiRecord]:
             "satisfaction": 72,
             "tx_rate": 144400,
             "rx_rate": 144400,
+            "tx_bytes": 60_000_000,
+            "rx_bytes": 220_000_000,
             "uptime": 432198,
             "last_seen": now - 30,
             "first_seen": now - 432198,
+        },
+    ]
+
+
+def _seed_dhcp_leases(network_id: str) -> list[UniFiRecord]:
+    """Static DHCP reservations.
+
+    UniFi stores fixed leases on the ``user`` object with
+    ``use_fixedip=true``. The seed list intentionally mirrors that shape so
+    callers can list / create / delete reservations in stub mode.
+    """
+    return [
+        {
+            "_id": _oid(),
+            "mac": "aa:bb:cc:00:00:03",
+            "name": "Synology NAS",
+            "hostname": "nas",
+            "use_fixedip": True,
+            "fixed_ip": "192.168.1.10",
+            "network_id": network_id,
+            "noted": True,
+        },
+    ]
+
+
+def _seed_port_forwards() -> list[UniFiRecord]:
+    return [
+        {
+            "_id": _oid(),
+            "name": "HTTPS to NAS",
+            "enabled": True,
+            "src": "any",
+            "proto": "tcp",
+            "fwd": "192.168.1.10",
+            "fwd_port": "443",
+            "dst_port": "443",
+            "log": False,
+        },
+    ]
+
+
+def _seed_events() -> list[UniFiRecord]:
+    now = _ts()
+    return [
+        {
+            "_id": _oid(),
+            "time": now - 60,
+            "datetime": "stub",
+            "key": "EVT_LU_Connected",
+            "msg": "Pete's MacBook connected to Home",
+            "subsystem": "wlan",
+        },
+        {
+            "_id": _oid(),
+            "time": now - 3600,
+            "datetime": "stub",
+            "key": "EVT_GW_WANConnected",
+            "msg": "WAN link is up (2.0 Gbps)",
+            "subsystem": "wan",
+        },
+    ]
+
+
+def _seed_alarms() -> list[UniFiRecord]:
+    now = _ts()
+    return [
+        {
+            "_id": _oid(),
+            "time": now - 7200,
+            "datetime": "stub",
+            "archived": False,
+            "key": "EVT_AP_Lost_Contact",
+            "msg": "AP U7 Pro - Living Room briefly lost contact",
+            "subsystem": "lan",
+        },
+    ]
+
+
+def _seed_health() -> list[UniFiRecord]:
+    return [
+        {
+            "subsystem": "wan",
+            "status": "ok",
+            "gw_name": "Gateway",
+            "gw_mac": "f4:e2:c6:00:00:01",
+            "wan_ip": "203.0.113.42",
+            "isp_name": "Empire Internet Access",
+            "speedtest_status": "Idle",
+            "uptime": 482311,
+            "latency": 8,
+            "xput_up": 1820.5,
+            "xput_down": 1985.2,
+        },
+        {"subsystem": "lan", "status": "ok", "num_user": 12, "num_guest": 0},
+        {"subsystem": "wlan", "status": "ok", "num_ap": 1, "num_user": 8},
+        {"subsystem": "www", "status": "ok"},
+        {"subsystem": "vpn", "status": "warning", "num_active": 0},
+    ]
+
+
+def _seed_speedtest_results() -> list[UniFiRecord]:
+    now = _ts()
+    return [
+        {
+            "_id": _oid(),
+            "time": now - 86400,
+            "xput_up": 1820.5,
+            "xput_download": 1985.2,
+            "latency": 8,
+            "server": {"city": "New York, NY", "provider": "Ubiquiti"},
         },
     ]
 
@@ -255,10 +398,71 @@ class StubState:
         self.firewall_rules: list[UniFiRecord] = _seed_firewall_rules()
         self.port_profiles: list[UniFiRecord] = _seed_port_profiles()
         self.clients: list[UniFiRecord] = _seed_clients()
+        self.dhcp_leases: list[UniFiRecord] = _seed_dhcp_leases(default_net_id)
+        self.port_forwards: list[UniFiRecord] = _seed_port_forwards()
+        self.events: list[UniFiRecord] = _seed_events()
+        self.alarms: list[UniFiRecord] = _seed_alarms()
+        self.health: list[UniFiRecord] = _seed_health()
+        self.speedtest_results: list[UniFiRecord] = _seed_speedtest_results()
+        self.audit_log: list[UniFiRecord] = []  # records of block/unblock/reconnect/etc.
 
     # ----- Devices --------------------------------------------------------
     def list_devices(self) -> list[UniFiRecord]:
         return self.devices
+
+    def find_device_by_mac(self, mac: str) -> UniFiRecord | None:
+        for d in self.devices:
+            if d.get("mac") == mac:
+                return d
+        return None
+
+    def restart_device(self, mac: str) -> bool:
+        dev = self.find_device_by_mac(mac)
+        if dev is None:
+            return False
+        dev["state"] = 5  # UniFi: 5 == "restarting"
+        self.audit_log.append({"action": "restart_device", "mac": mac, "ts": _ts()})
+        return True
+
+    def locate_device(self, mac: str, on: bool) -> bool:
+        dev = self.find_device_by_mac(mac)
+        if dev is None:
+            return False
+        dev["locating"] = on
+        self.audit_log.append({"action": "locate_device", "mac": mac, "on": on, "ts": _ts()})
+        return True
+
+    def set_port_state(
+        self,
+        device_mac: str,
+        port_idx: int,
+        *,
+        enable: bool | None = None,
+        poe_mode: str | None = None,
+        portconf_id: str | None = None,
+    ) -> UniFiRecord | None:
+        dev = self.find_device_by_mac(device_mac)
+        if dev is None:
+            return None
+        port_table: list[UniFiRecord] = dev.get("port_table") or []
+        for port in port_table:
+            if port.get("port_idx") == port_idx:
+                if enable is not None:
+                    port["enable"] = enable
+                if poe_mode is not None:
+                    port["poe_mode"] = poe_mode
+                if portconf_id is not None:
+                    port["portconf_id"] = portconf_id
+                self.audit_log.append(
+                    {
+                        "action": "set_port_state",
+                        "mac": device_mac,
+                        "port_idx": port_idx,
+                        "ts": _ts(),
+                    }
+                )
+                return port
+        return None
 
     # ----- Networks / VLANs -----------------------------------------------
     def list_networks(self) -> list[UniFiRecord]:
@@ -321,6 +525,13 @@ class StubState:
         self.firewall_rules.append(record)
         return record
 
+    def update_firewall_rule(self, rule_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        for rule in self.firewall_rules:
+            if rule.get("_id") == rule_id:
+                rule.update(patch)
+                return rule
+        return None
+
     def delete_firewall_rule(self, rule_id: str) -> bool:
         before = len(self.firewall_rules)
         self.firewall_rules = [r for r in self.firewall_rules if r.get("_id") != rule_id]
@@ -330,9 +541,142 @@ class StubState:
     def list_port_profiles(self) -> list[UniFiRecord]:
         return self.port_profiles
 
+    def create_port_profile(self, payload: dict[str, Any]) -> UniFiRecord:
+        record: UniFiRecord = {"_id": _oid(), "site_id": "default", **payload}
+        self.port_profiles.append(record)
+        return record
+
+    def update_port_profile(self, profile_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        for profile in self.port_profiles:
+            if profile.get("_id") == profile_id:
+                profile.update(patch)
+                return profile
+        return None
+
+    def delete_port_profile(self, profile_id: str) -> bool:
+        before = len(self.port_profiles)
+        self.port_profiles = [p for p in self.port_profiles if p.get("_id") != profile_id]
+        return len(self.port_profiles) < before
+
     # ----- Clients --------------------------------------------------------
     def list_clients(self) -> list[UniFiRecord]:
         return self.clients
+
+    def block_client(self, mac: str) -> UniFiRecord | None:
+        for c in self.clients:
+            if c.get("mac") == mac:
+                c["blocked"] = True
+                self.audit_log.append({"action": "block_client", "mac": mac, "ts": _ts()})
+                return c
+        return None
+
+    def unblock_client(self, mac: str) -> UniFiRecord | None:
+        for c in self.clients:
+            if c.get("mac") == mac:
+                c["blocked"] = False
+                self.audit_log.append({"action": "unblock_client", "mac": mac, "ts": _ts()})
+                return c
+        return None
+
+    def reconnect_client(self, mac: str) -> bool:
+        for c in self.clients:
+            if c.get("mac") == mac:
+                self.audit_log.append({"action": "reconnect_client", "mac": mac, "ts": _ts()})
+                return True
+        return False
+
+    def top_talkers(self, limit: int) -> list[UniFiRecord]:
+        ranked = sorted(
+            self.clients,
+            key=lambda c: c.get("tx_bytes", 0) + c.get("rx_bytes", 0),
+            reverse=True,
+        )
+        return [
+            {
+                "mac": c.get("mac"),
+                "hostname": c.get("hostname"),
+                "ip": c.get("ip"),
+                "tx_bytes": c.get("tx_bytes", 0),
+                "rx_bytes": c.get("rx_bytes", 0),
+                "total_bytes": c.get("tx_bytes", 0) + c.get("rx_bytes", 0),
+            }
+            for c in ranked[:limit]
+        ]
+
+    # ----- DHCP leases (static) -------------------------------------------
+    def list_dhcp_leases(self) -> list[UniFiRecord]:
+        return [u for u in self.dhcp_leases if u.get("use_fixedip")]
+
+    def create_dhcp_lease(self, payload: dict[str, Any]) -> UniFiRecord:
+        record: UniFiRecord = {"_id": _oid(), "use_fixedip": True, **payload}
+        self.dhcp_leases.append(record)
+        return record
+
+    def delete_dhcp_lease(self, lease_id: str) -> bool:
+        before = len(self.dhcp_leases)
+        self.dhcp_leases = [u for u in self.dhcp_leases if u.get("_id") != lease_id]
+        return len(self.dhcp_leases) < before
+
+    # ----- Port forwarding ------------------------------------------------
+    def list_port_forwards(self) -> list[UniFiRecord]:
+        return self.port_forwards
+
+    def create_port_forward(self, payload: dict[str, Any]) -> UniFiRecord:
+        record: UniFiRecord = {"_id": _oid(), "enabled": True, **payload}
+        self.port_forwards.append(record)
+        return record
+
+    def update_port_forward(self, forward_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        for pf in self.port_forwards:
+            if pf.get("_id") == forward_id:
+                pf.update(patch)
+                return pf
+        return None
+
+    def delete_port_forward(self, forward_id: str) -> bool:
+        before = len(self.port_forwards)
+        self.port_forwards = [p for p in self.port_forwards if p.get("_id") != forward_id]
+        return len(self.port_forwards) < before
+
+    # ----- Observability --------------------------------------------------
+    def list_events(self, limit: int) -> list[UniFiRecord]:
+        return self.events[:limit]
+
+    def list_alarms(self, limit: int, archived: bool) -> list[UniFiRecord]:
+        filtered = [a for a in self.alarms if a.get("archived", False) == archived]
+        return filtered[:limit]
+
+    def get_site_health(self) -> list[UniFiRecord]:
+        return self.health
+
+    def get_wan_status(self) -> UniFiRecord:
+        for h in self.health:
+            if h.get("subsystem") == "wan":
+                return h
+        return {"subsystem": "wan", "status": "unknown"}
+
+    def trigger_speedtest(self) -> UniFiRecord:
+        # Append a fresh result to the front of the list.
+        result = {
+            "_id": _oid(),
+            "time": _ts(),
+            "xput_up": 1820.5,
+            "xput_download": 1985.2,
+            "latency": 8,
+            "server": {"city": "New York, NY", "provider": "Ubiquiti"},
+        }
+        self.speedtest_results.insert(0, result)
+        # Update WAN health to mirror the new measurement.
+        for h in self.health:
+            if h.get("subsystem") == "wan":
+                h["xput_up"] = result["xput_up"]
+                h["xput_down"] = result["xput_download"]
+                h["latency"] = result["latency"]
+                break
+        return {"started": True, "result": result}
+
+    def get_speedtest_results(self, limit: int) -> list[UniFiRecord]:
+        return self.speedtest_results[:limit]
 
 
 # Module-level singleton — server.py imports this directly so create/update/

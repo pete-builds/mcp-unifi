@@ -836,3 +836,1095 @@ async def test_real_iot_network_rollback_records_delete_failure(
     # The delete attempt should be recorded with deleted=False
     network_actions = [a for a in result["rolled_back"] if "network" in a]
     assert network_actions and network_actions[0]["deleted"] is False
+
+
+# ===========================================================================
+# v0.3.0 tools — Tier 1 fills, Tier 2 ops, Tier 3 observability, Tier 4 composites
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# Tier 1: update_firewall_rule + port profile CRUD
+# ---------------------------------------------------------------------------
+
+
+async def test_update_firewall_rule_stub(stub_server: FastMCP, stub_state: StubState) -> None:
+    rule_id = stub_state.list_firewall_rules()[0]["_id"]
+    result = await _call(
+        stub_server,
+        "update_firewall_rule",
+        {"rule_id": rule_id, "updates": {"action": "drop"}},
+    )
+    assert result["action"] == "drop"
+
+
+async def test_update_firewall_rule_missing(stub_server: FastMCP) -> None:
+    result = await _call(
+        stub_server,
+        "update_firewall_rule",
+        {"rule_id": "ghost", "updates": {"action": "drop"}},
+    )
+    assert "not found" in result["error"]
+
+
+async def test_create_port_profile_stub(stub_server: FastMCP, stub_state: StubState) -> None:
+    result = await _call(
+        stub_server,
+        "create_port_profile",
+        {"name": "PoE Cameras", "poe_mode": "auto", "forward": "native"},
+    )
+    assert result["name"] == "PoE Cameras"
+    assert result["poe_mode"] == "auto"
+    assert any(p["_id"] == result["_id"] for p in stub_state.list_port_profiles())
+
+
+async def test_create_port_profile_with_tagged_vlans(stub_server: FastMCP) -> None:
+    result = await _call(
+        stub_server,
+        "create_port_profile",
+        {
+            "name": "Trunk",
+            "native_networkconf_id": "n1",
+            "tagged_networkconf_ids": ["n2", "n3"],
+        },
+    )
+    assert result["tagged_networkconf_ids"] == ["n2", "n3"]
+    assert result["native_networkconf_id"] == "n1"
+
+
+async def test_update_port_profile_stub(stub_server: FastMCP, stub_state: StubState) -> None:
+    profile_id = stub_state.list_port_profiles()[0]["_id"]
+    result = await _call(
+        stub_server,
+        "update_port_profile",
+        {"profile_id": profile_id, "updates": {"poe_mode": "off"}},
+    )
+    assert result["poe_mode"] == "off"
+
+
+async def test_update_port_profile_missing(stub_server: FastMCP) -> None:
+    result = await _call(
+        stub_server,
+        "update_port_profile",
+        {"profile_id": "ghost", "updates": {"poe_mode": "off"}},
+    )
+    assert "not found" in result["error"]
+
+
+async def test_delete_port_profile_stub(stub_server: FastMCP, stub_state: StubState) -> None:
+    profile_id = stub_state.list_port_profiles()[0]["_id"]
+    result = await _call(stub_server, "delete_port_profile", {"profile_id": profile_id})
+    assert result["deleted"] is True
+
+
+async def test_delete_port_profile_missing(stub_server: FastMCP) -> None:
+    result = await _call(stub_server, "delete_port_profile", {"profile_id": "ghost"})
+    assert result["deleted"] is False
+
+
+# ---------------------------------------------------------------------------
+# Tier 2: client commands (block / unblock / reconnect)
+# ---------------------------------------------------------------------------
+
+
+async def test_block_unblock_client_stub(stub_server: FastMCP) -> None:
+    blocked = await _call(stub_server, "block_client", {"mac": "aa:bb:cc:00:00:01"})
+    assert blocked["blocked"] is True
+    unblocked = await _call(stub_server, "unblock_client", {"mac": "aa:bb:cc:00:00:01"})
+    assert unblocked["blocked"] is False
+
+
+async def test_block_client_unknown(stub_server: FastMCP) -> None:
+    result = await _call(stub_server, "block_client", {"mac": "00:00:00:00:00:00"})
+    assert "not found" in result["error"]
+
+
+async def test_unblock_client_unknown(stub_server: FastMCP) -> None:
+    result = await _call(stub_server, "unblock_client", {"mac": "00:00:00:00:00:00"})
+    assert "not found" in result["error"]
+
+
+async def test_reconnect_client_stub(stub_server: FastMCP) -> None:
+    result = await _call(stub_server, "reconnect_client", {"mac": "aa:bb:cc:00:00:01"})
+    assert result["reconnected"] is True
+
+
+async def test_reconnect_client_unknown(stub_server: FastMCP) -> None:
+    result = await _call(stub_server, "reconnect_client", {"mac": "00:00:00:00:00:00"})
+    assert result["reconnected"] is False
+
+
+# ---------------------------------------------------------------------------
+# Tier 2: device commands (restart / locate / set_port_state)
+# ---------------------------------------------------------------------------
+
+
+async def test_restart_device_stub(stub_server: FastMCP) -> None:
+    result = await _call(stub_server, "restart_device", {"mac": "f4:e2:c6:00:00:01"})
+    assert result["restarted"] is True
+
+
+async def test_restart_device_missing(stub_server: FastMCP) -> None:
+    result = await _call(stub_server, "restart_device", {"mac": "00:00:00:00:00:00"})
+    assert "not found" in result["error"]
+
+
+async def test_locate_device_on_then_off(stub_server: FastMCP) -> None:
+    on = await _call(stub_server, "locate_device", {"mac": "f4:e2:c6:00:00:02", "on": True})
+    assert on["locating"] is True
+    off = await _call(stub_server, "locate_device", {"mac": "f4:e2:c6:00:00:02", "on": False})
+    assert off["locating"] is False
+
+
+async def test_locate_device_missing(stub_server: FastMCP) -> None:
+    result = await _call(stub_server, "locate_device", {"mac": "00:00:00:00:00:00"})
+    assert "not found" in result["error"]
+
+
+async def test_set_port_state_stub(stub_server: FastMCP) -> None:
+    result = await _call(
+        stub_server,
+        "set_port_state",
+        {"device_mac": "f4:e2:c6:00:00:03", "port_idx": 5, "enable": False, "poe_mode": "off"},
+    )
+    assert result["enable"] is False
+    assert result["poe_mode"] == "off"
+
+
+async def test_set_port_state_no_args(stub_server: FastMCP) -> None:
+    result = await _call(
+        stub_server,
+        "set_port_state",
+        {"device_mac": "f4:e2:c6:00:00:03", "port_idx": 5},
+    )
+    assert "at least one of" in result["error"]
+
+
+async def test_set_port_state_unknown_device(stub_server: FastMCP) -> None:
+    result = await _call(
+        stub_server,
+        "set_port_state",
+        {"device_mac": "00:00:00:00:00:00", "port_idx": 1, "enable": True},
+    )
+    assert "not found" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# Tier 2: static DHCP leases
+# ---------------------------------------------------------------------------
+
+
+async def test_list_dhcp_leases_stub(stub_server: FastMCP) -> None:
+    leases = await _call(stub_server, "list_dhcp_leases")
+    assert isinstance(leases, list)
+    assert all(lease.get("use_fixedip") for lease in leases)
+
+
+async def test_create_static_dhcp_lease_stub(stub_server: FastMCP, stub_state: StubState) -> None:
+    net_id = stub_state.list_networks()[0]["_id"]
+    result = await _call(
+        stub_server,
+        "create_static_dhcp_lease",
+        {
+            "mac": "11:22:33:44:55:66",
+            "ip": "192.168.1.42",
+            "network_id": net_id,
+            "name": "Test Pi",
+            "hostname": "pi-test",
+        },
+    )
+    assert result["mac"] == "11:22:33:44:55:66"
+    assert result["fixed_ip"] == "192.168.1.42"
+    assert result["use_fixedip"] is True
+
+
+async def test_delete_static_dhcp_lease_stub(stub_server: FastMCP, stub_state: StubState) -> None:
+    lease_id = stub_state.list_dhcp_leases()[0]["_id"]
+    result = await _call(stub_server, "delete_static_dhcp_lease", {"lease_id": lease_id})
+    assert result["deleted"] is True
+
+
+async def test_delete_static_dhcp_lease_missing(stub_server: FastMCP) -> None:
+    result = await _call(stub_server, "delete_static_dhcp_lease", {"lease_id": "ghost"})
+    assert result["deleted"] is False
+
+
+# ---------------------------------------------------------------------------
+# Tier 2: port forward CRUD
+# ---------------------------------------------------------------------------
+
+
+async def test_list_port_forwards_stub(stub_server: FastMCP) -> None:
+    pfs = await _call(stub_server, "list_port_forwards")
+    assert isinstance(pfs, list)
+    assert pfs[0]["name"] == "HTTPS to NAS"
+
+
+async def test_create_update_delete_port_forward_stub(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    created = await _call(
+        stub_server,
+        "create_port_forward",
+        {
+            "name": "SSH",
+            "fwd": "192.168.1.10",
+            "fwd_port": "22",
+            "dst_port": "2222",
+            "proto": "tcp",
+        },
+    )
+    assert created["fwd_port"] == "22"
+
+    updated = await _call(
+        stub_server,
+        "update_port_forward",
+        {"forward_id": created["_id"], "updates": {"enabled": False}},
+    )
+    assert updated["enabled"] is False
+
+    deleted = await _call(stub_server, "delete_port_forward", {"forward_id": created["_id"]})
+    assert deleted["deleted"] is True
+
+
+async def test_update_port_forward_missing(stub_server: FastMCP) -> None:
+    result = await _call(
+        stub_server,
+        "update_port_forward",
+        {"forward_id": "ghost", "updates": {"enabled": False}},
+    )
+    assert "not found" in result["error"]
+
+
+async def test_delete_port_forward_missing(stub_server: FastMCP) -> None:
+    result = await _call(stub_server, "delete_port_forward", {"forward_id": "ghost"})
+    assert result["deleted"] is False
+
+
+# ---------------------------------------------------------------------------
+# Tier 3: observability
+# ---------------------------------------------------------------------------
+
+
+async def test_get_site_health_stub(stub_server: FastMCP) -> None:
+    result = await _call(stub_server, "get_site_health")
+    subsystems = {h["subsystem"] for h in result}
+    assert {"wan", "lan", "wlan"} <= subsystems
+
+
+async def test_get_wan_status_stub(stub_server: FastMCP) -> None:
+    result = await _call(stub_server, "get_wan_status")
+    assert result["subsystem"] == "wan"
+    assert "xput_up" in result and "xput_down" in result
+
+
+async def test_list_events_stub(stub_server: FastMCP) -> None:
+    result = await _call(stub_server, "list_events", {"limit": 1})
+    assert len(result) <= 1
+
+
+async def test_list_events_invalid_limit(stub_server: FastMCP) -> None:
+    result = await _call(stub_server, "list_events", {"limit": 0})
+    assert "limit" in result["error"]
+
+
+async def test_list_alarms_stub(stub_server: FastMCP) -> None:
+    result = await _call(stub_server, "list_alarms", {"limit": 50, "archived": False})
+    assert isinstance(result, list)
+
+
+async def test_list_alarms_invalid_limit(stub_server: FastMCP) -> None:
+    result = await _call(stub_server, "list_alarms", {"limit": 0})
+    assert "limit" in result["error"]
+
+
+async def test_speedtest_round_trip_stub(stub_server: FastMCP) -> None:
+    triggered = await _call(stub_server, "trigger_speedtest")
+    assert triggered["started"] is True
+    results = await _call(stub_server, "get_speedtest_results", {"limit": 5})
+    assert len(results) >= 1
+
+
+async def test_get_speedtest_results_invalid_limit(stub_server: FastMCP) -> None:
+    result = await _call(stub_server, "get_speedtest_results", {"limit": 0})
+    assert "limit" in result["error"]
+
+
+async def test_list_top_talkers_stub(stub_server: FastMCP) -> None:
+    result = await _call(stub_server, "list_top_talkers", {"limit": 3})
+    assert len(result) <= 3
+    if result:
+        assert result[0]["total_bytes"] >= result[-1]["total_bytes"]
+
+
+async def test_list_top_talkers_invalid_limit(stub_server: FastMCP) -> None:
+    result = await _call(stub_server, "list_top_talkers", {"limit": 0})
+    assert "limit" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# Tier 4: composites
+# ---------------------------------------------------------------------------
+
+
+async def test_provision_homelab_service_lan_only(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    net_id = stub_state.list_networks()[0]["_id"]
+    result = await _call(
+        stub_server,
+        "provision_homelab_service",
+        {
+            "name": "Pi-hole",
+            "mac": "aa:bb:cc:dd:ee:ff",
+            "ip": "192.168.1.53",
+            "network_id": net_id,
+            "ports": [53, 80],
+        },
+    )
+    assert result["lease"]["fixed_ip"] == "192.168.1.53"
+    assert result["firewall_rule"] is not None
+    assert result["firewall_rule"]["dst_address"] == "192.168.1.53/32"
+    assert result["port_forwards"] == []
+
+
+async def test_provision_homelab_service_with_wan_expose(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    net_id = stub_state.list_networks()[0]["_id"]
+    result = await _call(
+        stub_server,
+        "provision_homelab_service",
+        {
+            "name": "Web",
+            "mac": "aa:bb:cc:dd:ee:01",
+            "ip": "192.168.1.99",
+            "network_id": net_id,
+            "ports": [80, 443],
+            "wan_expose": True,
+        },
+    )
+    assert len(result["port_forwards"]) == 2
+    ports = {pf["fwd_port"] for pf in result["port_forwards"]}
+    assert ports == {"80", "443"}
+
+
+async def test_provision_homelab_service_no_ports(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    net_id = stub_state.list_networks()[0]["_id"]
+    result = await _call(
+        stub_server,
+        "provision_homelab_service",
+        {
+            "name": "Storage",
+            "mac": "aa:bb:cc:dd:ee:02",
+            "ip": "192.168.1.20",
+            "network_id": net_id,
+        },
+    )
+    assert result["lease"] is not None
+    assert result["firewall_rule"] is None
+    assert result["port_forwards"] == []
+
+
+async def test_provision_homelab_service_rollback_on_firewall_failure(
+    stub_settings: Settings, stub_state: StubState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If firewall creation fails after the lease, the lease is rolled back."""
+    from mcp_unifi.clients.unifi import UniFiError
+
+    def boom(_payload: dict[str, Any]) -> dict[str, Any]:
+        raise UniFiError("simulated firewall failure")
+
+    monkeypatch.setattr(stub_state, "create_firewall_rule", boom)
+
+    server = build_server(stub_settings, stub=stub_state)
+    net_id = stub_state.list_networks()[0]["_id"]
+    result = await _call(
+        server,
+        "provision_homelab_service",
+        {
+            "name": "Pi",
+            "mac": "aa:bb:cc:dd:ee:03",
+            "ip": "192.168.1.77",
+            "network_id": net_id,
+            "ports": [80],
+        },
+    )
+    assert "firewall" in result["error"].lower()
+    # The lease should have been rolled back.
+    assert all(lease["fixed_ip"] != "192.168.1.77" for lease in stub_state.list_dhcp_leases())
+    rolled_kinds = {next(iter(a.keys() - {"deleted"})) for a in result["rolled_back"]}
+    assert "dhcp_lease" in rolled_kinds
+
+
+async def test_provision_homelab_service_rollback_on_port_forward_failure(
+    stub_settings: Settings, stub_state: StubState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If a port-forward fails, the firewall rule and lease must both roll back."""
+    from mcp_unifi.clients.unifi import UniFiError
+
+    def boom(_payload: dict[str, Any]) -> dict[str, Any]:
+        raise UniFiError("simulated port-forward failure")
+
+    monkeypatch.setattr(stub_state, "create_port_forward", boom)
+
+    server = build_server(stub_settings, stub=stub_state)
+    net_id = stub_state.list_networks()[0]["_id"]
+    result = await _call(
+        server,
+        "provision_homelab_service",
+        {
+            "name": "App",
+            "mac": "aa:bb:cc:dd:ee:04",
+            "ip": "192.168.1.88",
+            "network_id": net_id,
+            "ports": [80, 443],
+            "wan_expose": True,
+        },
+    )
+    assert "port_forward" in result["error"].lower() or "port-forward" in result["error"].lower()
+    rolled_kinds = {next(iter(a.keys() - {"deleted"})) for a in result["rolled_back"]}
+    assert "dhcp_lease" in rolled_kinds
+    assert "firewall_rule" in rolled_kinds
+
+
+async def test_provision_homelab_service_rollback_on_lease_failure(
+    stub_settings: Settings, stub_state: StubState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Lease failure means nothing was created and rollback is empty."""
+    from mcp_unifi.clients.unifi import UniFiError
+
+    def boom(_payload: dict[str, Any]) -> dict[str, Any]:
+        raise UniFiError("simulated lease failure")
+
+    monkeypatch.setattr(stub_state, "create_dhcp_lease", boom)
+
+    server = build_server(stub_settings, stub=stub_state)
+    net_id = stub_state.list_networks()[0]["_id"]
+    result = await _call(
+        server,
+        "provision_homelab_service",
+        {
+            "name": "X",
+            "mac": "aa:bb:cc:dd:ee:05",
+            "ip": "192.168.1.55",
+            "network_id": net_id,
+            "ports": [22],
+        },
+    )
+    assert "lease" in result["error"].lower()
+    assert result["partial"]["lease"] is None
+    assert result["rolled_back"] == []
+
+
+async def test_quarantine_client_stub(stub_server: FastMCP) -> None:
+    result = await _call(
+        stub_server,
+        "quarantine_client",
+        {"mac": "aa:bb:cc:00:00:04", "reason": "suspicious DNS traffic"},
+    )
+    assert result["quarantined"] is True
+    assert result["mac"] == "aa:bb:cc:00:00:04"
+
+
+async def test_quarantine_client_missing(stub_server: FastMCP) -> None:
+    result = await _call(
+        stub_server,
+        "quarantine_client",
+        {"mac": "ff:ff:ff:ff:ff:ff", "reason": ""},
+    )
+    assert "not found" in result["error"]
+
+
+async def test_create_guest_network_happy_path(stub_server: FastMCP, stub_state: StubState) -> None:
+    result = await _call(
+        stub_server,
+        "create_guest_network",
+        {
+            "name": "Guest",
+            "ssid": "Guest WiFi",
+            "passphrase": "guestpass1",
+            "vlan_id": 90,
+            "schedule": "weekdays-9-17",
+        },
+    )
+    assert result["network"]["purpose"] == "guest"
+    assert result["wlan"]["is_guest"] is True
+    assert result["wlan"]["schedule"] == "weekdays-9-17"
+    assert result["firewall_rule"]["src_address"] == "10.0.90.0/24"
+
+
+async def test_create_guest_network_validates_vlan(stub_server: FastMCP) -> None:
+    result = await _call(
+        stub_server,
+        "create_guest_network",
+        {"name": "X", "ssid": "X", "passphrase": "p", "vlan_id": 1},
+    )
+    assert "out of range" in result["error"]
+
+
+async def test_create_guest_network_rollback_on_wlan_failure(
+    stub_settings: Settings, stub_state: StubState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mcp_unifi.clients.unifi import UniFiError
+
+    def boom(_payload: dict[str, Any]) -> dict[str, Any]:
+        raise UniFiError("simulated WLAN failure")
+
+    monkeypatch.setattr(stub_state, "create_wlan", boom)
+
+    server = build_server(stub_settings, stub=stub_state)
+    result = await _call(
+        server,
+        "create_guest_network",
+        {
+            "name": "Guest",
+            "ssid": "GW",
+            "passphrase": "p",
+            "vlan_id": 91,
+        },
+    )
+    assert "wlan" in result["error"].lower()
+    # VLAN should be rolled back.
+    assert len(stub_state.list_networks()) == 1
+
+
+async def test_create_guest_network_rollback_on_vlan_failure(
+    stub_settings: Settings, stub_state: StubState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mcp_unifi.clients.unifi import UniFiError
+
+    def boom(_payload: dict[str, Any]) -> dict[str, Any]:
+        raise UniFiError("simulated VLAN failure")
+
+    monkeypatch.setattr(stub_state, "create_network", boom)
+
+    server = build_server(stub_settings, stub=stub_state)
+    result = await _call(
+        server,
+        "create_guest_network",
+        {"name": "Guest", "ssid": "GW", "passphrase": "p", "vlan_id": 92},
+    )
+    assert "vlan" in result["error"].lower()
+    assert result["rolled_back"] == []
+
+
+async def test_audit_open_ports_stub(stub_server: FastMCP) -> None:
+    result = await _call(stub_server, "audit_open_ports")
+    assert "port_forwards" in result
+    assert "wan_accept_rules" in result
+    assert "summary" in result
+    # The seed has one HTTPS->NAS forward and one established/related WAN_IN
+    # rule (filtered out). Audit should surface the forward, no accept rules.
+    assert len(result["port_forwards"]) >= 1
+    assert all(
+        not (r.get("state_established") and r.get("state_related"))
+        for r in result["wan_accept_rules"]
+    )
+
+
+async def test_audit_open_ports_flags_wan_accept_rule(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    stub_state.create_firewall_rule(
+        {
+            "name": "Open SSH from anywhere",
+            "ruleset": "WAN_IN",
+            "rule_index": 2100,
+            "action": "accept",
+            "enabled": True,
+            "protocol": "tcp",
+        }
+    )
+    result = await _call(stub_server, "audit_open_ports")
+    names = [r["name"] for r in result["wan_accept_rules"]]
+    assert "Open SSH from anywhere" in names
+
+
+# ---------------------------------------------------------------------------
+# Real-mode HTTP coverage for v0.3.0 tools
+# ---------------------------------------------------------------------------
+
+
+@respx.mock
+async def test_real_update_firewall_rule(real_server: FastMCP) -> None:
+    respx.put(f"{BASE}/rest/firewallrule/r1").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "r1", "action": "drop"}]})
+    )
+    result = await _call(
+        real_server,
+        "update_firewall_rule",
+        {"rule_id": "r1", "updates": {"action": "drop"}},
+    )
+    assert result["action"] == "drop"
+
+
+@respx.mock
+async def test_real_update_firewall_rule_500(real_server: FastMCP) -> None:
+    respx.put(f"{BASE}/rest/firewallrule/r1").mock(return_value=httpx.Response(500))
+    result = await _call(
+        real_server,
+        "update_firewall_rule",
+        {"rule_id": "r1", "updates": {"action": "drop"}},
+    )
+    assert "error" in result
+
+
+@respx.mock
+async def test_real_create_port_profile(real_server: FastMCP) -> None:
+    respx.post(f"{BASE}/rest/portconf").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "p1", "name": "PoE"}]})
+    )
+    result = await _call(real_server, "create_port_profile", {"name": "PoE"})
+    assert result["_id"] == "p1"
+
+
+@respx.mock
+async def test_real_update_port_profile(real_server: FastMCP) -> None:
+    respx.put(f"{BASE}/rest/portconf/p1").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "p1", "poe_mode": "off"}]})
+    )
+    result = await _call(
+        real_server,
+        "update_port_profile",
+        {"profile_id": "p1", "updates": {"poe_mode": "off"}},
+    )
+    assert result["poe_mode"] == "off"
+
+
+@respx.mock
+async def test_real_delete_port_profile(real_server: FastMCP) -> None:
+    respx.delete(f"{BASE}/rest/portconf/p1").mock(return_value=httpx.Response(200))
+    result = await _call(real_server, "delete_port_profile", {"profile_id": "p1"})
+    assert result["deleted"] is True
+
+
+@respx.mock
+async def test_real_block_client(real_server: FastMCP) -> None:
+    respx.post(f"{BASE}/cmd/stamgr").mock(
+        return_value=httpx.Response(200, json={"data": [{"mac": "aa:bb:cc:00:00:01"}]})
+    )
+    result = await _call(real_server, "block_client", {"mac": "aa:bb:cc:00:00:01"})
+    assert result["mac"] == "aa:bb:cc:00:00:01"
+
+
+@respx.mock
+async def test_real_unblock_client(real_server: FastMCP) -> None:
+    respx.post(f"{BASE}/cmd/stamgr").mock(
+        return_value=httpx.Response(200, json={"data": [{"mac": "aa:bb:cc:00:00:01"}]})
+    )
+    result = await _call(real_server, "unblock_client", {"mac": "aa:bb:cc:00:00:01"})
+    assert result["mac"] == "aa:bb:cc:00:00:01"
+
+
+@respx.mock
+async def test_real_reconnect_client(real_server: FastMCP) -> None:
+    respx.post(f"{BASE}/cmd/stamgr").mock(return_value=httpx.Response(200, json={"data": []}))
+    result = await _call(real_server, "reconnect_client", {"mac": "aa:bb:cc:00:00:01"})
+    assert result["reconnected"] is True
+
+
+@respx.mock
+async def test_real_restart_device(real_server: FastMCP) -> None:
+    respx.post(f"{BASE}/cmd/devmgr").mock(return_value=httpx.Response(200, json={"data": []}))
+    result = await _call(real_server, "restart_device", {"mac": "f4:e2:c6:00:00:01"})
+    assert result["restarted"] is True
+
+
+@respx.mock
+async def test_real_locate_device(real_server: FastMCP) -> None:
+    captured: dict[str, Any] = {}
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"data": []})
+
+    respx.post(f"{BASE}/cmd/devmgr").mock(side_effect=capture)
+    result = await _call(real_server, "locate_device", {"mac": "f4:e2:c6:00:00:02", "on": True})
+    assert result["locating"] is True
+    assert captured["body"]["cmd"] == "set-locate"
+
+
+@respx.mock
+async def test_real_set_port_state(real_server: FastMCP) -> None:
+    respx.get(f"{BASE}/stat/device").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "_id": "switch-1",
+                        "mac": "f4:e2:c6:00:00:03",
+                        "port_overrides": [{"port_idx": 1, "enable": True}],
+                    }
+                ]
+            },
+        )
+    )
+    captured: dict[str, Any] = {}
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "_id": "switch-1",
+                        "port_overrides": captured["body"]["port_overrides"],
+                    }
+                ]
+            },
+        )
+
+    respx.put(f"{BASE}/rest/device/switch-1").mock(side_effect=capture)
+    result = await _call(
+        real_server,
+        "set_port_state",
+        {"device_mac": "f4:e2:c6:00:00:03", "port_idx": 5, "poe_mode": "off"},
+    )
+    assert result["_id"] == "switch-1"
+    overrides = {o["port_idx"]: o for o in captured["body"]["port_overrides"]}
+    assert overrides[5]["poe_mode"] == "off"
+    assert 1 in overrides  # existing override preserved
+
+
+@respx.mock
+async def test_real_set_port_state_unknown_device(real_server: FastMCP) -> None:
+    respx.get(f"{BASE}/stat/device").mock(return_value=httpx.Response(200, json={"data": []}))
+    result = await _call(
+        real_server,
+        "set_port_state",
+        {"device_mac": "ff:ff:ff:ff:ff:ff", "port_idx": 1, "enable": True},
+    )
+    assert "not found" in result["error"]
+
+
+@respx.mock
+async def test_real_list_dhcp_leases(real_server: FastMCP) -> None:
+    respx.get(f"{BASE}/list/user").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"_id": "u1", "use_fixedip": True, "fixed_ip": "192.168.1.10"},
+                    {"_id": "u2", "use_fixedip": False},
+                ]
+            },
+        )
+    )
+    result = await _call(real_server, "list_dhcp_leases")
+    assert len(result) == 1
+    assert result[0]["_id"] == "u1"
+
+
+@respx.mock
+async def test_real_create_static_dhcp_lease(real_server: FastMCP) -> None:
+    respx.post(f"{BASE}/rest/user").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "u9"}]})
+    )
+    result = await _call(
+        real_server,
+        "create_static_dhcp_lease",
+        {"mac": "aa:bb:cc:dd:ee:ff", "ip": "192.168.1.42", "network_id": "n1"},
+    )
+    assert result["_id"] == "u9"
+
+
+@respx.mock
+async def test_real_delete_static_dhcp_lease(real_server: FastMCP) -> None:
+    respx.delete(f"{BASE}/rest/user/u9").mock(return_value=httpx.Response(200))
+    result = await _call(real_server, "delete_static_dhcp_lease", {"lease_id": "u9"})
+    assert result["deleted"] is True
+
+
+@respx.mock
+async def test_real_port_forward_crud(real_server: FastMCP) -> None:
+    respx.get(f"{BASE}/rest/portforward").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "pf1"}]})
+    )
+    listed = await _call(real_server, "list_port_forwards")
+    assert listed[0]["_id"] == "pf1"
+
+    respx.post(f"{BASE}/rest/portforward").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "pf2"}]})
+    )
+    created = await _call(
+        real_server,
+        "create_port_forward",
+        {"name": "X", "fwd": "10.0.0.5", "fwd_port": "80", "dst_port": "80"},
+    )
+    assert created["_id"] == "pf2"
+
+    respx.put(f"{BASE}/rest/portforward/pf2").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "pf2", "enabled": False}]})
+    )
+    updated = await _call(
+        real_server, "update_port_forward", {"forward_id": "pf2", "updates": {"enabled": False}}
+    )
+    assert updated["enabled"] is False
+
+    respx.delete(f"{BASE}/rest/portforward/pf2").mock(return_value=httpx.Response(200))
+    deleted = await _call(real_server, "delete_port_forward", {"forward_id": "pf2"})
+    assert deleted["deleted"] is True
+
+
+@respx.mock
+async def test_real_get_site_health(real_server: FastMCP) -> None:
+    respx.get(f"{BASE}/stat/health").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"subsystem": "wan", "status": "ok"},
+                    {"subsystem": "lan", "status": "ok"},
+                ]
+            },
+        )
+    )
+    result = await _call(real_server, "get_site_health")
+    assert {h["subsystem"] for h in result} == {"wan", "lan"}
+
+
+@respx.mock
+async def test_real_get_wan_status_extracts_wan(real_server: FastMCP) -> None:
+    respx.get(f"{BASE}/stat/health").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"subsystem": "lan", "status": "ok"},
+                    {"subsystem": "wan", "status": "ok", "wan_ip": "1.2.3.4"},
+                ]
+            },
+        )
+    )
+    result = await _call(real_server, "get_wan_status")
+    assert result["subsystem"] == "wan"
+    assert result["wan_ip"] == "1.2.3.4"
+
+
+@respx.mock
+async def test_real_get_wan_status_unknown_when_missing(real_server: FastMCP) -> None:
+    respx.get(f"{BASE}/stat/health").mock(
+        return_value=httpx.Response(200, json={"data": [{"subsystem": "lan", "status": "ok"}]})
+    )
+    result = await _call(real_server, "get_wan_status")
+    assert result["status"] == "unknown"
+
+
+@respx.mock
+async def test_real_list_events(real_server: FastMCP) -> None:
+    respx.get(f"{BASE}/stat/event?_limit=5").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "e1"}]})
+    )
+    result = await _call(real_server, "list_events", {"limit": 5})
+    assert result[0]["_id"] == "e1"
+
+
+@respx.mock
+async def test_real_list_alarms(real_server: FastMCP) -> None:
+    respx.get(f"{BASE}/stat/alarm?archived=false&_limit=5").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "a1"}]})
+    )
+    result = await _call(real_server, "list_alarms", {"limit": 5, "archived": False})
+    assert result[0]["_id"] == "a1"
+
+
+@respx.mock
+async def test_real_trigger_speedtest(real_server: FastMCP) -> None:
+    captured: dict[str, Any] = {}
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"data": [{"started": True}]})
+
+    respx.post(f"{BASE}/cmd/devmgr").mock(side_effect=capture)
+    result = await _call(real_server, "trigger_speedtest")
+    assert captured["body"]["cmd"] == "speedtest"
+    assert result["started"] is True
+
+
+@respx.mock
+async def test_real_get_speedtest_results(real_server: FastMCP) -> None:
+    respx.get(f"{BASE}/stat/report/archive.speedtest?_limit=3").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "s1"}, {"_id": "s2"}]})
+    )
+    result = await _call(real_server, "get_speedtest_results", {"limit": 3})
+    assert len(result) == 2
+
+
+@respx.mock
+async def test_real_list_top_talkers(real_server: FastMCP) -> None:
+    respx.get(f"{BASE}/stat/sitedpi").mock(
+        return_value=httpx.Response(
+            200, json={"data": [{"mac": "aa", "rx_bytes": 100}, {"mac": "bb", "rx_bytes": 50}]}
+        )
+    )
+    result = await _call(real_server, "list_top_talkers", {"limit": 1})
+    assert len(result) == 1
+
+
+@respx.mock
+async def test_real_audit_open_ports(real_server: FastMCP) -> None:
+    respx.get(f"{BASE}/rest/firewallrule").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "_id": "r1",
+                        "ruleset": "WAN_IN",
+                        "action": "accept",
+                        "enabled": True,
+                        "name": "Boilerplate",
+                        "state_established": True,
+                        "state_related": True,
+                    },
+                    {
+                        "_id": "r2",
+                        "ruleset": "WAN_IN",
+                        "action": "accept",
+                        "enabled": True,
+                        "name": "Open SSH",
+                    },
+                ]
+            },
+        )
+    )
+    respx.get(f"{BASE}/rest/portforward").mock(
+        return_value=httpx.Response(
+            200,
+            json={"data": [{"_id": "pf1", "enabled": True, "name": "HTTPS to NAS"}]},
+        )
+    )
+    result = await _call(real_server, "audit_open_ports")
+    assert len(result["port_forwards"]) == 1
+    names = [r["name"] for r in result["wan_accept_rules"]]
+    assert names == ["Open SSH"]
+
+
+@respx.mock
+async def test_real_block_client_handles_error(real_server: FastMCP) -> None:
+    respx.post(f"{BASE}/cmd/stamgr").mock(return_value=httpx.Response(500))
+    result = await _call(real_server, "block_client", {"mac": "aa:bb:cc:00:00:01"})
+    assert "error" in result
+
+
+@respx.mock
+async def test_real_get_site_health_handles_500(real_server: FastMCP) -> None:
+    respx.get(f"{BASE}/stat/health").mock(return_value=httpx.Response(500))
+    result = await _call(real_server, "get_site_health")
+    assert "error" in result
+
+
+@respx.mock
+async def test_real_provision_homelab_service_full_flow(real_server: FastMCP) -> None:
+    respx.post(f"{BASE}/rest/user").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "lease1"}]})
+    )
+    respx.post(f"{BASE}/rest/firewallrule").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "fw1"}]})
+    )
+    respx.post(f"{BASE}/rest/portforward").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "pf1"}]})
+    )
+    result = await _call(
+        real_server,
+        "provision_homelab_service",
+        {
+            "name": "Web",
+            "mac": "aa:bb:cc:dd:ee:01",
+            "ip": "192.168.1.99",
+            "network_id": "n1",
+            "ports": [80],
+            "wan_expose": True,
+        },
+    )
+    assert result["lease"]["_id"] == "lease1"
+    assert result["firewall_rule"]["_id"] == "fw1"
+    assert len(result["port_forwards"]) == 1
+
+
+@respx.mock
+async def test_real_provision_homelab_service_rolls_back_on_pf_failure(
+    real_server: FastMCP,
+) -> None:
+    respx.post(f"{BASE}/rest/user").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "lease-x"}]})
+    )
+    respx.post(f"{BASE}/rest/firewallrule").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "fw-x"}]})
+    )
+    respx.post(f"{BASE}/rest/portforward").mock(return_value=httpx.Response(500, text="boom"))
+    fw_delete = respx.delete(f"{BASE}/rest/firewallrule/fw-x").mock(
+        return_value=httpx.Response(200)
+    )
+    lease_delete = respx.delete(f"{BASE}/rest/user/lease-x").mock(return_value=httpx.Response(200))
+    result = await _call(
+        real_server,
+        "provision_homelab_service",
+        {
+            "name": "Web",
+            "mac": "aa:bb:cc:dd:ee:02",
+            "ip": "192.168.1.97",
+            "network_id": "n1",
+            "ports": [80],
+            "wan_expose": True,
+        },
+    )
+    assert "error" in result
+    assert fw_delete.called
+    assert lease_delete.called
+
+
+@respx.mock
+async def test_real_create_guest_network_full_flow(real_server: FastMCP) -> None:
+    respx.post(f"{BASE}/rest/networkconf").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "gn"}]})
+    )
+    respx.post(f"{BASE}/rest/wlanconf").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "gw"}]})
+    )
+    respx.post(f"{BASE}/rest/firewallrule").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "gfw"}]})
+    )
+    result = await _call(
+        real_server,
+        "create_guest_network",
+        {
+            "name": "G",
+            "ssid": "GS",
+            "passphrase": "guestpass1",
+            "vlan_id": 95,
+        },
+    )
+    assert result["network"]["_id"] == "gn"
+    assert result["wlan"]["_id"] == "gw"
+    assert result["firewall_rule"]["_id"] == "gfw"
+
+
+@respx.mock
+async def test_real_quarantine_client(real_server: FastMCP) -> None:
+    respx.post(f"{BASE}/cmd/stamgr").mock(
+        return_value=httpx.Response(200, json={"data": [{"mac": "aa:bb:cc:00:00:01"}]})
+    )
+    result = await _call(
+        real_server,
+        "quarantine_client",
+        {"mac": "aa:bb:cc:00:00:01", "reason": "test"},
+    )
+    assert result["quarantined"] is True
+
+
+@respx.mock
+async def test_real_quarantine_client_handles_error(real_server: FastMCP) -> None:
+    respx.post(f"{BASE}/cmd/stamgr").mock(return_value=httpx.Response(500))
+    result = await _call(
+        real_server,
+        "quarantine_client",
+        {"mac": "aa:bb:cc:00:00:01", "reason": "test"},
+    )
+    assert "error" in result

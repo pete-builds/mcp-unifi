@@ -5,6 +5,76 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-05-09
+
+### Added — 26 new tools across four tiers
+
+**Tier 1 — CRUD gap fills (4 tools):**
+
+- `update_firewall_rule(rule_id, updates)`: patch fields on an existing rule.
+- `create_port_profile`, `update_port_profile`, `delete_port_profile`:
+  full CRUD over switch port profiles (PoE, native VLAN, tagged VLANs,
+  forwarding mode).
+
+**Tier 2 — high-frequency ops (12 tools):**
+
+- `block_client(mac)`, `unblock_client(mac)`, `reconnect_client(mac)`:
+  per-client commands via `/cmd/stamgr` (`block-sta`, `unblock-sta`,
+  `kick-sta`).
+- `set_port_state(device_mac, port_idx, enable?, poe_mode?, portconf_id?)`:
+  PATCH a single switch port via the device's ``port_overrides`` array. Real
+  mode reads the device first to preserve other port overrides.
+- `restart_device(mac)`, `locate_device(mac, on?)`: device-level commands
+  via `/cmd/devmgr` (restart, set-locate / unset-locate).
+- `list_dhcp_leases`, `create_static_dhcp_lease`, `delete_static_dhcp_lease`:
+  static DHCP reservations via the legacy `/rest/user` endpoint
+  (`use_fixedip=true`).
+- `list_port_forwards`, `create_port_forward`, `update_port_forward`,
+  `delete_port_forward`: full CRUD over port-forward (DNAT) rules.
+
+**Tier 3 — observability (7 tools):**
+
+- `get_site_health`: per-subsystem status (wan, lan, wlan, www, vpn).
+- `get_wan_status`: convenience wrapper that returns just the WAN record
+  (link, ISP, public IP, throughput, latency).
+- `list_events(limit?)`: recent controller events from `/stat/event`.
+- `list_alarms(limit?, archived?)`: active or archived alarms from
+  `/stat/alarm`.
+- `trigger_speedtest`: kicks off a speed test via `/cmd/devmgr`.
+- `get_speedtest_results(limit?)`: archived speed-test history.
+- `list_top_talkers(limit?)`: DPI by-station report ranked by total bytes.
+
+**Tier 4 — composites with rollback (4 tools):**
+
+- `provision_homelab_service(name, mac, ip, network_id, ports?, wan_expose?)`:
+  static lease + LAN_LOCAL accept rule + (optional) per-port forward rules
+  in one call. Reverses every step on partial failure.
+- `quarantine_client(mac, reason)`: block client + structured warning log
+  carrying the reason for later forensics.
+- `create_guest_network(name, ssid, passphrase, vlan_id, schedule?, ...)`:
+  guest-purpose VLAN + guest SSID (client isolation) + LAN_IN drop rule,
+  with rollback on partial failure (matches `create_iot_network` pattern).
+- `audit_open_ports`: read-only review that lists active port forwards and
+  WAN-facing ``accept`` rules (with the boilerplate established/related
+  rule filtered out). No writes.
+
+### Changed
+
+- Stub seed grew a third device (a `USW24PoE` switch with a 24-port table)
+  so port-state tools have a realistic target. `_seed_clients` now also
+  carries ``tx_bytes``/``rx_bytes`` so `list_top_talkers` ranks
+  meaningfully in stub mode.
+- `StubState` gained an `audit_log` list capturing every block / unblock /
+  reconnect / restart / locate / set_port_state action with timestamps.
+
+### Tests
+
+- Tool count: 15 → 41. Test count: 126 → 224. Coverage: 90% (well above
+  the 80% gate).
+- Tier 4 composites have full rollback coverage in stub mode (every
+  failing step + the rollback-delete-failure path), plus real-mode HTTP
+  rollback for `provision_homelab_service`.
+
 ## [0.2.0] - 2026-05-02
 
 ### Added
@@ -86,5 +156,6 @@ UniFi controller endpoint paths were cross-referenced against the
 [`sirkirby/unifi-mcp`](https://github.com/sirkirby/unifi-mcp) project. No code
 was copied; the implementation here is an independent FastMCP + httpx build.
 
+[0.3.0]: https://github.com/pete-builds/mcp-unifi/releases/tag/v0.3.0
 [0.2.0]: https://github.com/pete-builds/mcp-unifi/releases/tag/v0.2.0
 [0.1.0]: https://github.com/pete-builds/mcp-unifi/releases/tag/v0.1.0

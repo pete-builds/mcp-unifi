@@ -29,6 +29,12 @@ RUN pip install --no-cache-dir --target /wheels --no-deps .
 # ---------------------------------------------------------------------------
 FROM python:3.14-slim@sha256:5b3879b6f3cb77e712644d50262d05a7c146b7312d784a18eff7ff5462e77033 AS runtime
 
+# MCP Registry ownership-verification label. The value MUST match the
+# `name` field in server.json so the registry can verify the publisher
+# controls this image. See:
+# https://github.com/modelcontextprotocol/registry/blob/main/docs/modelcontextprotocol-io/package-types.mdx
+LABEL io.modelcontextprotocol.server.name="io.github.pete-builds/unifi"
+
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app/site-packages \

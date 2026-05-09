@@ -183,3 +183,134 @@ class UniFiClient:
         connected (e.g. fresh deployment).
         """
         return await self._get("/stat/sta") or []
+
+    # ------------------------------------------------------------------
+    # Firewall (update)
+    # ------------------------------------------------------------------
+
+    async def update_firewall_rule(self, rule_id: str, payload: dict[str, Any]) -> UniFiRecord:
+        return self._first_record(await self._put(f"/rest/firewallrule/{rule_id}", payload))
+
+    # ------------------------------------------------------------------
+    # Port profiles (create/update/delete)
+    # ------------------------------------------------------------------
+
+    async def create_port_profile(self, payload: dict[str, Any]) -> UniFiRecord:
+        return self._first_record(await self._post("/rest/portconf", payload))
+
+    async def update_port_profile(self, profile_id: str, payload: dict[str, Any]) -> UniFiRecord:
+        return self._first_record(await self._put(f"/rest/portconf/{profile_id}", payload))
+
+    async def delete_port_profile(self, profile_id: str) -> bool:
+        await self._delete(f"/rest/portconf/{profile_id}")
+        return True
+
+    # ------------------------------------------------------------------
+    # Client commands (block/unblock/reconnect via /cmd/stamgr)
+    # ------------------------------------------------------------------
+
+    async def _stamgr(self, cmd: str, mac: str) -> UniFiRecord:
+        return self._first_record(await self._post("/cmd/stamgr", {"cmd": cmd, "mac": mac}))
+
+    async def block_client(self, mac: str) -> UniFiRecord:
+        return await self._stamgr("block-sta", mac)
+
+    async def unblock_client(self, mac: str) -> UniFiRecord:
+        return await self._stamgr("unblock-sta", mac)
+
+    async def reconnect_client(self, mac: str) -> UniFiRecord:
+        return await self._stamgr("kick-sta", mac)
+
+    # ------------------------------------------------------------------
+    # Device commands (restart, locate, set-poe-mode, port toggle via /cmd/devmgr)
+    # ------------------------------------------------------------------
+
+    async def restart_device(self, mac: str) -> UniFiRecord:
+        return self._first_record(await self._post("/cmd/devmgr", {"cmd": "restart", "mac": mac}))
+
+    async def locate_device(self, mac: str, on: bool) -> UniFiRecord:
+        cmd = "set-locate" if on else "unset-locate"
+        return self._first_record(await self._post("/cmd/devmgr", {"cmd": cmd, "mac": mac}))
+
+    async def set_port_state(
+        self,
+        device_id: str,
+        port_overrides: list[dict[str, Any]],
+    ) -> UniFiRecord:
+        """Patch a switch's per-port overrides.
+
+        UniFi exposes per-port settings via the device PUT endpoint:
+        ``/rest/device/<device_id>`` with ``{"port_overrides": [...]}``. The
+        caller supplies the full list (the controller merges by ``port_idx``).
+        """
+        return self._first_record(
+            await self._put(
+                f"/rest/device/{device_id}",
+                {"port_overrides": port_overrides},
+            )
+        )
+
+    async def get_device(self, device_id: str) -> UniFiRecord:
+        result = await self._get(f"/stat/device/{device_id}")
+        if isinstance(result, list) and result:
+            first = result[0]
+            return first if isinstance(first, dict) else {}
+        return result if isinstance(result, dict) else {}
+
+    # ------------------------------------------------------------------
+    # Static DHCP leases (CRUD via /rest/user with use_fixedip)
+    # ------------------------------------------------------------------
+
+    async def list_dhcp_leases(self) -> list[UniFiRecord]:
+        users = await self._get("/list/user") or []
+        return [u for u in users if isinstance(u, dict) and u.get("use_fixedip")]
+
+    async def create_dhcp_lease(self, payload: dict[str, Any]) -> UniFiRecord:
+        return self._first_record(await self._post("/rest/user", payload))
+
+    async def delete_dhcp_lease(self, lease_id: str) -> bool:
+        await self._delete(f"/rest/user/{lease_id}")
+        return True
+
+    # ------------------------------------------------------------------
+    # Port forwarding (CRUD via /rest/portforward)
+    # ------------------------------------------------------------------
+
+    async def list_port_forwards(self) -> list[UniFiRecord]:
+        return await self._get("/rest/portforward") or []
+
+    async def create_port_forward(self, payload: dict[str, Any]) -> UniFiRecord:
+        return self._first_record(await self._post("/rest/portforward", payload))
+
+    async def update_port_forward(self, forward_id: str, payload: dict[str, Any]) -> UniFiRecord:
+        return self._first_record(await self._put(f"/rest/portforward/{forward_id}", payload))
+
+    async def delete_port_forward(self, forward_id: str) -> bool:
+        await self._delete(f"/rest/portforward/{forward_id}")
+        return True
+
+    # ------------------------------------------------------------------
+    # Observability
+    # ------------------------------------------------------------------
+
+    async def get_site_health(self) -> list[UniFiRecord]:
+        return await self._get("/stat/health") or []
+
+    async def list_events(self, limit: int) -> list[UniFiRecord]:
+        return await self._get(f"/stat/event?_limit={limit}") or []
+
+    async def list_alarms(self, limit: int, archived: bool) -> list[UniFiRecord]:
+        archived_str = "true" if archived else "false"
+        return await self._get(f"/stat/alarm?archived={archived_str}&_limit={limit}") or []
+
+    async def trigger_speedtest(self) -> UniFiRecord:
+        return self._first_record(await self._post("/cmd/devmgr", {"cmd": "speedtest"}))
+
+    async def get_speedtest_results(self, limit: int) -> list[UniFiRecord]:
+        # Legacy controller endpoint — returns an array of past speed-test runs.
+        return await self._get(f"/stat/report/archive.speedtest?_limit={limit}") or []
+
+    async def list_top_talkers(self, limit: int) -> list[UniFiRecord]:
+        # DPI by-station report; aggregated bytes per client.
+        results = await self._get("/stat/sitedpi") or []
+        return results[:limit] if isinstance(results, list) else []
