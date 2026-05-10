@@ -20,7 +20,7 @@ Every tool returns JSON. Errors come back as a structured `{"error": "...", "stu
 | MCP client | Transport | Status | Notes |
 |---|---|---|---|
 | Claude Code | Streamable HTTP | Verified (v0.2.0+, real-mode-ready) | `claude mcp add unifi -t http -s user --url http://<host>:3714/mcp` |
-| Claude Desktop | stdio | Recommended for desktop installs | `uvx mcp-unifi` via `claude_desktop_config.json` (example below) |
+| Claude Desktop | stdio | Recommended for desktop installs | `uvx --from git+https://github.com/pete-builds/mcp-unifi mcp-unifi` via `claude_desktop_config.json` (example below) |
 | Claude Desktop | Streamable HTTP | Works against a remote container | Hand-edit `claude_desktop_config.json` |
 | Gemini CLI (`@google/gemini-cli`) | Streamable HTTP | Verified MCP handshake (v0.36.0) | `gemini mcp add unifi http://<host>:3714/mcp -t http -s user`. Tool list, prompts, and resources discovered successfully. Live tool execution requires a valid Gemini API key / OAuth login. |
 | Any custom MCP client | stdio or Streamable HTTP | Should work per [MCP spec 2025-03-26+](https://modelcontextprotocol.io/specification) | stdio: `mcp-unifi` binary. HTTP: `http://<host>:3714/mcp` |
@@ -37,14 +37,18 @@ Two install paths. Pick the one that matches how you run Claude.
 
 ### Option A: stdio (Claude Desktop, single user)
 
-No Docker required. Install via [uv](https://docs.astral.sh/uv/) and let Claude Desktop spawn the server per session:
+No Docker required. Install via [uv](https://docs.astral.sh/uv/) directly from the GitHub repo and let Claude Desktop spawn the server per session:
 
 ```json
 {
   "mcpServers": {
     "unifi": {
       "command": "uvx",
-      "args": ["mcp-unifi"],
+      "args": [
+        "--from",
+        "git+https://github.com/pete-builds/mcp-unifi",
+        "mcp-unifi"
+      ],
       "env": {
         "MCP_TRANSPORT": "stdio",
         "STUB_MODE": "true"
@@ -55,6 +59,8 @@ No Docker required. Install via [uv](https://docs.astral.sh/uv/) and let Claude 
 ```
 
 Drop that into `claude_desktop_config.json`, restart Claude Desktop, and ask "list my UniFi devices" — you'll get two stubbed devices back. Set `STUB_MODE=false` plus `UNIFI_HOST` / `UNIFI_API_KEY` when you're ready to point it at a real gateway.
+
+To pin a specific release, append `@v0.4.0` (or any tag) to the git URL: `git+https://github.com/pete-builds/mcp-unifi@v0.4.0`.
 
 ### Option B: Streamable HTTP (Docker, multi-client / homelab)
 
@@ -183,7 +189,11 @@ claude mcp add unifi --transport http --scope user --url http://<host>:3714/mcp
   "mcpServers": {
     "unifi": {
       "command": "uvx",
-      "args": ["mcp-unifi"],
+      "args": [
+        "--from",
+        "git+https://github.com/pete-builds/mcp-unifi",
+        "mcp-unifi"
+      ],
       "env": {
         "MCP_TRANSPORT": "stdio",
         "STUB_MODE": "true"

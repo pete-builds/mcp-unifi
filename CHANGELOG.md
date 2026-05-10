@@ -14,9 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `streamable-http`, default `streamable-http` for back-compat with
   existing Docker deploys). Lets Claude Desktop / `uvx` users spawn the
   server per session without running a long-lived container.
-- **PyPI package** entry in `server.json` so the MCP Registry advertises
-  both the stdio (`uvx mcp-unifi`) and OCI (`ghcr.io/.../mcp-unifi`)
-  install paths.
+- stdio install path documented as `uvx --from git+https://github.com/pete-builds/mcp-unifi mcp-unifi`. Installs straight from the repo; pin a release with `@v0.4.0`. Skips PyPI entirely. (Original plan was a PyPI package; dropped to avoid the one-time PyPI account / publisher registration.)
 - Quick-start in the README leads with the stdio path for desktop
   users; Docker remains the recommendation for homelab / multi-client
   setups.
