@@ -5,7 +5,7 @@
 [![CI](https://github.com/pete-builds/mcp-unifi/actions/workflows/ci.yml/badge.svg)](https://github.com/pete-builds/mcp-unifi/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/pete-builds/mcp-unifi)](https://github.com/pete-builds/mcp-unifi/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.13-blue.svg)](pyproject.toml)
+[![Python](https://img.shields.io/badge/python-3.14-blue.svg)](pyproject.toml)
 [![MCP](https://img.shields.io/badge/MCP-Streamable%20HTTP-brightgreen.svg)](https://modelcontextprotocol.io/)
 [![Coverage](https://img.shields.io/badge/coverage-90%25-brightgreen.svg)](#tests)
 
@@ -14,6 +14,15 @@ An [MCP server](https://modelcontextprotocol.io/) for self-hosted UniFi gateway 
 Built on FastMCP with Streamable HTTP transport. Talks to a UCG-Fiber, UDM Pro, or any other UniFi OS gateway via the local API key. No Site Manager / cloud account required.
 
 Every tool returns JSON. Errors come back as a structured `{"error": "...", "stub_mode": bool}` object so the MCP loop never crashes on a gateway hiccup.
+
+## Client compatibility
+
+| MCP client | Transport | Status | Notes |
+|---|---|---|---|
+| Claude Code | Streamable HTTP | Verified (v0.2.0+, real-mode-ready) | `claude mcp add unifi -t http -s user --url http://<host>:3714/mcp` |
+| Claude Desktop | Streamable HTTP | Expected to work; config example below | Hand-edit `claude_desktop_config.json` |
+| Gemini CLI (`@google/gemini-cli`) | Streamable HTTP | Verified MCP handshake (v0.36.0) | `gemini mcp add unifi http://<host>:3714/mcp -t http -s user`. Tool list, prompts, and resources discovered successfully. Live tool execution requires a valid Gemini API key / OAuth login. |
+| Any custom MCP client | Streamable HTTP | Should work per [MCP spec 2025-03-26+](https://modelcontextprotocol.io/specification) | Endpoint: `http://<host>:3714/mcp` |
 
 ## Why
 
@@ -156,6 +165,40 @@ Add the following to your `claude_desktop_config.json`:
   }
 }
 ```
+
+### Gemini CLI
+
+[Gemini CLI](https://github.com/google-gemini/gemini-cli) supports MCP servers over Streamable HTTP. The simplest path is the built-in subcommand, which writes the right keys to `settings.json` for you:
+
+```bash
+gemini mcp add unifi http://<host>:3714/mcp -t http -s user
+gemini mcp list
+```
+
+You should see:
+
+```text
+Configured MCP servers:
+
+✓ unifi: http://<host>:3714/mcp (http) - Connected
+```
+
+If you prefer to hand-edit, drop this into `~/.gemini/settings.json` (user scope) or `<project>/.gemini/settings.json` (project scope). The [canonical Gemini CLI MCP docs](https://www.geminicli.com/docs/tools/mcp-server) use `httpUrl` for Streamable HTTP servers:
+
+```json
+{
+  "mcpServers": {
+    "unifi": {
+      "httpUrl": "http://<host>:3714/mcp",
+      "timeout": 30000
+    }
+  }
+}
+```
+
+The `gemini mcp add` subcommand currently writes a slightly different shape (`"url"` plus `"type": "http"`); both forms are accepted by recent Gemini CLI builds. Stick with whichever matches how you populated the file. Then run `gemini` interactively and use `/mcp` to inspect the connection or list available tools.
+
+**Verified against:** Gemini CLI `0.36.0` on macOS. The MCP handshake (capabilities, tool/prompt/resource discovery, context refresh) completed against `mcp-unifi 0.3.0` running in stub mode. Live tool execution from inside Gemini additionally requires a valid Gemini API key or OAuth login configured in the CLI; this is unrelated to the MCP wiring.
 
 ### Generic config
 
