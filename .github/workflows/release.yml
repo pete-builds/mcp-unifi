@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  publish:
+  publish-image:
     name: Build + Push image
     runs-on: ubuntu-latest
     steps:
@@ -65,3 +65,37 @@ jobs:
           subject-name: ghcr.io/${{ github.repository }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
+
+  publish-pypi:
+    name: Build + Publish to PyPI
+    runs-on: ubuntu-latest
+    # PyPI Trusted Publisher requires id-token: write and an environment.
+    # Configure the trusted publisher under PyPI project settings:
+    #   workflow filename: release.yml
+    #   environment name:  pypi
+    environment:
+      name: pypi
+      url: https://pypi.org/p/mcp-unifi
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install build tooling
+        run: python -m pip install --upgrade build
+
+      - name: Build wheel + sdist
+        run: python -m build
+
+      - name: Publish to PyPI via Trusted Publisher (OIDC)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          # No password / token: PyPI verifies the OIDC token from this
+          # workflow against the trusted publisher config on the project.
