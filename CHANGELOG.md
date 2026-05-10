@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-05-10
+
+### Added
+
+- **stdio transport** alongside the existing Streamable HTTP transport.
+  Selected via the new `MCP_TRANSPORT` env var (`stdio` |
+  `streamable-http`, default `streamable-http` for back-compat with
+  existing Docker deploys). Lets Claude Desktop / `uvx` users spawn the
+  server per session without running a long-lived container.
+- **PyPI package** entry in `server.json` so the MCP Registry advertises
+  both the stdio (`uvx mcp-unifi`) and OCI (`ghcr.io/.../mcp-unifi`)
+  install paths.
+- Quick-start in the README leads with the stdio path for desktop
+  users; Docker remains the recommendation for homelab / multi-client
+  setups.
+- Three config tests covering `MCP_TRANSPORT` (default, accepted
+  values, invalid values), plus a `safe_repr` test for the new field.
+
+### Changed
+
+- Logging now writes to **stderr** instead of stdout. Required for
+  stdio transport (stdout owns the JSON-RPC framing); harmless for
+  the HTTP path. Docker and journald collect stderr by default.
+- `docker-compose.yml` explicitly sets `MCP_TRANSPORT=streamable-http`
+  so the compose path is independent of the package default.
+
+### Notes for upgrading
+
+- **Docker users**: no behavioral change. The image still binds to
+  `:3714/mcp`. If you re-pull the `:latest` tag or pin to `0.4.0` and
+  reuse your existing `.env`, everything continues to work.
+- **PyPI / uvx users**: set `MCP_TRANSPORT=stdio` in your client's env
+  block (see README). The package default is `streamable-http`, so
+  forgetting the override would start an HTTP server you don't want.
+
 ## [0.3.0] - 2026-05-09
 
 ### Added — 26 new tools across four tiers
@@ -156,6 +191,7 @@ UniFi controller endpoint paths were cross-referenced against the
 [`sirkirby/unifi-mcp`](https://github.com/sirkirby/unifi-mcp) project. No code
 was copied; the implementation here is an independent FastMCP + httpx build.
 
+[0.4.0]: https://github.com/pete-builds/mcp-unifi/releases/tag/v0.4.0
 [0.3.0]: https://github.com/pete-builds/mcp-unifi/releases/tag/v0.3.0
 [0.2.0]: https://github.com/pete-builds/mcp-unifi/releases/tag/v0.2.0
 [0.1.0]: https://github.com/pete-builds/mcp-unifi/releases/tag/v0.1.0

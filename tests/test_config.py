@@ -60,3 +60,23 @@ def test_port_range_validation() -> None:
         Settings(mcp_port=0)
     with pytest.raises(ValueError):
         Settings(mcp_port=99999)
+
+
+def test_transport_defaults_to_streamable_http() -> None:
+    s = Settings()
+    assert s.mcp_transport == "streamable-http"
+
+
+def test_transport_accepts_stdio() -> None:
+    s = Settings(mcp_transport="stdio")
+    assert s.mcp_transport == "stdio"
+
+
+def test_transport_rejects_unknown_values() -> None:
+    with pytest.raises(ValueError):
+        Settings(mcp_transport="websocket")  # type: ignore[arg-type]
+
+
+def test_safe_repr_includes_transport() -> None:
+    s = Settings(mcp_transport="stdio")
+    assert s.safe_repr()["mcp_transport"] == "stdio"

@@ -103,7 +103,9 @@ def configure_logging(level: str = "INFO", fmt: str = "json") -> None:
     for handler in list(root.handlers):
         root.removeHandler(handler)
 
-    handler = logging.StreamHandler(stream=sys.stdout)
+    # stderr — never stdout. The stdio MCP transport uses stdout for the
+    # JSON-RPC framing; any log line on stdout would corrupt the protocol.
+    handler = logging.StreamHandler(stream=sys.stderr)
     if fmt == "json":
         handler.setFormatter(JsonFormatter())
     else:

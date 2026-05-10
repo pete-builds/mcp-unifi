@@ -17,6 +17,7 @@ services:
     env_file:
       - .env
     environment:
+      MCP_TRANSPORT: "streamable-http"
       MCP_HOST: "0.0.0.0"
       MCP_PORT: "${MCP_PORT:-3714}"
       TZ: "${TZ:-UTC}"

@@ -1787,16 +1787,26 @@ def build_server(
 
 
 def main() -> None:
-    """CLI entrypoint used by the Docker image."""
+    """CLI entrypoint. Dispatches on MCP_TRANSPORT.
+
+    - ``streamable-http`` (default): long-running container / multi-client.
+    - ``stdio``: per-session subprocess (Claude Desktop, ``uvx mcp-unifi``).
+    """
     settings = load_settings()
     configure_logging(level=settings.log_level, fmt=settings.log_format)
     logger.info("MCP UniFi starting", extra={"config": settings.safe_repr()})
     server = build_server(settings)
-    server.run(
-        transport="streamable-http",
-        host=settings.mcp_host,
-        port=settings.mcp_port,
-    )
+
+    if settings.mcp_transport == "stdio":
+        # stdio transport owns stdout for the JSON-RPC framing. Logging is
+        # already on stderr (see logging_setup.configure_logging).
+        server.run(transport="stdio")
+    else:
+        server.run(
+            transport="streamable-http",
+            host=settings.mcp_host,
+            port=settings.mcp_port,
+        )
 
 
 if __name__ == "__main__":

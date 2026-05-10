@@ -60,6 +60,14 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     # MCP server settings
     # ------------------------------------------------------------------
+    mcp_transport: Literal["stdio", "streamable-http"] = Field(
+        default="streamable-http",
+        description=(
+            "MCP transport. 'stdio' for Claude Desktop / per-session "
+            "subprocess installs (uvx, pipx). 'streamable-http' (default) "
+            "for the long-running container, multi-client homelab pattern."
+        ),
+    )
     mcp_host: str = Field(default="0.0.0.0")
     mcp_port: int = Field(default=3714, ge=1, le=65535)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(default="INFO")
@@ -112,6 +120,7 @@ class Settings(BaseSettings):
             "iot_subnet_template": self.iot_subnet_template,
             "iot_dhcp_start_offset": self.iot_dhcp_start_offset,
             "iot_dhcp_stop_offset": self.iot_dhcp_stop_offset,
+            "mcp_transport": self.mcp_transport,
             "mcp_host": self.mcp_host,
             "mcp_port": self.mcp_port,
             "log_level": self.log_level,

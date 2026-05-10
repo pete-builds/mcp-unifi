@@ -6,12 +6,12 @@
 [![Release](https://img.shields.io/github/v/release/pete-builds/mcp-unifi)](https://github.com/pete-builds/mcp-unifi/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.14-blue.svg)](pyproject.toml)
-[![MCP](https://img.shields.io/badge/MCP-Streamable%20HTTP-brightgreen.svg)](https://modelcontextprotocol.io/)
+[![MCP](https://img.shields.io/badge/MCP-stdio%20%2B%20Streamable%20HTTP-brightgreen.svg)](https://modelcontextprotocol.io/)
 [![Coverage](https://img.shields.io/badge/coverage-90%25-brightgreen.svg)](#tests)
 
 An [MCP server](https://modelcontextprotocol.io/) for self-hosted UniFi gateway management. Forty-one tools covering devices, networks/VLANs, WiFi SSIDs (full CRUD), firewall rules (full CRUD), switch port profiles (full CRUD), per-client commands (block / unblock / reconnect / quarantine), per-port state (PoE + enable + profile assignment), static DHCP leases, port forwarding (full CRUD), site health, WAN status, events, alarms, speed tests, DPI top talkers, plus four composite tools with automatic rollback on partial failure: `create_iot_network`, `provision_homelab_service`, `create_guest_network`, and the read-only `audit_open_ports`.
 
-Built on FastMCP with Streamable HTTP transport. Talks to a UCG-Fiber, UDM Pro, or any other UniFi OS gateway via the local API key. No Site Manager / cloud account required.
+Built on FastMCP with **two transports**: `stdio` for per-session subprocess installs (Claude Desktop, `uvx mcp-unifi`) and `streamable-http` for the long-running container. Talks to a UCG-Fiber, UDM Pro, or any other UniFi OS gateway via the local API key. No Site Manager / cloud account required.
 
 Every tool returns JSON. Errors come back as a structured `{"error": "...", "stub_mode": bool}` object so the MCP loop never crashes on a gateway hiccup.
 
@@ -20,9 +20,10 @@ Every tool returns JSON. Errors come back as a structured `{"error": "...", "stu
 | MCP client | Transport | Status | Notes |
 |---|---|---|---|
 | Claude Code | Streamable HTTP | Verified (v0.2.0+, real-mode-ready) | `claude mcp add unifi -t http -s user --url http://<host>:3714/mcp` |
-| Claude Desktop | Streamable HTTP | Expected to work; config example below | Hand-edit `claude_desktop_config.json` |
+| Claude Desktop | stdio | Recommended for desktop installs | `uvx mcp-unifi` via `claude_desktop_config.json` (example below) |
+| Claude Desktop | Streamable HTTP | Works against a remote container | Hand-edit `claude_desktop_config.json` |
 | Gemini CLI (`@google/gemini-cli`) | Streamable HTTP | Verified MCP handshake (v0.36.0) | `gemini mcp add unifi http://<host>:3714/mcp -t http -s user`. Tool list, prompts, and resources discovered successfully. Live tool execution requires a valid Gemini API key / OAuth login. |
-| Any custom MCP client | Streamable HTTP | Should work per [MCP spec 2025-03-26+](https://modelcontextprotocol.io/specification) | Endpoint: `http://<host>:3714/mcp` |
+| Any custom MCP client | stdio or Streamable HTTP | Should work per [MCP spec 2025-03-26+](https://modelcontextprotocol.io/specification) | stdio: `mcp-unifi` binary. HTTP: `http://<host>:3714/mcp` |
 
 ## Why
 
@@ -32,13 +33,38 @@ The composite `create_iot_network` tool turns a 15-step UI workflow into a singl
 
 ## Quick start
 
-Pull the published image and run it:
+Two install paths. Pick the one that matches how you run Claude.
+
+### Option A: stdio (Claude Desktop, single user)
+
+No Docker required. Install via [uv](https://docs.astral.sh/uv/) and let Claude Desktop spawn the server per session:
+
+```json
+{
+  "mcpServers": {
+    "unifi": {
+      "command": "uvx",
+      "args": ["mcp-unifi"],
+      "env": {
+        "MCP_TRANSPORT": "stdio",
+        "STUB_MODE": "true"
+      }
+    }
+  }
+}
+```
+
+Drop that into `claude_desktop_config.json`, restart Claude Desktop, and ask "list my UniFi devices" — you'll get two stubbed devices back. Set `STUB_MODE=false` plus `UNIFI_HOST` / `UNIFI_API_KEY` when you're ready to point it at a real gateway.
+
+### Option B: Streamable HTTP (Docker, multi-client / homelab)
+
+Pull the published image and run it as a long-running service:
 
 ```bash
 docker run --rm \
   -p 3714:3714 \
   -e STUB_MODE=true \
-  ghcr.io/pete-builds/mcp-unifi:0.3.0
+  ghcr.io/pete-builds/mcp-unifi:0.4.0
 ```
 
 The server starts in **stub mode** by default, which returns realistic mock data and requires no UniFi hardware. Register it with Claude Code:
@@ -46,8 +72,6 @@ The server starts in **stub mode** by default, which returns realistic mock data
 ```bash
 claude mcp add unifi --transport http --scope user --url http://localhost:3714/mcp
 ```
-
-Then ask Claude Code to "list my UniFi devices" and you should see two stubbed devices come back.
 
 To talk to a real gateway, pass the credentials and flip stub mode off:
 
@@ -57,7 +81,7 @@ docker run --rm \
   -e STUB_MODE=false \
   -e UNIFI_HOST=192.168.1.1 \
   -e UNIFI_API_KEY=<your-local-api-key> \
-  ghcr.io/pete-builds/mcp-unifi:0.3.0
+  ghcr.io/pete-builds/mcp-unifi:0.4.0
 ```
 
 Generate the API key under **Settings → Control Plane → Integrations** on the gateway.
@@ -136,8 +160,9 @@ All configuration is read from environment variables (and a `.env` file when pre
 | `IOT_SUBNET_TEMPLATE` | string | `10.0.{vlan_id}.0/24` | no | Must contain the literal `{vlan_id}` placeholder. |
 | `IOT_DHCP_START_OFFSET` | int (2-254) | `100` | no | First DHCP lease offset within the IoT /24. |
 | `IOT_DHCP_STOP_OFFSET` | int (2-254) | `200` | no | Last DHCP lease offset within the IoT /24. |
-| `MCP_HOST` | string | `0.0.0.0` | no | Bind address. |
-| `MCP_PORT` | int | `3714` | no | Listen port. |
+| `MCP_TRANSPORT` | enum | `streamable-http` | no | `stdio` for Claude Desktop / `uvx` installs; `streamable-http` for the long-running container. |
+| `MCP_HOST` | string | `0.0.0.0` | no | Bind address (Streamable HTTP only). |
+| `MCP_PORT` | int | `3714` | no | Listen port (Streamable HTTP only). |
 | `LOG_LEVEL` | enum | `INFO` | no | One of `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
 | `LOG_FORMAT` | enum | `json` | no | `json` for production, `text` for local dev. |
 
@@ -151,9 +176,26 @@ A complete example lives in [`.env.example`](.env.example).
 claude mcp add unifi --transport http --scope user --url http://<host>:3714/mcp
 ```
 
-### Claude Desktop
+### Claude Desktop (stdio, recommended)
 
-Add the following to your `claude_desktop_config.json`:
+```json
+{
+  "mcpServers": {
+    "unifi": {
+      "command": "uvx",
+      "args": ["mcp-unifi"],
+      "env": {
+        "MCP_TRANSPORT": "stdio",
+        "STUB_MODE": "true"
+      }
+    }
+  }
+}
+```
+
+Add gateway env vars (`STUB_MODE=false`, `UNIFI_HOST`, `UNIFI_API_KEY`) when you're ready to leave stub mode. Note that `claude_desktop_config.json` is plaintext on your machine — Docker / .env mode 600 is more appropriate if your gateway sits behind sensitive credentials you don't want stored in user config.
+
+### Claude Desktop (Streamable HTTP, against a remote container)
 
 ```json
 {
