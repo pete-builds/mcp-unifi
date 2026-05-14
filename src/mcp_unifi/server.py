@@ -552,7 +552,7 @@ def build_server(
             assert client is not None
             return _format(await client.create_port_profile(payload))
         except UniFiError as exc:
-            logger.exception("create_port_profile failed", extra={"name": name})
+            logger.exception("create_port_profile failed", extra={"profile_name": name})
             return err(str(exc))
 
     @mcp.tool()
@@ -964,7 +964,7 @@ def build_server(
             assert client is not None
             return _format(await client.create_port_forward(payload))
         except UniFiError as exc:
-            logger.exception("create_port_forward failed", extra={"name": name})
+            logger.exception("create_port_forward failed", extra={"forward_name": name})
             return err(str(exc))
 
     @mcp.tool()
