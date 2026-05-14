@@ -1,6 +1,6 @@
 """MCP UniFi — local-API gateway management for self-hosted UniFi.
 
-Forty-one tools covering devices, networks/VLANs, WLANs (CRUD), firewall rules
+Forty-three tools covering devices, networks/VLANs, WLANs (CRUD), firewall rules
 (CRUD), switch port profiles (CRUD), connected clients (block/unblock/
 reconnect), per-port state (PoE + enable + profile assignment), static DHCP
 leases (CRUD), port forwarding (CRUD), site health, WAN status, events,

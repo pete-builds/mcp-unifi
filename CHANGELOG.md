@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-05-14
+
+### Fixed
+
+- `create_port_forward` and `create_port_profile` no longer mask the
+  underlying `UniFiError` with `"Attempt to overwrite 'name' in
+  LogRecord"`. The exception handlers passed `extra={"name": name}` to
+  `logger.exception`, colliding with Python logging's reserved
+  `LogRecord.name` attribute. Renamed to `forward_name` /
+  `profile_name`, matching the prefixed pattern already used by the
+  VLAN, WLAN, and firewall-rule create paths.
+
 ## [0.4.0] - 2026-05-10
 
 ### Added
