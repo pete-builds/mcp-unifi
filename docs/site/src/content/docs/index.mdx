@@ -1,0 +1,82 @@
+---
+title: mcp-unifi
+description: The safest UniFi MCP server. Multi-site, dry-run, audit log, Network + Protect.
+template: splash
+hero:
+  tagline: The safest UniFi MCP server. Multi-site, dry-run, audit log, Network + Protect.
+  actions:
+    - text: Get Started
+      link: /mcp-unifi/getting-started/
+      icon: right-arrow
+      variant: primary
+    - text: View on GitHub
+      link: https://github.com/pete-builds/mcp-unifi
+      icon: external
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## Install in 30 seconds
+
+<CardGrid>
+  <Card title="Docker" icon="seti:docker">
+    Long-running container for homelab and multi-client setups.
+
+    ```bash
+    docker run --rm -p 3714:3714 -e STUB_MODE=true \
+      ghcr.io/pete-builds/mcp-unifi:latest
+    ```
+
+    [Docker install guide →](/mcp-unifi/install/docker/)
+  </Card>
+
+  <Card title="Claude Desktop (.dxt)" icon="seti:download">
+    One-click install. Stdio transport, on-demand server.
+
+    Download `mcp-unifi-<version>.dxt` from the GitHub release page and double-click.
+
+    [.dxt install guide →](/mcp-unifi/install/dxt/)
+  </Card>
+
+  <Card title="Helm" icon="seti:kubernetes">
+    Kubernetes deployment with multi-controller support.
+
+    ```bash
+    helm repo add mcp-unifi \
+      https://pete-builds.github.io/mcp-unifi/
+    helm install unifi mcp-unifi/mcp-unifi
+    ```
+
+    [Helm install guide →](/mcp-unifi/install/helm/)
+  </Card>
+
+  <Card title="uvx / pipx" icon="seti:python">
+    Quick one-off runs straight from GitHub.
+
+    ```bash
+    uvx --from git+https://github.com/pete-builds/mcp-unifi mcp-unifi
+    ```
+
+    [uvx install guide →](/mcp-unifi/install/uvx/)
+  </Card>
+</CardGrid>
+
+## What makes mcp-unifi different
+
+<CardGrid>
+  <Card title="Safe by default" icon="approve-check">
+    `dry_run=True` on every destructive op returns the predicted change set without writing. Composites roll back on partial failure. Every call lands in a JSONL audit log.
+  </Card>
+
+  <Card title="Multi-site" icon="seti:config">
+    Manage home + office + parents' controllers from one MCP instance. Every tool accepts an optional `controller` parameter.
+  </Card>
+
+  <Card title="Network + Protect" icon="puzzle">
+    46 Network tools (VLANs, WLANs, firewall, switch ports, port forwards, observability) plus 12 Protect tools (cameras, motion events, smart detections, recording config).
+  </Card>
+
+  <Card title="Available everywhere" icon="rocket">
+    Docker, .dxt one-click, Helm, uvx. Listed on Smithery, the MCP Registry, and the major catalogs.
+  </Card>
+</CardGrid>

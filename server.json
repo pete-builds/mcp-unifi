@@ -2,17 +2,17 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.pete-builds/unifi",
   "title": "UniFi Gateway",
-  "description": "Self-hosted UniFi gateway management: VLANs, WLANs, firewall, clients, DHCP, observability. 41 tools, stub mode for hardware-free demos, runs as either a stdio subprocess (Claude Desktop / uvx) or a long-running Streamable HTTP server (Docker).",
+  "description": "Self-hosted UniFi gateway management with safe-by-default semantics. 46 Network tools (devices, VLANs, WLANs, firewall, switch ports, port forwards, DHCP, observability, composites with rollback) plus 12 opt-in Protect tools (cameras, motion events, smart detections, recording config). Multi-site via MCP_UNIFI_CONTROLLERS_FILE; every tool accepts a 'controller' parameter. Every destructive tool accepts dry_run=True to preview without writing. Every call is captured to a JSONL audit log with secrets scrubbed. Runs as either a stdio subprocess (Claude Desktop / uvx / .dxt) or a long-running Streamable HTTP server (Docker / Helm).",
   "repository": {
     "url": "https://github.com/pete-builds/mcp-unifi",
     "source": "github"
   },
-  "version": "0.4.0",
-  "websiteUrl": "https://github.com/pete-builds/mcp-unifi",
+  "version": "0.5.0-rc.2",
+  "websiteUrl": "https://pete-builds.github.io/mcp-unifi/",
   "packages": [
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/pete-builds/mcp-unifi:0.4.0",
+      "identifier": "ghcr.io/pete-builds/mcp-unifi:0.5.0-rc.2",
       "transport": {
         "type": "streamable-http",
         "url": "http://localhost:3714/mcp"
@@ -29,13 +29,13 @@
         },
         {
           "name": "UNIFI_HOST",
-          "description": "IP address or hostname of the UniFi OS gateway (UCG-Fiber, UDM Pro, etc). Required when STUB_MODE=false.",
+          "description": "IP address or hostname of the UniFi OS gateway (UCG-Fiber, UDM Pro, etc). Required when STUB_MODE=false and MCP_UNIFI_CONTROLLERS_FILE is unset.",
           "isRequired": false,
           "format": "string"
         },
         {
           "name": "UNIFI_API_KEY",
-          "description": "Local API key generated under Settings -> Control Plane -> Integrations on the gateway. Required when STUB_MODE=false.",
+          "description": "Local API key generated under Settings -> Control Plane -> Integrations on the gateway. Required when STUB_MODE=false and MCP_UNIFI_CONTROLLERS_FILE is unset.",
           "isRequired": false,
           "isSecret": true,
           "format": "string"
@@ -54,6 +54,34 @@
           "default": "false",
           "format": "string",
           "choices": ["true", "false"]
+        },
+        {
+          "name": "MCP_UNIFI_CONTROLLERS_FILE",
+          "description": "Path to a YAML file describing multiple named controllers for multi-site management. When set, the legacy UNIFI_HOST / UNIFI_API_KEY env vars are ignored. Each entry needs name, host, api_key, and optionally port, site, verify_ssl.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "MCP_UNIFI_MODULES_ENABLED",
+          "description": "Comma-separated list of modules to load. Known values: 'network', 'protect'. Defaults to 'network'. Set to 'network,protect' to enable UniFi Protect tools alongside Network tools.",
+          "isRequired": false,
+          "default": "network",
+          "format": "string"
+        },
+        {
+          "name": "MCP_UNIFI_AUDIT_SINK",
+          "description": "Audit log sink. One of 'file' (default), 'stdout', or 'syslog'. Every tool call is recorded to a JSONL stream with secrets scrubbed.",
+          "isRequired": false,
+          "default": "file",
+          "format": "string",
+          "choices": ["file", "stdout", "syslog"]
+        },
+        {
+          "name": "MCP_UNIFI_AUDIT_PATH",
+          "description": "Path for the audit log file when MCP_UNIFI_AUDIT_SINK=file. Defaults to audit.jsonl in the process CWD.",
+          "isRequired": false,
+          "default": "audit.jsonl",
+          "format": "string"
         }
       ]
     }

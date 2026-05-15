@@ -1,0 +1,43 @@
+---
+title: Getting Started
+description: What mcp-unifi is, prerequisites, and the four install paths.
+---
+
+`mcp-unifi` is a [Model Context Protocol](https://modelcontextprotocol.io/) server that gives any MCP-aware client (Claude Desktop, Claude Code, Cursor, Cline, custom agents) a typed surface area over a self-hosted UniFi gateway. It speaks to the gateway over the local API key, runs entirely on your network, and does not require a Site Manager / cloud account.
+
+The server covers two UniFi apps:
+
+- **Network** (46 tools): devices, VLANs, WLANs, firewall rules, switch port profiles, per-client commands, static DHCP leases, port forwards, observability, plus composite tools with rollback (`create_iot_network`, `create_guest_network`, `provision_homelab_service`).
+- **Protect** (12 tools, opt-in): cameras, motion events, smart detections, snapshots, recordings, recording mode, privacy mask, motion sensitivity, plus a `provision_camera` composite.
+
+Every destructive tool accepts `dry_run=True` to preview the change set without applying it. Every call lands in a JSONL audit log with secrets scrubbed. Every tool accepts an optional `controller` parameter so one server instance can manage multiple sites.
+
+## Prerequisites
+
+- A UniFi OS gateway (UCG-Fiber, UDM Pro, UDM SE, or any gateway running UniFi OS) reachable on your network. The server talks to the legacy controller API at `/proxy/network/api/s/<site>/...`.
+- A **local API key**: log into the gateway UI, go to **Settings → Control Plane → Integrations**, click **Create API Key**, give it a name, copy the key. The key never leaves your network.
+- For Protect tools: a UniFi Protect application running on the same gateway.
+
+If you don't have hardware yet, every install path supports **`STUB_MODE=true`**, which returns realistic mock data from an in-memory state machine. You can wire up Claude flows, test tool calls, and verify your client config before the gateway ships.
+
+## Pick an install path
+
+Four supported install paths. Pick the one that matches how you run Claude:
+
+- **[Docker](/mcp-unifi/install/docker/)** — long-running container, Streamable HTTP transport on port 3714. Best for homelab setups with multiple clients (Claude Code + Claude Desktop + Cursor sharing one server).
+- **[Claude Desktop (.dxt)](/mcp-unifi/install/dxt/)** — one-click install. Stdio transport. The server starts on demand, no separate container to run.
+- **[Helm](/mcp-unifi/install/helm/)** — Kubernetes deployment. Streamable HTTP behind a Service / Ingress. Multi-controller via a Secret. Helm repo at `https://pete-builds.github.io/mcp-unifi/`.
+- **[uvx / pipx](/mcp-unifi/install/uvx/)** — quick one-off runs straight from the GitHub repo. Stdio transport. Good for trying things out without committing to a deploy shape.
+
+## Fastest path to a working tool call
+
+The fastest cold-start is **Docker + Claude Code in stub mode**:
+
+```bash
+docker run -d --rm -p 3714:3714 -e STUB_MODE=true \
+  --name mcp-unifi ghcr.io/pete-builds/mcp-unifi:latest
+
+claude mcp add --transport http --scope user unifi http://localhost:3714/mcp
+```
+
+Then in Claude Code: *"list my UniFi devices"*. You'll get two stubbed devices back, no hardware required. See the [Claude Code recipe](/mcp-unifi/recipes/claude-code/) for the full walkthrough.

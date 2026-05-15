@@ -2,365 +2,139 @@
 
 <!-- mcp-name: io.github.pete-builds/unifi -->
 
+**The safest UniFi MCP server. Multi-site, dry-run, audit log, Network + Protect.**
+
 [![CI](https://github.com/pete-builds/mcp-unifi/actions/workflows/ci.yml/badge.svg)](https://github.com/pete-builds/mcp-unifi/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/pete-builds/mcp-unifi)](https://github.com/pete-builds/mcp-unifi/releases)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.14-blue.svg)](pyproject.toml)
+[![Coverage](https://img.shields.io/badge/coverage-91%25-brightgreen)](https://github.com/pete-builds/mcp-unifi)
+[![cosign](https://img.shields.io/badge/cosign-signed-blue)](https://github.com/pete-builds/mcp-unifi/releases)
 [![MCP](https://img.shields.io/badge/MCP-stdio%20%2B%20Streamable%20HTTP-brightgreen.svg)](https://modelcontextprotocol.io/)
-[![Coverage](https://img.shields.io/badge/coverage-90%25-brightgreen.svg)](#tests)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-An [MCP server](https://modelcontextprotocol.io/) for self-hosted UniFi gateway management. Forty-one tools covering devices, networks/VLANs, WiFi SSIDs (full CRUD), firewall rules (full CRUD), switch port profiles (full CRUD), per-client commands (block / unblock / reconnect / quarantine), per-port state (PoE + enable + profile assignment), static DHCP leases, port forwarding (full CRUD), site health, WAN status, events, alarms, speed tests, DPI top talkers, plus four composite tools with automatic rollback on partial failure: `create_iot_network`, `provision_homelab_service`, `create_guest_network`, and the read-only `audit_open_ports`.
+An [MCP server](https://modelcontextprotocol.io/) for self-hosted UniFi gateway management. 46 Network tools (devices, VLANs, WLANs, firewall, switch ports, port forwards, observability, plus composites with rollback) and 12 Protect tools (cameras, motion events, smart detections, recording config). Every destructive tool accepts `dry_run=True` to preview without writing. Every call lands in a JSONL audit log. Every tool accepts a `controller` parameter so one server instance can manage multiple sites.
 
-Built on FastMCP with **two transports**: `stdio` for per-session subprocess installs (Claude Desktop, `uvx mcp-unifi`) and `streamable-http` for the long-running container. Talks to a UCG-Fiber, UDM Pro, or any other UniFi OS gateway via the local API key. No Site Manager / cloud account required.
+Speaks both **stdio** (Claude Desktop, `uvx`, `.dxt`) and **Streamable HTTP** (Docker, Helm). Talks to a UCG-Fiber, UDM Pro, or any UniFi OS gateway via the local API key. No Site Manager or cloud account required.
 
-Every tool returns JSON. Errors come back as a structured `{"error": "...", "stub_mode": bool}` object so the MCP loop never crashes on a gateway hiccup.
+## Install
 
-## Client compatibility
+Four supported paths. Pick the one that matches how you run Claude.
 
-| MCP client | Transport | Status | Notes |
-|---|---|---|---|
-| Claude Code | Streamable HTTP | Verified (v0.2.0+, real-mode-ready) | `claude mcp add unifi -t http -s user --url http://<host>:3714/mcp` |
-| Claude Desktop | stdio | Recommended for desktop installs | `uvx --from git+https://github.com/pete-builds/mcp-unifi mcp-unifi` via `claude_desktop_config.json` (example below) |
-| Claude Desktop | Streamable HTTP | Works against a remote container | Hand-edit `claude_desktop_config.json` |
-| Gemini CLI (`@google/gemini-cli`) | Streamable HTTP | Verified MCP handshake (v0.36.0) | `gemini mcp add unifi http://<host>:3714/mcp -t http -s user`. Tool list, prompts, and resources discovered successfully. Live tool execution requires a valid Gemini API key / OAuth login. |
-| Any custom MCP client | stdio or Streamable HTTP | Should work per [MCP spec 2025-03-26+](https://modelcontextprotocol.io/specification) | stdio: `mcp-unifi` binary. HTTP: `http://<host>:3714/mcp` |
+### Docker
 
-## Why
+Long-running container, Streamable HTTP on port `3714`. Best for homelab and multi-client setups.
 
-Most UniFi automation today means clicking through the controller UI, writing brittle one-off scripts, or pulling in a heavyweight community SDK. mcp-unifi gives any MCP-aware client (Claude Code, Claude Desktop, custom agents) a small, focused, well-typed surface area for the operations you actually do every week: spin up an IoT VLAN, drop a firewall rule, audit your SSIDs, list adopted devices.
+```bash
+docker run --rm -p 3714:3714 -e STUB_MODE=true \
+  ghcr.io/pete-builds/mcp-unifi:latest
+```
 
-The composite `create_iot_network` tool turns a 15-step UI workflow into a single tool call.
+### Claude Desktop (.dxt) — one-click
+
+Download `mcp-unifi-<version>.dxt` from the [latest release](https://github.com/pete-builds/mcp-unifi/releases) and double-click. Configuration is through a built-in UI in Claude Desktop. The bundle ships the Python runtime; no separate install needed. Uses stdio transport.
+
+### Helm
+
+```bash
+helm repo add mcp-unifi https://pete-builds.github.io/mcp-unifi/
+helm install unifi mcp-unifi/mcp-unifi \
+  --set unifi.host=192.168.1.1 \
+  --set unifi.apiKey=<your-local-api-key>
+```
+
+### uvx / pipx
+
+Quick one-off runs straight from the GitHub repo. Stdio transport.
+
+```bash
+uvx --from git+https://github.com/pete-builds/mcp-unifi mcp-unifi
+```
+
+Pin a release with `@v0.5.0-rc.2` (or any tag) appended to the URL.
+
+Full guides for each install path live in the [docs site](https://pete-builds.github.io/mcp-unifi/).
+
+## What makes mcp-unifi different
+
+- **Safe by default.** `dry_run=True` on every destructive op returns the predicted change set without writing. Composite tools (`create_iot_network`, `create_guest_network`, `provision_homelab_service`, `provision_camera`) roll back on partial failure. Every call lands in a JSONL audit log with secrets scrubbed. Other UniFi MCPs hand the LLM a raw firewall API.
+- **Multi-site.** Manage home + office + parents' controllers from one MCP instance. Every tool accepts an optional `controller` parameter. Zero competing UniFi MCPs do this.
+- **Network + Protect.** The two UniFi apps homelab actually uses, in one server. Network on by default; Protect opt-in via `MCP_UNIFI_MODULES_ENABLED=network,protect`.
+- **Available everywhere.** Docker, .dxt one-click, Helm, uvx. Listed on Smithery and the official MCP Registry.
 
 ## Quick start
 
-Two install paths. Pick the one that matches how you run Claude.
+Fastest cold-start: Docker + Claude Code in stub mode, no hardware required.
 
-### Option A: stdio (Claude Desktop, single user)
+1. Start the container:
 
-No Docker required. Install via [uv](https://docs.astral.sh/uv/) directly from the GitHub repo and let Claude Desktop spawn the server per session:
+   ```bash
+   docker run -d --rm -p 3714:3714 -e STUB_MODE=true \
+     --name mcp-unifi ghcr.io/pete-builds/mcp-unifi:latest
+   ```
 
-```json
-{
-  "mcpServers": {
-    "unifi": {
-      "command": "uvx",
-      "args": [
-        "--from",
-        "git+https://github.com/pete-builds/mcp-unifi",
-        "mcp-unifi"
-      ],
-      "env": {
-        "MCP_TRANSPORT": "stdio",
-        "STUB_MODE": "true"
-      }
-    }
-  }
-}
-```
+2. Register it with Claude Code:
 
-Drop that into `claude_desktop_config.json`, restart Claude Desktop, and ask "list my UniFi devices" — you'll get two stubbed devices back. Set `STUB_MODE=false` plus `UNIFI_HOST` / `UNIFI_API_KEY` when you're ready to point it at a real gateway.
+   ```bash
+   claude mcp add --transport http --scope user unifi http://localhost:3714/mcp
+   ```
 
-To pin a specific release, append `@v0.4.0` (or any tag) to the git URL: `git+https://github.com/pete-builds/mcp-unifi@v0.4.0`.
+3. Verify the connection:
 
-### Option B: Streamable HTTP (Docker, multi-client / homelab)
+   ```bash
+   claude mcp list
+   ```
 
-Pull the published image and run it as a long-running service:
+4. In a Claude Code session, ask: *"list my UniFi devices"*. You'll get two stubbed devices back.
 
-```bash
-docker run --rm \
-  -p 3714:3714 \
-  -e STUB_MODE=true \
-  ghcr.io/pete-builds/mcp-unifi:0.4.0
-```
+5. When you're ready to point at a real gateway, drop stub mode:
 
-The server starts in **stub mode** by default, which returns realistic mock data and requires no UniFi hardware. Register it with Claude Code:
+   ```bash
+   docker run -d --rm -p 3714:3714 \
+     -e STUB_MODE=false \
+     -e UNIFI_HOST=192.168.1.1 \
+     -e UNIFI_API_KEY=<your-local-api-key> \
+     --name mcp-unifi ghcr.io/pete-builds/mcp-unifi:latest
+   ```
 
-```bash
-claude mcp add unifi --transport http --scope user --url http://localhost:3714/mcp
-```
+Generate the API key under **Settings → Control Plane → Integrations → Create API Key** on the gateway.
 
-To talk to a real gateway, pass the credentials and flip stub mode off:
+## Compared to alternatives
 
-```bash
-docker run --rm \
-  -p 3714:3714 \
-  -e STUB_MODE=false \
-  -e UNIFI_HOST=192.168.1.1 \
-  -e UNIFI_API_KEY=<your-local-api-key> \
-  ghcr.io/pete-builds/mcp-unifi:0.4.0
-```
+A factual comparison against the other actively-listed UniFi MCP servers. `?` means the project's README doesn't document the property.
 
-Generate the API key under **Settings → Control Plane → Integrations** on the gateway.
+| Project | Tools | Multi-site | dry-run | Audit log | Cosign-signed | Last commit |
+|---|---|---|---|---|---|---|
+| **mcp-unifi** | 46 Network + 12 Protect | ✓ | ✓ | ✓ | ✓ | Active |
+| sirkirby/unifi-mcp | 166 | – | – | – | – | ? |
+| claytono/go-unifi-mcp | 242 ops (Go) | – | – | – | – | ? |
+| Other community UniFi MCPs | varies | – | – | – | – | mostly stale |
 
-## Tool reference
-
-| Tool | Signature | What it does |
-|---|---|---|
-| `list_devices` | `()` | List adopted gateways, APs, and switches with state, uptime, and per-radio info. |
-| `list_networks` | `()` | List all configured networks/VLANs (subnet, DHCP range, VLAN ID). |
-| `create_vlan` | `(name, vlan_id, subnet, dhcp_start?, dhcp_stop?, purpose?)` | Create a new VLAN-tagged network. |
-| `update_vlan` | `(network_id, updates)` | Patch fields on an existing VLAN. |
-| `delete_vlan` | `(network_id)` | Delete a VLAN. |
-| `list_wlans` | `()` | List all WiFi SSIDs. |
-| `create_wlan` | `(name, passphrase, network_id, security?, wpa_mode?, is_guest?, hide_ssid?, wlan_band?)` | Create a new SSID bound to a specific VLAN. |
-| `update_wlan` | `(wlan_id, updates)` | Patch fields on an existing SSID (name, passphrase, hide_ssid, etc.). |
-| `delete_wlan` | `(wlan_id)` | Delete a WiFi SSID. |
-| `list_firewall_rules` | `()` | List all firewall rules. |
-| `create_firewall_rule` | `(name, ruleset, action, rule_index?, protocol?, src_address?, dst_address?, src_networkconf_id?, dst_networkconf_id?, enabled?)` | Create a firewall rule. |
-| `delete_firewall_rule` | `(rule_id)` | Delete a firewall rule. |
-| `list_port_profiles` | `()` | List switch port profiles (PoE mode, native VLAN, forwarding). |
-| `list_clients` | `()` | List currently connected wireless and wired clients (MAC, hostname, IP, signal/satisfaction, AP or switch port, uptime). |
-| `update_firewall_rule` | `(rule_id, updates)` | Patch fields on an existing firewall rule. |
-| `create_port_profile` | `(name, native_networkconf_id?, forward?, poe_mode?, tagged_networkconf_ids?)` | Create a switch port profile. |
-| `update_port_profile` | `(profile_id, updates)` | Patch fields on a port profile. |
-| `delete_port_profile` | `(profile_id)` | Delete a port profile. |
-| `block_client` | `(mac)` | Block a client by MAC. |
-| `unblock_client` | `(mac)` | Unblock a previously-blocked client. |
-| `reconnect_client` | `(mac)` | Force a client to reconnect (kick-sta). |
-| `restart_device` | `(mac)` | Restart an adopted device (gateway, AP, or switch). |
-| `locate_device` | `(mac, on?)` | Toggle the LED locate beacon on a device. |
-| `set_port_state` | `(device_mac, port_idx, enable?, poe_mode?, portconf_id?)` | Override settings on one switch port (PoE, enable, profile). Real mode preserves other ports' overrides. |
-| `list_dhcp_leases` | `()` | List static DHCP reservations. |
-| `create_static_dhcp_lease` | `(mac, ip, network_id, name?, hostname?)` | Reserve a fixed IP for a client. |
-| `delete_static_dhcp_lease` | `(lease_id)` | Delete a static reservation. |
-| `list_port_forwards` | `()` | List all port-forward (DNAT) rules. |
-| `create_port_forward` | `(name, fwd, fwd_port, dst_port, proto?, src?, enabled?, log?)` | Create a port-forward rule. |
-| `update_port_forward` | `(forward_id, updates)` | Patch a port-forward rule. |
-| `delete_port_forward` | `(forward_id)` | Delete a port-forward rule. |
-| `get_site_health` | `()` | Per-subsystem health (wan, lan, wlan, www, vpn). |
-| `get_wan_status` | `()` | Just the WAN subsystem record (link, ISP, public IP, throughput, latency). |
-| `list_events` | `(limit?)` | Recent controller events. |
-| `list_alarms` | `(limit?, archived?)` | Active or archived alarms. |
-| `trigger_speedtest` | `()` | Kick off a UniFi WAN speed test. |
-| `get_speedtest_results` | `(limit?)` | Recent speed-test results, newest first. |
-| `list_top_talkers` | `(limit?)` | Top clients by total bytes (DPI by-station report). |
-| `create_iot_network` | `(name, vlan_id, passphrase, main_lan_subnet?, subnet?, isolate?, hide_ssid?)` | One-shot: VLAN + SSID + isolation rule, with rollback on failure. |
-| `provision_homelab_service` | `(name, mac, ip, network_id, ports?, wan_expose?)` | Lease + LAN_LOCAL accept + (optional) port forwards. Rolls back on failure. |
-| `quarantine_client` | `(mac, reason)` | Block client + structured warning log carrying the reason. |
-| `create_guest_network` | `(name, ssid, passphrase, vlan_id, main_lan_subnet?, subnet?, schedule?, hide_ssid?)` | Guest VLAN + guest SSID + isolation rule, with rollback on failure. |
-| `audit_open_ports` | `()` | Read-only review of WAN-facing exposure (active port forwards + non-boilerplate WAN accept rules). |
-
-Every tool returns a JSON string. Errors are returned as a structured `{"error": "...", "stub_mode": bool}` object so Claude can render the failure without crashing the MCP loop.
-
-## Stub mode vs real mode
-
-| Mode | When to use | Behavior |
-|---|---|---|
-| **Stub** (`STUB_MODE=true`, default) | Development, demos, wiring up Claude flows before hardware arrives | In-memory state machine seeded with one gateway, one AP, one network, one SSID, one firewall rule, two port profiles. Create/update/delete persist within the container's lifetime. Resets on restart. |
-| **Real** (`STUB_MODE=false`) | Production with a UCG-Fiber/UDM/other UniFi OS gateway | Talks HTTPS to the gateway with your local API key. Requires `UNIFI_HOST` and `UNIFI_API_KEY`. |
-
-Switching modes is a config change, not a code change. The same eleven tools, the same response shapes.
+mcp-unifi trades raw tool count for safety primitives, multi-site, and supply-chain provenance. The premise: the LLM doesn't need 166 endpoints, it needs the 60 that cover the operations homelab actually does every week, with safe-by-default semantics on the destructive ones.
 
 ## Configuration
 
-All configuration is read from environment variables (and a `.env` file when present). Config is validated by Pydantic at startup; invalid values fail fast with a helpful message.
+All config is read from environment variables (and `.env` when present). The five most common:
 
-| Variable | Type | Default | Required | Notes |
-|---|---|---|---|---|
-| `STUB_MODE` | bool | `true` | no | When `false`, real-mode credentials are required. |
-| `UNIFI_HOST` | string | `""` | only in real mode | Gateway IP or hostname (no scheme). |
-| `UNIFI_PORT` | int | `443` | no | HTTPS port for the gateway. |
-| `UNIFI_SITE` | string | `default` | no | Controller site identifier. |
-| `UNIFI_API_KEY` | string | `""` | only in real mode | Local API key from Settings → Control Plane → Integrations. |
-| `UNIFI_VERIFY_SSL` | bool | `false` | no | Set `true` if you have installed a real cert on the gateway. |
-| `IOT_SUBNET_TEMPLATE` | string | `10.0.{vlan_id}.0/24` | no | Must contain the literal `{vlan_id}` placeholder. |
-| `IOT_DHCP_START_OFFSET` | int (2-254) | `100` | no | First DHCP lease offset within the IoT /24. |
-| `IOT_DHCP_STOP_OFFSET` | int (2-254) | `200` | no | Last DHCP lease offset within the IoT /24. |
-| `MCP_TRANSPORT` | enum | `streamable-http` | no | `stdio` for Claude Desktop / `uvx` installs; `streamable-http` for the long-running container. |
-| `MCP_HOST` | string | `0.0.0.0` | no | Bind address (Streamable HTTP only). |
-| `MCP_PORT` | int | `3714` | no | Listen port (Streamable HTTP only). |
-| `LOG_LEVEL` | enum | `INFO` | no | One of `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
-| `LOG_FORMAT` | enum | `json` | no | `json` for production, `text` for local dev. |
+| Variable | Default | Notes |
+|---|---|---|
+| `STUB_MODE` | `true` | When `false`, real-mode controller config is required. |
+| `UNIFI_HOST` | (empty) | Gateway IP or hostname. Required in real mode. |
+| `UNIFI_API_KEY` | (empty) | Local API key. Required in real mode. |
+| `MCP_UNIFI_MODULES_ENABLED` | `network` | Set to `network,protect` to enable Protect. |
+| `MCP_UNIFI_CONTROLLERS_FILE` | (unset) | YAML file with named controllers for multi-site. |
 
-A complete example lives in [`.env.example`](.env.example).
+Full env var reference and the multi-site YAML schema are in the [Configuration docs](https://pete-builds.github.io/mcp-unifi/reference/configuration/).
 
-## MCP client setup
+## Docs
 
-### Claude Code
-
-```bash
-claude mcp add unifi --transport http --scope user --url http://<host>:3714/mcp
-```
-
-### Claude Desktop (stdio, recommended)
-
-```json
-{
-  "mcpServers": {
-    "unifi": {
-      "command": "uvx",
-      "args": [
-        "--from",
-        "git+https://github.com/pete-builds/mcp-unifi",
-        "mcp-unifi"
-      ],
-      "env": {
-        "MCP_TRANSPORT": "stdio",
-        "STUB_MODE": "true"
-      }
-    }
-  }
-}
-```
-
-Add gateway env vars (`STUB_MODE=false`, `UNIFI_HOST`, `UNIFI_API_KEY`) when you're ready to leave stub mode. Note that `claude_desktop_config.json` is plaintext on your machine — Docker / .env mode 600 is more appropriate if your gateway sits behind sensitive credentials you don't want stored in user config.
-
-### Claude Desktop (Streamable HTTP, against a remote container)
-
-```json
-{
-  "mcpServers": {
-    "unifi": {
-      "transport": "streamable-http",
-      "url": "http://<host>:3714/mcp"
-    }
-  }
-}
-```
-
-### Gemini CLI
-
-[Gemini CLI](https://github.com/google-gemini/gemini-cli) supports MCP servers over Streamable HTTP. The simplest path is the built-in subcommand, which writes the right keys to `settings.json` for you:
-
-```bash
-gemini mcp add unifi http://<host>:3714/mcp -t http -s user
-gemini mcp list
-```
-
-You should see:
-
-```text
-Configured MCP servers:
-
-✓ unifi: http://<host>:3714/mcp (http) - Connected
-```
-
-If you prefer to hand-edit, drop this into `~/.gemini/settings.json` (user scope) or `<project>/.gemini/settings.json` (project scope). The [canonical Gemini CLI MCP docs](https://www.geminicli.com/docs/tools/mcp-server) use `httpUrl` for Streamable HTTP servers:
-
-```json
-{
-  "mcpServers": {
-    "unifi": {
-      "httpUrl": "http://<host>:3714/mcp",
-      "timeout": 30000
-    }
-  }
-}
-```
-
-The `gemini mcp add` subcommand currently writes a slightly different shape (`"url"` plus `"type": "http"`); both forms are accepted by recent Gemini CLI builds. Stick with whichever matches how you populated the file. Then run `gemini` interactively and use `/mcp` to inspect the connection or list available tools.
-
-**Verified against:** Gemini CLI `0.36.0` on macOS. The MCP handshake (capabilities, tool/prompt/resource discovery, context refresh) completed against `mcp-unifi 0.3.0` running in stub mode. Live tool execution from inside Gemini additionally requires a valid Gemini API key or OAuth login configured in the CLI; this is unrelated to the MCP wiring.
-
-### Generic config
-
-Streamable HTTP at `http://<host>:3714/mcp`. Any MCP client that supports the Streamable HTTP transport ([spec 2025-03-26+](https://modelcontextprotocol.io/specification)) can connect.
-
-## Architecture
-
-```
-+---------------------+         Streamable HTTP         +---------------------+
-|  MCP Client         |  -------------------------->    |  mcp-unifi          |
-|  (Claude Code, etc) |  <--------------------------    |  (FastMCP server)   |
-+---------------------+                                 +----------+----------+
-                                                                   |
-                                                                   |  HTTPS + X-API-Key
-                                                                   v
-                                                        +----------+----------+
-                                                        |  UniFi OS Gateway   |
-                                                        |  /proxy/network/... |
-                                                        +---------------------+
-```
-
-The server is a **thin async proxy**: it translates MCP tool calls into UniFi controller REST calls, shapes the responses, and returns JSON. It does not store state, does not call out to any cloud, and does not authenticate incoming MCP connections (run it on a trusted LAN).
-
-## Security notes
-
-- The `UNIFI_API_KEY` lives only in the container's environment. It is never logged, never echoed back in MCP responses, and never written to disk by this server.
-- WLAN passphrases are scrubbed (`[REDACTED]`) on the way out of every tool response, even in stub mode.
-- The container runs as **UID 1000**, no shell, no home directory, with a **read-only root filesystem** (`/tmp` is `tmpfs`) and `no-new-privileges`.
-- The base image is pinned by digest. Python deps are installed with `pip --require-hashes` from a hash-locked `requirements.lock`.
-- The published image is multi-arch (amd64/arm64) with build provenance attestation and SBOM via `docker/build-push-action`.
-- The MCP server itself is **not authenticated**. Place it behind a trusted-LAN boundary, a reverse proxy with auth, or a Tailscale ACL.
-
-For vulnerability reports, see [SECURITY.md](SECURITY.md).
-
-## Development
-
-Requires Python 3.13+ and Docker.
-
-```bash
-# Clone + install dev deps
-git clone https://github.com/pete-builds/mcp-unifi.git
-cd mcp-unifi
-python -m venv .venv && source .venv/bin/activate
-pip install --require-hashes -r requirements-dev.lock
-pip install -e . --no-deps
-
-# Run the test suite (224 tests, ~90% coverage)
-pytest
-
-# Lint and format
-ruff check src tests
-ruff format src tests
-
-# Type check (mypy strict)
-mypy src/mcp_unifi
-
-# Run the server locally in stub mode
-python -m mcp_unifi.server
-
-# Or build the image yourself instead of pulling from GHCR
-cp docker-compose.example.yml docker-compose.yml
-docker compose up --build
-```
-
-### Tests
-
-```text
-======================= 224 passed in 9s =======================
-
-Name                              Stmts  Miss  Branch  BrPart  Cover
----------------------------------------------------------------------
-src/mcp_unifi/__init__.py             2     0       0       0   100%
-src/mcp_unifi/clients/__init__.py     3     0       0       0   100%
-src/mcp_unifi/clients/stubs.py      234     2      64       8    97%
-src/mcp_unifi/clients/unifi.py      147     5      14       0    96%
-src/mcp_unifi/config.py              38     1       8       0    98%
-src/mcp_unifi/healthcheck.py         18     1       0       0    94%
-src/mcp_unifi/logging_setup.py       33     1      12       2    93%
-src/mcp_unifi/models.py               6     0       0       0   100%
-src/mcp_unifi/server.py             761   107     242      18    87%
----------------------------------------------------------------------
-TOTAL                              1242   117     340      28    90%
-```
-
-CI gates on **80% coverage minimum**, ruff lint, ruff format, mypy strict, and a Trivy fs+image scan that fails on any HIGH or CRITICAL finding.
-
-### Updating dependencies
-
-The `requirements.lock` and `requirements-dev.lock` files are hash-pinned. Edit `requirements.in` (or `requirements-dev.in`), then regenerate:
-
-```bash
-uv pip compile requirements.in --output-file requirements.lock --generate-hashes --python-version 3.13
-uv pip compile requirements-dev.in --output-file requirements-dev.lock --generate-hashes --python-version 3.13
-```
-
-Dependabot opens weekly PRs for `requirements.in`-level updates and the Docker base image digest.
-
-## Acknowledgments
-
-UniFi controller endpoint paths were cross-referenced against the [`sirkirby/unifi-mcp`](https://github.com/sirkirby/unifi-mcp) project. That repo was used as research material for the API surface; **no code was copied**. The implementation here is an independent FastMCP + httpx build that follows the proven Forge pattern.
+- [Docs site](https://pete-builds.github.io/mcp-unifi/)
+- [Network tool reference](https://pete-builds.github.io/mcp-unifi/reference/network/)
+- [Protect tool reference](https://pete-builds.github.io/mcp-unifi/reference/protect/)
+- [Multi-site setup](https://pete-builds.github.io/mcp-unifi/guides/multi-site/)
+- [Dry-run and audit log](https://pete-builds.github.io/mcp-unifi/guides/dry-run-audit/)
+- [Security model](https://pete-builds.github.io/mcp-unifi/guides/security/)
+- [Migration from v0.x](https://pete-builds.github.io/mcp-unifi/guides/migration/)
+- [Changelog](CHANGELOG.md)
+- [Security policy](SECURITY.md)
 
 ## License
 
 [MIT](LICENSE).
-
-## Contributing
-
-Issues and pull requests welcome. Before opening a PR:
-
-1. Make sure `ruff check`, `ruff format --check`, and `mypy src/mcp_unifi` are clean.
-2. Add or update tests, keep coverage at 80% or above.
-3. Run `pytest` locally and confirm the suite passes.
-4. Update `CHANGELOG.md` under an `[Unreleased]` heading.
