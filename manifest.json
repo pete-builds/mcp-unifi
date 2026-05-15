@@ -1,0 +1,85 @@
+{
+  "manifest_version": "0.3",
+  "name": "mcp-unifi",
+  "display_name": "UniFi Gateway",
+  "version": "0.5.0",
+  "description": "MCP server for self-hosted UniFi gateway management.",
+  "long_description": "Self-hosted UniFi gateway management: VLANs, WLANs, firewall, clients, DHCP, observability, plus UniFi Protect cameras. Multi-site, dry-run on destructive ops, replayable audit log. Stub mode lets you try the tools with no hardware.",
+  "author": {
+    "name": "Pete Stergion",
+    "url": "https://github.com/pete-builds"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pete-builds/mcp-unifi.git"
+  },
+  "homepage": "https://github.com/pete-builds/mcp-unifi",
+  "documentation": "https://github.com/pete-builds/mcp-unifi#readme",
+  "support": "https://github.com/pete-builds/mcp-unifi/issues",
+  "keywords": [
+    "mcp",
+    "unifi",
+    "ubiquiti",
+    "fastmcp",
+    "homelab",
+    "network",
+    "protect"
+  ],
+  "license": "MIT",
+  "server": {
+    "type": "python",
+    "entry_point": "bundle/mcp_unifi/server.py",
+    "mcp_config": {
+      "command": "python",
+      "args": [
+        "-m",
+        "mcp_unifi.server"
+      ],
+      "env": {
+        "PYTHONPATH": "${__dirname}/bundle",
+        "STUB_MODE": "${user_config.stub_mode}",
+        "UNIFI_HOST": "${user_config.unifi_host}",
+        "UNIFI_API_KEY": "${user_config.unifi_api_key}",
+        "MCP_TRANSPORT": "stdio",
+        "MCP_UNIFI_MODULES_ENABLED": "${user_config.modules_enabled}"
+      }
+    }
+  },
+  "tools_generated": true,
+  "user_config": {
+    "stub_mode": {
+      "type": "boolean",
+      "title": "Stub Mode",
+      "description": "When enabled, the server returns realistic mock data and requires no UniFi hardware. Great for trying things out before pointing at a real gateway.",
+      "default": true,
+      "required": false
+    },
+    "unifi_host": {
+      "type": "string",
+      "title": "UniFi Host",
+      "description": "IP address or hostname of your UniFi OS gateway (e.g. 192.168.1.1). Only required when Stub Mode is off.",
+      "default": "",
+      "required": false
+    },
+    "unifi_api_key": {
+      "type": "string",
+      "title": "UniFi API Key",
+      "description": "Local API key from Settings -> Control Plane -> Integrations. Only required when Stub Mode is off.",
+      "sensitive": true,
+      "required": false
+    },
+    "modules_enabled": {
+      "type": "string",
+      "title": "Modules Enabled",
+      "description": "Comma-separated list of modules to load. Options: network, protect. Default loads Network only.",
+      "default": "network",
+      "required": false
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {
+      "python": ">=3.13,<4.0"
+    }
+  }
+}

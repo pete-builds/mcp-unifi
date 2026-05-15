@@ -6,7 +6,7 @@ on:
       - "v*.*.*"
 
 permissions:
-  contents: read
+  contents: write
   packages: write
   id-token: write
   attestations: write
@@ -65,3 +65,44 @@ jobs:
           subject-name: ghcr.io/${{ github.repository }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3.8.2
+
+      - name: Sign image with cosign (keyless OIDC)
+        run: |
+          cosign sign --yes \
+            ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}
+
+      - name: Generate SBOM with Syft
+        uses: anchore/sbom-action@v0.20.0
+        with:
+          image: ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}
+          artifact-name: mcp-unifi-${{ github.ref_name }}-sbom.cyclonedx.json
+          output-file: /tmp/sbom.cyclonedx.json
+          format: cyclonedx-json
+
+      - name: Set up Python for .dxt build
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Build .dxt bundle
+        id: dxt
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          mkdir -p dist/dxt/bundle
+          python -m pip install --upgrade pip
+          pip install --target dist/dxt/bundle .
+          cp manifest.json dist/dxt/manifest.json
+          cd dist/dxt
+          zip -r "../../mcp-unifi-${VERSION}.dxt" .
+
+      - name: Attach release artifacts (SBOM + .dxt)
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            /tmp/sbom.cyclonedx.json
+            mcp-unifi-${{ steps.dxt.outputs.version }}.dxt

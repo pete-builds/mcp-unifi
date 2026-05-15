@@ -1,0 +1,31 @@
+mcp-unifi is now installed in namespace "{{ .Release.Namespace }}" as release "{{ .Release.Name }}".
+
+1. Get the in-cluster Service URL:
+
+   http://{{ include "mcp-unifi.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}
+
+2. Port-forward for local testing:
+
+   kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "mcp-unifi.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+
+3. Verify the MCP endpoint is reachable:
+
+   curl -s http://localhost:{{ .Values.service.port }}/health
+
+4. Point an MCP client at the Streamable HTTP transport:
+
+   http://localhost:{{ .Values.service.port }}/mcp
+
+{{- if .Values.unifi.stubMode }}
+
+NOTE: stubMode=true — the server is returning mock data. Set unifi.stubMode=false
+and supply unifi.host plus unifi.apiKey (or existingSecret) to manage a real
+UniFi gateway.
+{{- end }}
+
+{{- if and (not .Values.existingSecret) (not .Values.unifi.apiKey) (not .Values.unifi.stubMode) }}
+
+WARNING: Real mode is enabled but no API key was provided. Set unifi.apiKey
+in values, or set existingSecret to the name of a Secret containing
+UNIFI_API_KEY.
+{{- end }}

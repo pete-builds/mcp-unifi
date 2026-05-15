@@ -1,0 +1,42 @@
+# Smithery deployment manifest
+# https://smithery.ai/server/io.github.pete-builds/unifi
+
+startCommand:
+  type: docker
+  configSchema:
+    type: object
+    required:
+      - unifiHost
+      - unifiApiKey
+    properties:
+      unifiHost:
+        type: string
+        title: UniFi Host
+        description: "IP or hostname of your UniFi gateway (e.g. 192.168.1.1)"
+      unifiApiKey:
+        type: string
+        title: UniFi API Key
+        description: "API key from Settings -> Control Plane -> Integrations -> Create API Key"
+      stubMode:
+        type: boolean
+        title: Stub Mode
+        description: "Use mock data instead of a real gateway. Enable to test without hardware."
+        default: false
+      modulesEnabled:
+        type: string
+        title: Modules Enabled
+        description: "Comma-separated list of modules: network, protect"
+        default: "network"
+  commandFunction: |-
+    (config) => ({
+      command: "docker",
+      args: [
+        "run", "--rm",
+        "-e", `UNIFI_HOST=${config.unifiHost}`,
+        "-e", `UNIFI_API_KEY=${config.unifiApiKey}`,
+        "-e", `STUB_MODE=${config.stubMode ?? false}`,
+        "-e", `MCP_UNIFI_MODULES_ENABLED=${config.modulesEnabled ?? "network"}`,
+        "-e", "MCP_TRANSPORT=stdio",
+        "--", "ghcr.io/pete-builds/mcp-unifi:latest",
+      ]
+    })
