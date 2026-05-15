@@ -24,11 +24,19 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     @mcp.tool()
     @audited("list_firewall_rules")
     async def list_firewall_rules(controller: str = "default") -> str:
-        """List all firewall rules on the gateway.
+        """List every firewall rule on the controller.
 
-        Returns:
-            JSON list with _id, name, ruleset, rule_index, action, enabled,
-            protocol, src_*, dst_* per rule.
+        Side effects: None (read-only).
+
+        Returns one record per rule with ``_id``, ``name``, ``ruleset``,
+        ``rule_index``, ``action``, ``enabled``, ``protocol``, and
+        ``src_*``/``dst_*`` fields.
+
+        Example: list_firewall_rules(controller="default")
+
+        Args:
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
         """
         try:
             backend = registry.get(controller)
@@ -53,29 +61,40 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         controller: str = "default",
         dry_run: bool = False,
     ) -> str:
-        """Create a firewall rule.
+        """Create a firewall rule on the controller.
+
+        Side effects:
+        - Adds a new rule into the named ``ruleset`` at the given
+          ``rule_index``. Rules with lower indexes evaluate first.
+        - Takes effect immediately on the next packet hitting the affected
+          datapath.
+        - Mutates controller state. Use dry_run=True to preview the change
+          without applying.
+
+        Example: create_firewall_rule(name="Block iot to LAN", ruleset="LAN_IN", action="drop", src_address="10.50.0.0/24", dst_address="192.168.1.0/24")
 
         Args:
-            name: Display name for the rule.
-            ruleset: Where the rule is enforced. Common values:
-                ``"LAN_IN"``, ``"LAN_OUT"``, ``"LAN_LOCAL"``,
-                ``"WAN_IN"``, ``"WAN_OUT"``, ``"WAN_LOCAL"``,
-                ``"GUEST_IN"``, ``"GUEST_OUT"``, ``"GUEST_LOCAL"``.
+            name: Display name for the rule (e.g. ``"Block iot to LAN"``).
+            ruleset: Where the rule is enforced. Common values: ``"LAN_IN"``,
+                ``"LAN_OUT"``, ``"LAN_LOCAL"``, ``"WAN_IN"``, ``"WAN_OUT"``,
+                ``"WAN_LOCAL"``, ``"GUEST_IN"``, ``"GUEST_OUT"``,
+                ``"GUEST_LOCAL"``.
             action: ``"accept"``, ``"drop"``, or ``"reject"``.
-            rule_index: Rule order. Lower = evaluated first. UniFi
-                user-defined rules typically live in the 2000-3999 range; 2500
-                is a safe default.
+            rule_index: Evaluation order. Lower = evaluated first. UniFi
+                user-defined rules typically live in the 2000-3999 range;
+                2500 is a safe default.
             protocol: ``"all"``, ``"tcp"``, ``"udp"``, ``"icmp"``, etc.
-            src_address: Source CIDR (e.g. ``"10.0.20.0/24"``). Empty = any.
+            src_address: Source CIDR (e.g. ``"10.50.0.0/24"``). Empty = any.
             dst_address: Destination CIDR. Empty = any.
             src_networkconf_id: Source network ``_id``. Use this OR
-                src_address.
+                ``src_address``.
             dst_networkconf_id: Destination network ``_id``. Use this OR
-                dst_address.
-            enabled: Set False to create the rule disabled for staging.
-
-        Returns:
-            JSON of the created firewall rule.
+                ``dst_address``.
+            enabled: ``False`` creates the rule disabled for staging.
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+            dry_run: Preview the change without applying it. Returns the
+                predicted change set.
         """
         payload: dict[str, Any] = {
             "name": name,
@@ -120,19 +139,28 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         controller: str = "default",
         dry_run: bool = False,
     ) -> str:
-        """Update fields on an existing firewall rule.
+        """Patch fields on an existing firewall rule.
 
-        Only the fields you supply are changed. Common partial keys:
-        ``enabled``, ``action``, ``protocol``, ``rule_index``, ``src_address``,
-        ``dst_address``, ``src_networkconf_id``, ``dst_networkconf_id``,
-        ``name``.
+        Side effects:
+        - Modifies the named rule in place. Only fields supplied in
+          ``updates`` change; everything else is preserved.
+        - Takes effect immediately on the next packet hitting the affected
+          datapath.
+        - Mutates controller state. Use dry_run=True to preview the change
+          without applying.
+
+        Example: update_firewall_rule(rule_id="65f...", updates={"enabled": False})
 
         Args:
             rule_id: The ``_id`` from ``list_firewall_rules``.
-            updates: Partial firewall-rule record.
-
-        Returns:
-            JSON of the updated rule, or an error if not found.
+            updates: Partial firewall-rule record. Common keys: ``enabled``,
+                ``action``, ``protocol``, ``rule_index``, ``src_address``,
+                ``dst_address``, ``src_networkconf_id``,
+                ``dst_networkconf_id``, ``name``.
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+            dry_run: Preview the change without applying it. Returns the
+                predicted change set.
         """
         if dry_run:
             return format_json(
@@ -162,14 +190,22 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         controller: str = "default",
         dry_run: bool = False,
     ) -> str:
-        """Delete a firewall rule.
+        """Delete a firewall rule from the controller.
+
+        Side effects:
+        - Removes the rule. Traffic that previously matched it falls through
+          to the next rule (or the implicit default).
+        - Mutates controller state. Use dry_run=True to preview the change
+          without applying.
+
+        Example: delete_firewall_rule(rule_id="65f...")
 
         Args:
-            rule_id: The ``_id`` from list_firewall_rules.
-
-        Returns:
-            JSON ``{"deleted": true, "rule_id": "..."}`` on success, or an
-            error object if the gateway rejects the request.
+            rule_id: The ``_id`` from ``list_firewall_rules``.
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+            dry_run: Preview the change without applying it. Returns the
+                predicted change set.
         """
         if dry_run:
             return format_json(

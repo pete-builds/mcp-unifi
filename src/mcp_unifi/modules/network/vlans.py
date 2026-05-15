@@ -24,12 +24,19 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     @mcp.tool()
     @audited("list_networks")
     async def list_networks(controller: str = "default") -> str:
-        """List all configured networks/VLANs on the gateway.
+        """List every network/VLAN configured on the controller.
 
-        Returns:
-            JSON list of network records: _id, name, purpose, vlan,
-            vlan_enabled, ip_subnet, dhcpd_enabled, dhcpd_start, dhcpd_stop,
-            enabled.
+        Side effects: None (read-only).
+
+        Returns one record per network with ``_id``, ``name``, ``purpose``,
+        ``vlan``, ``vlan_enabled``, ``ip_subnet``, ``dhcpd_enabled``,
+        ``dhcpd_start``, ``dhcpd_stop``, and ``enabled``.
+
+        Example: list_networks(controller="default")
+
+        Args:
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
         """
         try:
             backend = registry.get(controller)
@@ -50,22 +57,30 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         controller: str = "default",
         dry_run: bool = False,
     ) -> str:
-        """Create a new VLAN-tagged network.
+        """Create a VLAN-tagged network on the controller.
+
+        Side effects:
+        - Adds a new network record with the given VLAN ID, IP subnet, and
+          DHCP scope. The first usable address (.1) becomes the gateway.
+        - Mutates controller state. Use dry_run=True to preview the change
+          without applying.
+
+        Example: create_vlan(name="iot", vlan_id=50, subnet="10.50.0.0/24")
 
         Args:
-            name: Network display name (e.g. "IoT", "Guest").
+            name: Network display name (e.g. ``"iot"``, ``"cameras"``).
             vlan_id: 802.1Q VLAN ID, 2-4094.
-            subnet: CIDR for the VLAN gateway IP, e.g. "10.0.20.0/24". The
-                first usable address (.1) becomes the router/DHCP server.
-            dhcp_start: First DHCP lease address. If empty, defaults to
-                ``.<IOT_DHCP_START_OFFSET>`` of the subnet.
-            dhcp_stop: Last DHCP lease address. If empty, defaults to
-                ``.<IOT_DHCP_STOP_OFFSET>`` of the subnet.
-            purpose: UniFi network purpose. "corporate" for normal LANs,
-                "guest" for hotspot-style isolation.
-
-        Returns:
-            JSON of the created network record (with assigned _id).
+            subnet: CIDR for the VLAN gateway, e.g. ``"10.50.0.0/24"``.
+            dhcp_start: First DHCP lease address. Empty = derived from
+                ``IOT_DHCP_START_OFFSET``.
+            dhcp_stop: Last DHCP lease address. Empty = derived from
+                ``IOT_DHCP_STOP_OFFSET``.
+            purpose: ``"corporate"`` for normal LANs, ``"guest"`` for
+                hotspot-style isolation.
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+            dry_run: Preview the change without applying it. Returns the
+                predicted change set.
         """
         if not 2 <= vlan_id <= 4094:
             return err(f"vlan_id {vlan_id} out of range (2-4094)")
@@ -116,17 +131,26 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         controller: str = "default",
         dry_run: bool = False,
     ) -> str:
-        """Update fields on an existing VLAN/network.
+        """Patch fields on an existing VLAN/network record.
 
-        Only the fields you supply are changed; everything else is preserved.
+        Side effects:
+        - Modifies the named network in place. Only fields supplied in
+          ``updates`` change; everything else is preserved.
+        - Changes to ``vlan`` or ``ip_subnet`` may disconnect clients on the
+          affected network.
+        - Mutates controller state. Use dry_run=True to preview the change
+          without applying.
+
+        Example: update_vlan(network_id="65f...", updates={"enabled": False})
 
         Args:
-            network_id: The ``_id`` from list_networks.
-            updates: Partial network record. Common keys: name, vlan,
-                ip_subnet, dhcpd_start, dhcpd_stop, enabled.
-
-        Returns:
-            JSON of the updated network record, or error if not found.
+            network_id: The ``_id`` from ``list_networks``.
+            updates: Partial network record. Common keys: ``name``, ``vlan``,
+                ``ip_subnet``, ``dhcpd_start``, ``dhcpd_stop``, ``enabled``.
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+            dry_run: Preview the change without applying it. Returns the
+                predicted change set.
         """
         if dry_run:
             return format_json(
@@ -154,15 +178,24 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         controller: str = "default",
         dry_run: bool = False,
     ) -> str:
-        """Delete a VLAN/network.
+        """Delete a VLAN/network from the controller.
+
+        Side effects:
+        - Removes the network record. Any WLANs, firewall rules, or DHCP
+          reservations still referencing it must be detached first or the
+          controller will reject the request.
+        - Clients on this VLAN will lose connectivity.
+        - Mutates controller state. Use dry_run=True to preview the change
+          without applying.
+
+        Example: delete_vlan(network_id="65f...")
 
         Args:
-            network_id: The ``_id`` from list_networks. Be sure no SSIDs or
-                firewall rules still reference it; the controller will reject
-                otherwise.
-
-        Returns:
-            JSON ``{"deleted": true}`` on success.
+            network_id: The ``_id`` from ``list_networks``.
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+            dry_run: Preview the change without applying it. Returns the
+                predicted change set.
         """
         if dry_run:
             return format_json(

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mcp-unifi"
-version = "0.5.0rc1"
+version = "0.5.0rc2"
 description = "MCP server for self-hosted UniFi gateway management."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -116,6 +116,11 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S105", "S106"]  # hardcoded test passphrases are fine
+# Phase 2 Part C: tool descriptions include single-line ``Example:`` calls in
+# their docstrings. Realistic kwargs (subnets, MACs, payloads) push some
+# examples over 100 chars. Splitting them across lines would break the
+# single-Example-per-tool pattern that the LLM tool-selection prompt expects.
+"src/mcp_unifi/modules/network/*.py" = ["E501"]
 
 [tool.ruff.format]
 quote-style = "double"

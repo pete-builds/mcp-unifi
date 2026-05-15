@@ -73,36 +73,38 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         controller: str = "default",
         dry_run: bool = False,
     ) -> str:
-        """One-shot IoT network: VLAN + matching SSID + isolation firewall rule.
+        """Provision an isolated IoT network end-to-end: VLAN + SSID + drop rule.
 
-        Wraps three calls into a single safe operation. Defaults give you a
-        fully isolated subnet at ``10.0.<vlan_id>.0/24`` with a WPA2 SSID of
-        the same name and a LAN_IN drop rule preventing the IoT subnet from
-        reaching your main LAN.
+        Side effects:
+        - Step 1: creates a VLAN-tagged network at the given ``subnet`` (or
+          ``10.0.<vlan_id>.0/24`` by default).
+        - Step 2: creates a WPA2 WiFi SSID bound to the new network. Access
+          points start broadcasting within seconds.
+        - Step 3 (when ``isolate=True``): creates a LAN_IN drop rule blocking
+          the IoT subnet from reaching ``main_lan_subnet``.
+        - Mutates controller state. Use dry_run=True to preview the change
+          without applying.
+        - Rollback: if any sub-step fails, all prior sub-steps are reverted
+          (firewall_rule → wlan → network) and the response includes
+          ``rolled_back`` and ``partial`` keys.
 
-        On partial failure the tool **rolls back** any resources it created
-        before the failing step. The response surfaces what was rolled back so
-        you can re-run the call with confidence.
+        Example: create_iot_network(name="iot", vlan_id=50, passphrase="hunter2hunter2", main_lan_subnet="192.168.1.0/24")
 
         Args:
-            name: Used for both the network name and the SSID.
+            name: Used for both the network name and the SSID (e.g. ``"iot"``).
             vlan_id: 802.1Q VLAN ID, 2-4094. Also drives the default subnet.
             passphrase: WPA2 PSK for the IoT SSID (8-63 chars).
-            main_lan_subnet: CIDR of your main/trusted LAN. The isolation rule
+            main_lan_subnet: CIDR of the main/trusted LAN. The isolation rule
                 blocks IoT → this subnet. Defaults to ``"192.168.1.0/24"``.
-            subnet: Override the IoT subnet. Empty uses the
-                ``IOT_SUBNET_TEMPLATE`` env var (default
-                ``10.0.{vlan_id}.0/24``).
-            isolate: If True (default), create a LAN_IN drop rule from the
-                IoT subnet to the main LAN. Set False if you actually want
-                IoT devices to reach the main LAN (rare).
-            hide_ssid: If True, the IoT SSID is hidden.
-
-        Returns:
-            JSON with three keys: ``network``, ``wlan``, ``firewall_rule``.
-            Each is the created object. On failure the response includes
-            ``error``, the partial state at failure time, and a
-            ``rolled_back`` list of what was cleaned up.
+            subnet: Override the IoT subnet. Empty uses
+                ``IOT_SUBNET_TEMPLATE`` (default ``10.0.{vlan_id}.0/24``).
+            isolate: ``True`` (default) creates the LAN_IN drop rule. ``False``
+                lets IoT devices reach the main LAN (rare).
+            hide_ssid: ``True`` suppresses SSID broadcast.
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+            dry_run: Preview the change without applying it. Returns the
+                predicted change set.
         """
         if not 2 <= vlan_id <= 4094:
             return err(f"vlan_id {vlan_id} out of range (2-4094)")
@@ -258,28 +260,40 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         controller: str = "default",
         dry_run: bool = False,
     ) -> str:
-        """Stand up a homelab service end-to-end: lease + firewall allow + (optional) port forwards.
+        """Stand up a homelab service: DHCP lease + firewall allow + (optional) port forwards.
 
-        Creates a static DHCP reservation for ``mac`` at ``ip``, an
-        ``accept`` LAN_LOCAL firewall rule pinned to that IP for the requested
-        ports, and (when ``wan_expose=True``) one port-forward rule per port.
-        On any partial failure the tool **rolls back** what it created so far,
-        in reverse order.
+        Side effects:
+        - Step 1: creates a static DHCP reservation pinning ``mac`` to
+          ``ip`` on the named network.
+        - Step 2 (when ``ports`` is non-empty): creates a LAN_LOCAL accept
+          firewall rule for ``ip`` on the requested TCP ports.
+        - Step 3 (when ``wan_expose=True`` and ``ports`` is non-empty):
+          creates one port-forward rule per port, exposing the service to
+          the WAN.
+        - Mutates controller state. Use dry_run=True to preview the change
+          without applying.
+        - Rollback: if any sub-step fails, all prior sub-steps are reverted
+          in reverse order (port_forwards → firewall_rule → lease) and the
+          response includes ``rolled_back`` and ``partial`` keys.
+
+        Example: provision_homelab_service(name="plex", mac="aa:bb:cc:00:00:01", ip="10.50.0.10", network_id="65f...", ports=[32400], wan_expose=False)
 
         Args:
-            name: Display name (used for both the lease and the firewall rule).
-            mac: Client MAC address.
-            ip: IPv4 address to reserve.
+            name: Display name (used for both the lease and the firewall
+                rule, e.g. ``"plex"``).
+            mac: Client MAC address (e.g. ``"aa:bb:cc:00:00:01"``).
+            ip: IPv4 address to reserve (must fall inside the network's
+                subnet).
             network_id: ``_id`` of the network/VLAN this service lives on.
-            ports: TCP ports the service listens on (e.g. ``[80, 443]``). Empty
-                list creates only the lease.
-            wan_expose: If ``True``, also create port-forward rules so the
-                service is reachable from the WAN. Default ``False`` (LAN-only).
-
-        Returns:
-            JSON with keys ``lease``, ``firewall_rule``, ``port_forwards``
-            (list). On failure the response includes ``error``, ``partial``
-            (what was created), and ``rolled_back`` (cleanup actions).
+            ports: TCP ports the service listens on (e.g. ``[80, 443]``).
+                Empty creates only the lease.
+            wan_expose: ``True`` also creates port-forward rules so the
+                service is reachable from the WAN. Default ``False``
+                (LAN-only).
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+            dry_run: Preview the change without applying it. Returns the
+                predicted change set.
         """
         ports = ports or []
 
@@ -416,18 +430,30 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         controller: str = "default",
         dry_run: bool = False,
     ) -> str:
-        """Block a client and log the action with a reason.
+        """Block a client and log the quarantine action with a reason.
 
-        Equivalent to ``block_client`` but appends a structured audit log
-        entry. The reason flows into structured logs for later forensics.
+        Side effects:
+        - Step 1: adds the MAC to the controller's user-block list (same as
+          ``block_client``). The client is immediately disconnected and
+          prevented from re-associating until ``unblock_client`` is called.
+        - Step 2: appends a WARNING-level structured log entry capturing
+          ``mac`` and ``reason`` for later forensics.
+        - Mutates controller state. Use dry_run=True to preview the change
+          without applying.
+        - Rollback: if any sub-step fails, all prior sub-steps are reverted
+          (the log entry is best-effort and not unwound; only step 1
+          mutates the controller).
+
+        Example: quarantine_client(mac="aa:bb:cc:00:00:01", reason="suspected malware c2")
 
         Args:
-            mac: Client MAC address.
-            reason: Free-form justification (kept in logs only).
-
-        Returns:
-            JSON ``{"quarantined": true, "mac": "...", "reason": "..."}``, or
-            an error if the client is not found.
+            mac: Client MAC address (e.g. ``"aa:bb:cc:00:00:01"``).
+            reason: Free-form justification (kept in logs only,
+                e.g. ``"suspected malware c2"``).
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+            dry_run: Preview the change without applying it. Returns the
+                predicted change set.
         """
         if dry_run:
             return format_json(
@@ -470,28 +496,40 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         controller: str = "default",
         dry_run: bool = False,
     ) -> str:
-        """One-shot guest network: VLAN + guest SSID + LAN_IN drop rule.
+        """Provision an isolated guest network end-to-end: VLAN + guest SSID + drop rule.
 
-        Like ``create_iot_network`` but provisions a *guest* SSID (client
-        isolation enabled by default) and supports an optional schedule string
-        echoed back in the SSID record.
+        Side effects:
+        - Step 1: creates a VLAN-tagged network with ``purpose="guest"`` at
+          the given ``subnet`` (or ``10.0.<vlan_id>.0/24`` by default).
+        - Step 2: creates a guest WPA2 WiFi SSID (client isolation enabled)
+          bound to the new network. Access points start broadcasting within
+          seconds.
+        - Step 3: creates a LAN_IN drop rule blocking the guest subnet from
+          reaching ``main_lan_subnet``.
+        - Mutates controller state. Use dry_run=True to preview the change
+          without applying.
+        - Rollback: if any sub-step fails, all prior sub-steps are reverted
+          (firewall_rule → wlan → network) and the response includes
+          ``rolled_back`` and ``partial`` keys.
+
+        Example: create_guest_network(name="guest", ssid="guest-wifi", passphrase="hunter2hunter2", vlan_id=60, main_lan_subnet="192.168.1.0/24")
 
         Args:
-            name: Display name for the network record.
-            ssid: SSID to broadcast.
+            name: Display name for the network record (e.g. ``"guest"``).
+            ssid: SSID to broadcast (e.g. ``"guest-wifi"``).
             passphrase: WPA2 PSK (8-63 chars).
             vlan_id: 802.1Q VLAN ID, 2-4094.
-            main_lan_subnet: CIDR of your main LAN. The drop rule blocks
+            main_lan_subnet: CIDR of the main LAN. The drop rule blocks
                 guest → this subnet.
-            subnet: Override the guest subnet. Empty uses the IoT subnet
-                template (``10.0.<vlan>.0/24`` by default).
+            subnet: Override the guest subnet. Empty uses
+                ``IOT_SUBNET_TEMPLATE`` (default ``10.0.{vlan_id}.0/24``).
             schedule: Optional schedule descriptor (controller field
                 ``schedule``). Empty = always on.
-            hide_ssid: ``True`` to suppress SSID broadcast (rare for guest).
-
-        Returns:
-            JSON with ``network``, ``wlan``, ``firewall_rule``. Rolls back on
-            partial failure (firewall → WLAN → VLAN).
+            hide_ssid: ``True`` suppresses SSID broadcast (rare for guest).
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+            dry_run: Preview the change without applying it. Returns the
+                predicted change set.
         """
         if not 2 <= vlan_id <= 4094:
             return err(f"vlan_id {vlan_id} out of range (2-4094)")
@@ -633,18 +671,24 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     @mcp.tool()
     @audited("audit_open_ports")
     async def audit_open_ports(controller: str = "default") -> str:
-        """Read-only audit of WAN-facing exposure.
+        """Audit WAN-facing exposure (port forwards and WAN_IN accept rules).
 
-        Cross-references firewall rules and port forwards to summarise:
+        Side effects: None (read-only).
+
+        Cross-references firewall rules and port forwards to summarise what
+        is reachable from the public internet:
         - Active port forwards (DNAT into the LAN).
-        - WAN_IN ``accept`` rules (anything reachable from the internet).
+        - WAN_IN ``accept`` rules, excluding the boilerplate
+          established/related rule.
 
-        No writes, no rollback. Useful as a "did I leave something open?"
-        sanity check.
+        Useful as a "did I leave something open?" sanity check before
+        publishing a service or shipping a config.
 
-        Returns:
-            JSON ``{"port_forwards": [...], "wan_accept_rules": [...],
-            "summary": "..."}``.
+        Example: audit_open_ports(controller="default")
+
+        Args:
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
         """
         try:
             backend = registry.get(controller)

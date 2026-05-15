@@ -24,11 +24,18 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     @mcp.tool()
     @audited("list_port_forwards")
     async def list_port_forwards(controller: str = "default") -> str:
-        """List all port-forward (DNAT) rules.
+        """List every port-forward (DNAT) rule on the controller.
 
-        Returns:
-            JSON list of records: ``_id``, ``name``, ``enabled``, ``proto``,
-            ``src``, ``fwd``, ``fwd_port``, ``dst_port``.
+        Side effects: None (read-only).
+
+        Returns one record per forward with ``_id``, ``name``, ``enabled``,
+        ``proto``, ``src``, ``fwd``, ``fwd_port``, and ``dst_port``.
+
+        Example: list_port_forwards(controller="default")
+
+        Args:
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
         """
         try:
             backend = registry.get(controller)
@@ -51,21 +58,32 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         controller: str = "default",
         dry_run: bool = False,
     ) -> str:
-        """Create a port-forward (DNAT) rule.
+        """Create a port-forward (DNAT) rule on the WAN.
+
+        Side effects:
+        - Adds a NAT rule that exposes the internal host ``fwd:fwd_port`` to
+          the WAN on ``dst_port``. The service is reachable from the public
+          internet (subject to ``src`` restriction).
+        - Takes effect immediately on the next inbound packet.
+        - Mutates controller state. Use dry_run=True to preview the change
+          without applying.
+
+        Example: create_port_forward(name="plex", fwd="10.50.0.10", fwd_port="32400", dst_port="32400", proto="tcp")
 
         Args:
-            name: Display name.
-            fwd: Internal IP to forward to.
+            name: Display name for the rule.
+            fwd: Internal IP to forward to (e.g. ``"10.50.0.10"``).
             fwd_port: Internal port (string; UniFi accepts ranges like
                 ``"8000-8010"``).
             dst_port: External / WAN port to listen on.
             proto: ``"tcp"``, ``"udp"``, or ``"tcp_udp"``.
             src: Source restriction. ``"any"`` (default) or a CIDR.
-            enabled: ``True`` to enable immediately.
-            log: ``True`` to log forwarded packets.
-
-        Returns:
-            JSON of the created rule.
+            enabled: ``True`` enables the rule immediately.
+            log: ``True`` logs forwarded packets.
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+            dry_run: Preview the change without applying it. Returns the
+                predicted change set.
         """
         payload: dict[str, Any] = {
             "name": name,
@@ -103,15 +121,25 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         controller: str = "default",
         dry_run: bool = False,
     ) -> str:
-        """Update a port-forward rule.
+        """Patch fields on an existing port-forward rule.
+
+        Side effects:
+        - Modifies the named forward in place. Only fields supplied in
+          ``updates`` change.
+        - Takes effect immediately on the next inbound packet.
+        - Mutates controller state. Use dry_run=True to preview the change
+          without applying.
+
+        Example: update_port_forward(forward_id="65f...", updates={"enabled": False})
 
         Args:
             forward_id: The ``_id`` from ``list_port_forwards``.
             updates: Partial record. Common keys: ``enabled``, ``fwd_port``,
                 ``dst_port``, ``proto``, ``src``, ``fwd``, ``name``.
-
-        Returns:
-            JSON of the updated rule, or an error if not found.
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+            dry_run: Preview the change without applying it. Returns the
+                predicted change set.
         """
         if dry_run:
             return format_json(
@@ -141,13 +169,22 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         controller: str = "default",
         dry_run: bool = False,
     ) -> str:
-        """Delete a port-forward rule.
+        """Delete a port-forward rule from the controller.
+
+        Side effects:
+        - Removes the NAT rule. The internal service stops being reachable
+          from the WAN immediately.
+        - Mutates controller state. Use dry_run=True to preview the change
+          without applying.
+
+        Example: delete_port_forward(forward_id="65f...")
 
         Args:
             forward_id: The ``_id`` from ``list_port_forwards``.
-
-        Returns:
-            JSON ``{"deleted": true, "forward_id": "..."}``.
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+            dry_run: Preview the change without applying it. Returns the
+                predicted change set.
         """
         if dry_run:
             return format_json(

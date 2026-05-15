@@ -5,6 +5,68 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0-rc.2] - 2026-05-14
+
+> **Release candidate.** Phase 2 polish on top of rc.1: drift audit,
+> backup/restore, and LLM-readable tool descriptions across all 46 tools.
+> Behavior of existing tools unchanged; signatures unchanged. Schema diff vs
+> rc.1 is description-text only, plus 3 net-new tools.
+
+### Added — Phase 2 (Network Polish)
+
+- **`audit_network_drift`.** Read-only tool that compares current controller
+  state to a YAML spec and returns a structured diff: missing resources, extra
+  resources, and field-level drift across networks, WLANs, and firewall rules.
+  Matches resources by `name` (case-insensitive). Useful for "is my controller
+  in the state I declared?" workflows. Implemented in
+  `src/mcp_unifi/modules/network/drift.py`.
+- **`backup_config`.** Read-only snapshot of controller state into a versioned
+  JSON envelope (`schema=1`): networks, WLANs, firewall rules, port profiles,
+  static DHCP leases, port forwards. Skips transient data (clients, devices,
+  observability). WLAN passphrases are stripped to a sentinel and the envelope
+  is flagged `secrets_stripped: true` so restore can warn the operator.
+- **`restore_config`.** Destructive tool (honors `dry_run`) that computes an
+  ordered action plan to reach backup state from current state and applies it
+  with rollback on partial failure. Cross-controller restore proceeds with a
+  warning. Restored WLANs from a secrets-stripped envelope are recreated with
+  `enabled=False` so the operator must reset passphrases before they go on the
+  air. Implemented in `src/mcp_unifi/modules/network/backup.py`.
+- **Tool description rewrites.** All 46 tools now follow a consistent pattern:
+  verb-first one-line purpose, `Side effects:` bullets, `dry_run` hint on
+  destructive tools, `Rollback:` contract on composites, an `Example:` line
+  with realistic args, and per-parameter docstrings on `controller` and
+  `dry_run`. Drives better LLM tool selection and is a real differentiator
+  vs the 8 competing UniFi MCP servers.
+
+### Changed
+
+- **`scripts/compare_schemas.py`** gained a `--allow-description-changes` flag
+  so Phase 2 description rewrites can be verified without flagging every tool
+  as a regression. Param shapes (type, default, required) are still strictly
+  enforced.
+- **FastMCP description ordering** discovered: descriptions are truncated at
+  the first Sphinx-style `Args:` block. All `Example:` lines moved to before
+  `Args:` so they reach the LLM. Worth knowing for any future MCP server work.
+
+### Tests
+
+- 383 tests passing (was 346 at end of rc.1, +37 across Phase 2).
+- 90% coverage maintained.
+- New: `tests/network/test_drift.py` (15 tests),
+  `tests/network/test_backup_restore.py` (17 tests, includes a Hypothesis
+  property test for backup-mutate-restore convergence at 30 examples),
+  `tests/test_tool_descriptions.py` (5 sanity tests).
+
+### Backlog (not blocking)
+
+- Composite `UnknownControllerError` propagation: `backup_config` and
+  `restore_config` wrap unknown-controller errors in a clean envelope, but the
+  4 Phase 1 composites + `audit_open_ports` let the error propagate as a raw
+  exception. Both paths fail loudly so it's safe; the inconsistency is filed
+  for v0.5.x cleanup.
+
+---
+
 ## [0.5.0-rc.1] - 2026-05-14
 
 > **Release candidate.** v0.5.0 stable awaits real-mode validation against

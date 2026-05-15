@@ -24,14 +24,19 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     @mcp.tool()
     @audited("list_dhcp_leases")
     async def list_dhcp_leases(controller: str = "default") -> str:
-        """List static DHCP reservations on the gateway.
+        """List static DHCP reservations on the controller.
 
-        UniFi stores fixed leases on the user object with ``use_fixedip=true``.
-        This returns just those entries.
+        Side effects: None (read-only).
 
-        Returns:
-            JSON list of lease records: ``_id``, ``mac``, ``name``,
-            ``hostname``, ``fixed_ip``, ``network_id``.
+        UniFi stores fixed leases on the user object with
+        ``use_fixedip=true``. This returns just those entries with ``_id``,
+        ``mac``, ``name``, ``hostname``, ``fixed_ip``, and ``network_id``.
+
+        Example: list_dhcp_leases(controller="default")
+
+        Args:
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
         """
         try:
             backend = registry.get(controller)
@@ -51,17 +56,29 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         controller: str = "default",
         dry_run: bool = False,
     ) -> str:
-        """Reserve a fixed IP for a client.
+        """Reserve a fixed IP for a client by MAC.
+
+        Side effects:
+        - Adds a fixed-IP entry on the user object so ``mac`` always receives
+          ``ip`` from the controller's DHCP server. The next DHCP renewal
+          for that client picks up the reservation.
+        - The IP must fall inside the network's subnet or the controller
+          will reject the request.
+        - Mutates controller state. Use dry_run=True to preview the change
+          without applying.
+
+        Example: create_static_dhcp_lease(mac="aa:bb:cc:00:00:01", ip="10.50.0.10", network_id="65f...", name="cameras-nvr")
 
         Args:
-            mac: Client MAC address.
-            ip: IPv4 address to reserve. Must fall inside the network's subnet.
+            mac: Client MAC address (e.g. ``"aa:bb:cc:00:00:01"``).
+            ip: IPv4 address to reserve.
             network_id: ``_id`` of the network/VLAN this client lives on.
             name: Friendly display name (optional).
             hostname: DHCP hostname (optional).
-
-        Returns:
-            JSON of the created reservation.
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+            dry_run: Preview the change without applying it. Returns the
+                predicted change set.
         """
         payload: dict[str, Any] = {
             "mac": mac,
@@ -98,11 +115,20 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     ) -> str:
         """Delete a static DHCP reservation.
 
+        Side effects:
+        - Removes the fixed-IP entry. The client returns to dynamic DHCP on
+          its next renewal and may receive a different address.
+        - Mutates controller state. Use dry_run=True to preview the change
+          without applying.
+
+        Example: delete_static_dhcp_lease(lease_id="65f...")
+
         Args:
             lease_id: The ``_id`` from ``list_dhcp_leases``.
-
-        Returns:
-            JSON ``{"deleted": true, "lease_id": "..."}``.
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+            dry_run: Preview the change without applying it. Returns the
+                predicted change set.
         """
         if dry_run:
             return format_json(

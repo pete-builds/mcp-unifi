@@ -24,12 +24,18 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     @mcp.tool()
     @audited("get_site_health")
     async def get_site_health(controller: str = "default") -> str:
-        """Per-subsystem health (wan, lan, wlan, www, vpn).
+        """Report per-subsystem health (wan, lan, wlan, www, vpn).
 
-        Returns:
-            JSON list with one record per subsystem: ``subsystem``, ``status``,
-            and subsystem-specific metrics (e.g. WAN throughput, LAN client
-            counts).
+        Side effects: None (read-only).
+
+        Returns one record per subsystem with ``subsystem``, ``status``, and
+        subsystem-specific metrics (e.g. WAN throughput, LAN client counts).
+
+        Example: get_site_health(controller="default")
+
+        Args:
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
         """
         try:
             backend = registry.get(controller)
@@ -41,14 +47,19 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     @mcp.tool()
     @audited("get_wan_status")
     async def get_wan_status(controller: str = "default") -> str:
-        """Current WAN status: link state, ISP, public IP, throughput, latency.
+        """Report current WAN status: link, ISP, public IP, throughput, latency.
+
+        Side effects: None (read-only).
 
         Convenience wrapper around ``get_site_health`` that returns just the
-        WAN subsystem record.
+        WAN subsystem record. Returns ``{"subsystem": "wan", "status":
+        "unknown"}`` if the controller does not report WAN.
 
-        Returns:
-            JSON object for the WAN subsystem, or ``{"subsystem": "wan",
-            "status": "unknown"}`` if not reported.
+        Example: get_wan_status(controller="default")
+
+        Args:
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
         """
         try:
             backend = registry.get(controller)
@@ -62,11 +73,16 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     async def list_events(limit: int = 50, controller: str = "default") -> str:
         """List recent controller events (connections, disconnections, etc.).
 
+        Side effects: None (read-only).
+
+        Returns the most recent ``limit`` event records, newest first.
+
+        Example: list_events(limit=100)
+
         Args:
             limit: Max number of events to return (default 50, max 1000).
-
-        Returns:
-            JSON list of event records.
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
         """
         if not 1 <= limit <= 1000:
             return err("limit must be between 1 and 1000")
@@ -84,15 +100,20 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         archived: bool = False,
         controller: str = "default",
     ) -> str:
-        """List controller alarms.
+        """List controller alarms, active or archived.
+
+        Side effects: None (read-only).
+
+        Returns the most recent ``limit`` alarm records.
+
+        Example: list_alarms(limit=20, archived=False)
 
         Args:
             limit: Max number of alarms to return (default 50, max 1000).
-            archived: ``True`` to list dismissed/archived alarms; ``False``
-                (default) for active alarms only.
-
-        Returns:
-            JSON list of alarm records.
+            archived: ``True`` lists dismissed/archived alarms; ``False``
+                (default) lists active alarms only.
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
         """
         if not 1 <= limit <= 1000:
             return err("limit must be between 1 and 1000")
@@ -108,12 +129,16 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     async def trigger_speedtest(controller: str = "default") -> str:
         """Kick off a UniFi speed test on the WAN link.
 
-        The test runs server-side; this returns when the controller acks the
-        command. Use ``get_speedtest_results`` to read the results once the
-        test finishes (typically 30-60 seconds).
+        Side effects: None on the controller's persistent state. Issues a
+        one-shot WAN measurement that consumes WAN bandwidth for ~30-60
+        seconds while the test runs server-side. Use
+        ``get_speedtest_results`` to read the result once it finishes.
 
-        Returns:
-            JSON of the controller's response.
+        Example: trigger_speedtest(controller="default")
+
+        Args:
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
         """
         try:
             backend = registry.get(controller)
@@ -125,14 +150,19 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     @mcp.tool()
     @audited("get_speedtest_results")
     async def get_speedtest_results(limit: int = 10, controller: str = "default") -> str:
-        """Return recent speed-test results, newest first.
+        """List recent speed-test results, newest first.
+
+        Side effects: None (read-only).
+
+        Returns one record per test with ``time``, ``xput_up``,
+        ``xput_download``, ``latency``, and ``server``.
+
+        Example: get_speedtest_results(limit=10)
 
         Args:
-            limit: Max number of results to return (default 10).
-
-        Returns:
-            JSON list of speed-test records: ``time``, ``xput_up``,
-            ``xput_download``, ``latency``, ``server``.
+            limit: Max number of results to return (default 10, max 1000).
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
         """
         if not 1 <= limit <= 1000:
             return err("limit must be between 1 and 1000")
@@ -146,11 +176,20 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     @mcp.tool()
     @audited("list_top_talkers")
     async def list_top_talkers(limit: int = 10, controller: str = "default") -> str:
-        """Top clients by total bytes (DPI by-station report).
+        """List top clients by total bytes (DPI by-station report).
 
-        Returns:
-            JSON list ranked by ``total_bytes`` descending: ``mac``,
-            ``hostname``, ``ip``, ``tx_bytes``, ``rx_bytes``, ``total_bytes``.
+        Side effects: None (read-only).
+
+        Returns one record per client ranked by ``total_bytes`` descending,
+        with ``mac``, ``hostname``, ``ip``, ``tx_bytes``, ``rx_bytes``, and
+        ``total_bytes``.
+
+        Example: list_top_talkers(limit=10)
+
+        Args:
+            limit: Max number of clients to return (default 10, max 1000).
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
         """
         if not 1 <= limit <= 1000:
             return err("limit must be between 1 and 1000")

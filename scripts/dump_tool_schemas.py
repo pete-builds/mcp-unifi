@@ -46,10 +46,7 @@ async def _collect() -> list[dict[str, Any]]:
     settings = Settings(stub_mode=True, log_format="text")
     server = build_server(settings)
     tools_obj = await server.list_tools()
-    if isinstance(tools_obj, dict):
-        tools_iter = tools_obj.values()
-    else:
-        tools_iter = tools_obj
+    tools_iter = tools_obj.values() if isinstance(tools_obj, dict) else tools_obj
     out = [_serialise_tool(t) for t in tools_iter]
     out.sort(key=lambda t: t["name"])
     return out

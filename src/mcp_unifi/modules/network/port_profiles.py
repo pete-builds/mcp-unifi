@@ -24,14 +24,20 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     @mcp.tool()
     @audited("list_port_profiles")
     async def list_port_profiles(controller: str = "default") -> str:
-        """List switch port profiles configured on the gateway.
+        """List switch port profiles configured on the controller.
+
+        Side effects: None (read-only).
 
         Port profiles control PoE, native VLAN, tagged VLANs, and STP per
-        switch port. Use these IDs when assigning ports on a switch.
+        switch port. Returns one record per profile with ``_id``, ``name``,
+        ``native_networkconf_id``, ``forward``, and ``poe_mode``. Use these
+        IDs when assigning ports on a switch.
 
-        Returns:
-            JSON list of profiles: _id, name, native_networkconf_id, forward,
-            poe_mode.
+        Example: list_port_profiles(controller="default")
+
+        Args:
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
         """
         try:
             backend = registry.get(controller)
@@ -51,24 +57,31 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         controller: str = "default",
         dry_run: bool = False,
     ) -> str:
-        """Create a new switch port profile.
+        """Create a switch port profile.
 
-        Port profiles define how a switch port behaves: which VLAN is native,
-        which are tagged, whether PoE is on, and how traffic is forwarded.
+        Side effects:
+        - Adds a new profile defining native (untagged) VLAN, tagged VLANs,
+          PoE behaviour, and forwarding mode. The profile is dormant until
+          a switch port is assigned to it (via ``set_port_state``).
+        - Mutates controller state. Use dry_run=True to preview the change
+          without applying.
+
+        Example: create_port_profile(name="iot-trunk", native_networkconf_id="65f...", tagged_networkconf_ids=["65a...", "65b..."], poe_mode="auto")
 
         Args:
-            name: Display name for the profile.
+            name: Display name for the profile (e.g. ``"iot-trunk"``).
             native_networkconf_id: ``_id`` of the native (untagged) network.
-                Empty for trunk ports.
+                Empty for trunk-only ports.
             forward: ``"all"`` (default), ``"native"``, ``"customize"``, or
                 ``"disabled"``.
-            poe_mode: ``"auto"`` (default), ``"passive24v"``, ``"passthrough"``,
-                or ``"off"``.
-            tagged_networkconf_ids: Optional list of network ``_id``s carried as
-                tagged VLANs.
-
-        Returns:
-            JSON of the created profile (with assigned ``_id``).
+            poe_mode: ``"auto"`` (default), ``"passive24v"``,
+                ``"passthrough"``, or ``"off"``.
+            tagged_networkconf_ids: Optional list of network ``_id`` strings
+                carried as tagged VLANs.
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+            dry_run: Preview the change without applying it. Returns the
+                predicted change set.
         """
         payload: dict[str, Any] = {
             "name": name,
@@ -103,15 +116,28 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         controller: str = "default",
         dry_run: bool = False,
     ) -> str:
-        """Update fields on an existing port profile.
+        """Patch fields on an existing port profile.
+
+        Side effects:
+        - Modifies the named profile in place. Every switch port currently
+          using the profile picks up the new behaviour on the next
+          provision (typically within seconds).
+        - Changing ``native_networkconf_id`` may move powered devices to a
+          different VLAN.
+        - Mutates controller state. Use dry_run=True to preview the change
+          without applying.
+
+        Example: update_port_profile(profile_id="65f...", updates={"poe_mode": "off"})
 
         Args:
             profile_id: The ``_id`` from ``list_port_profiles``.
-            updates: Partial profile record. Common keys: ``name``, ``forward``,
-                ``poe_mode``, ``native_networkconf_id``, ``tagged_networkconf_ids``.
-
-        Returns:
-            JSON of the updated profile, or an error if not found.
+            updates: Partial profile record. Common keys: ``name``,
+                ``forward``, ``poe_mode``, ``native_networkconf_id``,
+                ``tagged_networkconf_ids``.
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+            dry_run: Preview the change without applying it. Returns the
+                predicted change set.
         """
         if dry_run:
             return format_json(
@@ -143,13 +169,20 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     ) -> str:
         """Delete a switch port profile.
 
-        Args:
-            profile_id: The ``_id`` from ``list_port_profiles``. The controller
-                will reject the delete if any switch port still references the
-                profile.
+        Side effects:
+        - Removes the profile. The controller will reject the request if
+          any switch port still references it.
+        - Mutates controller state. Use dry_run=True to preview the change
+          without applying.
 
-        Returns:
-            JSON ``{"deleted": true, "profile_id": "..."}`` on success.
+        Example: delete_port_profile(profile_id="65f...")
+
+        Args:
+            profile_id: The ``_id`` from ``list_port_profiles``.
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+            dry_run: Preview the change without applying it. Returns the
+                predicted change set.
         """
         if dry_run:
             return format_json(

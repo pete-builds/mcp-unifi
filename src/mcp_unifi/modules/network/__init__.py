@@ -16,10 +16,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from mcp_unifi.modules.network import (
+    backup,
     clients,
     composites,
     devices,
     dhcp,
+    drift,
     firewall,
     observability,
     port_forwards,
@@ -53,6 +55,8 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     port_forwards.register(mcp, settings, registry)
     observability.register(mcp, settings, registry)
     composites.register(mcp, settings, registry)
+    drift.register(mcp, settings, registry)
+    backup.register(mcp, settings, registry)
 
 
 __all__ = ["register"]

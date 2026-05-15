@@ -27,15 +27,19 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     @mcp.tool()
     @audited("list_clients")
     async def list_clients(controller: str = "default") -> str:
-        """List currently active wireless and wired clients on the gateway.
+        """List currently active wireless and wired clients.
 
-        Returns the same data the controller's Insights → Clients view shows:
-        MAC, hostname, IP, network, signal/satisfaction (wireless only), AP
-        or switch port (when wired), and uptime/last_seen timestamps.
+        Side effects: None (read-only).
 
-        Returns:
-            JSON list of client records. Empty list if no clients are
-            connected.
+        Mirrors the controller's Insights → Clients view: MAC, hostname, IP,
+        network, signal/satisfaction (wireless only), AP or switch port
+        (wired), uptime, and last_seen.
+
+        Example: list_clients(controller="default")
+
+        Args:
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
         """
         try:
             backend = registry.get(controller)
@@ -51,13 +55,23 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         controller: str = "default",
         dry_run: bool = False,
     ) -> str:
-        """Block a client by MAC. The client cannot rejoin until unblocked.
+        """Block a client by MAC so it cannot rejoin until unblocked.
+
+        Side effects:
+        - Adds the MAC to the controller's user-block list. The client is
+          immediately disconnected and prevented from re-associating on any
+          SSID until ``unblock_client`` is called.
+        - Mutates controller state. Use dry_run=True to preview the change
+          without applying.
+
+        Example: block_client(mac="aa:bb:cc:00:00:01")
 
         Args:
             mac: Client MAC address (e.g. ``"aa:bb:cc:00:00:01"``).
-
-        Returns:
-            JSON of the blocked client record, or an error if not found.
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+            dry_run: Preview the change without applying it. Returns the
+                predicted change set.
         """
         if dry_run:
             return format_json(
@@ -87,11 +101,20 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     ) -> str:
         """Unblock a previously-blocked client by MAC.
 
-        Args:
-            mac: Client MAC address.
+        Side effects:
+        - Removes the MAC from the controller's user-block list. The client
+          can re-associate immediately.
+        - Mutates controller state. Use dry_run=True to preview the change
+          without applying.
 
-        Returns:
-            JSON of the unblocked client record, or an error if not found.
+        Example: unblock_client(mac="aa:bb:cc:00:00:01")
+
+        Args:
+            mac: Client MAC address (e.g. ``"aa:bb:cc:00:00:01"``).
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+            dry_run: Preview the change without applying it. Returns the
+                predicted change set.
         """
         if dry_run:
             return format_json(
@@ -121,13 +144,22 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     ) -> str:
         """Force a client to reconnect (kick-sta).
 
-        Useful for fixing a stuck client without having to power-cycle it.
+        Side effects:
+        - Issues a deauthentication frame for ``mac`` on its current AP. The
+          client immediately disconnects and most clients re-associate
+          automatically within seconds.
+        - The block-list is not modified; this is a transient nudge.
+        - Mutates controller state. Use dry_run=True to preview the change
+          without applying.
+
+        Example: reconnect_client(mac="aa:bb:cc:00:00:01")
 
         Args:
-            mac: Client MAC address.
-
-        Returns:
-            JSON ``{"reconnected": true, "mac": "..."}`` on success.
+            mac: Client MAC address (e.g. ``"aa:bb:cc:00:00:01"``).
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+            dry_run: Preview the change without applying it. Returns the
+                predicted change set.
         """
         if dry_run:
             return format_json(

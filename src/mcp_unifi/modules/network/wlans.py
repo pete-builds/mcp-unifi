@@ -24,11 +24,19 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     @mcp.tool()
     @audited("list_wlans")
     async def list_wlans(controller: str = "default") -> str:
-        """List all WiFi SSIDs configured on the gateway.
+        """List every WiFi SSID configured on the controller.
 
-        Returns:
-            JSON list of WLAN records: _id, name, enabled, security, wpa_mode,
-            networkconf_id, is_guest, hide_ssid, wlan_band.
+        Side effects: None (read-only).
+
+        Returns one record per WLAN with ``_id``, ``name``, ``enabled``,
+        ``security``, ``wpa_mode``, ``networkconf_id``, ``is_guest``,
+        ``hide_ssid``, and ``wlan_band``.
+
+        Example: list_wlans(controller="default")
+
+        Args:
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
         """
         try:
             backend = registry.get(controller)
@@ -51,24 +59,33 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         controller: str = "default",
         dry_run: bool = False,
     ) -> str:
-        """Create a new WiFi SSID bound to a specific network/VLAN.
+        """Create a WiFi SSID bound to an existing network/VLAN.
+
+        Side effects:
+        - Adds a new WLAN record. Access points start broadcasting the SSID
+          within seconds of the apply.
+        - Mutates controller state. Use dry_run=True to preview the change
+          without applying.
+
+        Example: create_wlan(name="guest-2.4", passphrase="hunter2hunter2", network_id="65f...", is_guest=True)
 
         Args:
-            name: SSID broadcast name.
+            name: SSID broadcast name (e.g. ``"guest-2.4"``).
             passphrase: WPA pre-shared key (8-63 chars). Required unless
                 ``security="open"``.
-            network_id: The ``_id`` of the network/VLAN this SSID lives on.
-                Get it from list_networks.
+            network_id: ``_id`` of the network/VLAN this SSID lives on. Get
+                it from ``list_networks``.
             security: ``"wpapsk"`` (default), ``"wpaeap"``, or ``"open"``.
             wpa_mode: ``"wpa2"`` (default) or ``"wpa3"`` if all clients
                 support it.
-            is_guest: True isolates clients from each other and the rest of
-                the LAN.
-            hide_ssid: True suppresses the SSID broadcast.
+            is_guest: ``True`` isolates clients from each other and the rest
+                of the LAN.
+            hide_ssid: ``True`` suppresses SSID broadcast.
             wlan_band: ``"2g"``, ``"5g"``, ``"6g"``, or ``"both"`` (default).
-
-        Returns:
-            JSON of the created WLAN record.
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+            dry_run: Preview the change without applying it. Returns the
+                predicted change set.
         """
         payload: dict[str, Any] = {
             "name": name,
@@ -106,19 +123,29 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         controller: str = "default",
         dry_run: bool = False,
     ) -> str:
-        """Update fields on an existing WiFi SSID.
+        """Patch fields on an existing WiFi SSID.
 
-        Only the fields you supply are changed; everything else is preserved.
-        Passphrases are accepted via the ``x_passphrase`` key in ``updates``
-        and are redacted in the response.
+        Side effects:
+        - Modifies the named WLAN in place. Only fields supplied in
+          ``updates`` change; everything else is preserved.
+        - Changes to ``security``, ``wpa_mode``, or ``x_passphrase`` may
+          disconnect connected clients until they re-authenticate.
+        - Passphrases passed via ``x_passphrase`` are redacted in the
+          response.
+        - Mutates controller state. Use dry_run=True to preview the change
+          without applying.
+
+        Example: update_wlan(wlan_id="65f...", updates={"enabled": False})
 
         Args:
-            wlan_id: The ``_id`` from list_wlans.
-            updates: Partial WLAN record. Common keys: name, enabled,
-                x_passphrase, wpa_mode, hide_ssid, wlan_band, is_guest.
-
-        Returns:
-            JSON of the updated WLAN record, or error if not found.
+            wlan_id: The ``_id`` from ``list_wlans``.
+            updates: Partial WLAN record. Common keys: ``name``, ``enabled``,
+                ``x_passphrase``, ``wpa_mode``, ``hide_ssid``, ``wlan_band``,
+                ``is_guest``.
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+            dry_run: Preview the change without applying it. Returns the
+                predicted change set.
         """
         if dry_run:
             return format_json(
@@ -146,14 +173,24 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         controller: str = "default",
         dry_run: bool = False,
     ) -> str:
-        """Delete a WiFi SSID.
+        """Delete a WiFi SSID from the controller.
+
+        Side effects:
+        - Removes the WLAN record. Access points stop broadcasting the SSID
+          within seconds.
+        - Connected wireless clients on this SSID are immediately
+          disconnected.
+        - Mutates controller state. Use dry_run=True to preview the change
+          without applying.
+
+        Example: delete_wlan(wlan_id="65f...")
 
         Args:
-            wlan_id: The ``_id`` from list_wlans.
-
-        Returns:
-            JSON ``{"deleted": true, "wlan_id": "..."}`` on success, or an
-            error object if the gateway rejects the request.
+            wlan_id: The ``_id`` from ``list_wlans``.
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+            dry_run: Preview the change without applying it. Returns the
+                predicted change set.
         """
         if dry_run:
             return format_json(

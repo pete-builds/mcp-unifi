@@ -24,11 +24,19 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     @mcp.tool()
     @audited("list_devices")
     async def list_devices(controller: str = "default") -> str:
-        """List every UniFi device adopted by this gateway.
+        """List every UniFi device adopted by this controller.
 
-        Returns:
-            JSON list with _id, mac, type, model, name, ip, version, state,
-            uptime, num_sta, satisfaction per device.
+        Side effects: None (read-only).
+
+        Returns one record per device (gateway, AP, switch) with ``_id``,
+        ``mac``, ``type``, ``model``, ``name``, ``ip``, ``version``,
+        ``state``, ``uptime``, ``num_sta``, and ``satisfaction``.
+
+        Example: list_devices(controller="default")
+
+        Args:
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
         """
         try:
             backend = registry.get(controller)
@@ -46,11 +54,23 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     ) -> str:
         """Restart an adopted UniFi device (gateway, AP, or switch).
 
+        Side effects:
+        - Issues a soft reboot. The device is unreachable for ~60 seconds.
+        - Wireless clients on a restarted AP will be disconnected and must
+          re-associate.
+        - Restarting a gateway interrupts WAN/LAN traffic for the duration
+          of the reboot.
+        - Mutates controller state. Use dry_run=True to preview the change
+          without applying.
+
+        Example: restart_device(mac="aa:bb:cc:00:00:01")
+
         Args:
             mac: Device MAC address (from ``list_devices``).
-
-        Returns:
-            JSON ``{"restarted": true, "mac": "..."}`` on success.
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+            dry_run: Preview the change without applying it. Returns the
+                predicted change set.
         """
         if dry_run:
             return format_json(
@@ -81,15 +101,23 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     ) -> str:
         """Toggle the LED locate beacon on a device.
 
-        Helpful for finding which physical AP or switch maps to a record in the
-        controller.
+        Side effects:
+        - The physical device flashes its status LED until ``on=False`` is
+          sent (or it reboots). Helpful for finding which physical AP or
+          switch maps to a controller record.
+        - No traffic impact.
+        - Mutates controller state. Use dry_run=True to preview the change
+          without applying.
+
+        Example: locate_device(mac="aa:bb:cc:00:00:01", on=True)
 
         Args:
-            mac: Device MAC address.
-            on: ``True`` (default) flashes the LED; ``False`` stops the flash.
-
-        Returns:
-            JSON ``{"locating": bool, "mac": "..."}`` on success.
+            mac: Device MAC address (from ``list_devices``).
+            on: ``True`` (default) starts the flash; ``False`` stops it.
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+            dry_run: Preview the change without applying it. Returns the
+                predicted change set.
         """
         if dry_run:
             return format_json(
@@ -123,22 +151,29 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     ) -> str:
         """Override settings on a single switch port.
 
-        UniFi switches store per-port overrides on the device record. This tool
-        modifies one port's ``enable``, ``poe_mode``, and/or ``portconf_id``
-        without touching the others.
+        Side effects:
+        - Modifies one port's ``enable``, ``poe_mode``, and/or
+          ``portconf_id`` on the named switch without touching the others.
+        - Disabling a port immediately drops the link; powered devices on
+          that port (PoE cameras, APs) will go offline.
+        - Mutates controller state. Use dry_run=True to preview the change
+          without applying.
+
+        Example: set_port_state(device_mac="aa:bb:cc:00:00:01", port_idx=5, enable=True, poe_mode="auto")
 
         Args:
             device_mac: Switch MAC address (from ``list_devices``).
             port_idx: 1-based port index.
-            enable: ``True`` to bring the port up, ``False`` to disable. Pass
-                ``None`` (the default) to leave it unchanged.
-            poe_mode: ``"auto"``, ``"passive24v"``, ``"passthrough"``, ``"off"``,
-                or empty to leave unchanged.
-            portconf_id: ``_id`` of a port profile to apply, or empty to leave
-                unchanged.
-
-        Returns:
-            JSON of the updated port record, or an error if device/port not found.
+            enable: ``True`` to bring the port up, ``False`` to disable.
+                ``None`` (default) leaves it unchanged.
+            poe_mode: ``"auto"``, ``"passive24v"``, ``"passthrough"``,
+                ``"off"``, or empty to leave unchanged.
+            portconf_id: ``_id`` of a port profile to apply, or empty to
+                leave unchanged.
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+            dry_run: Preview the change without applying it. Returns the
+                predicted change set.
         """
         if enable is None and not poe_mode and not portconf_id:
             return err("set_port_state requires at least one of enable, poe_mode, portconf_id")
