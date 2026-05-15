@@ -1068,6 +1068,10 @@ starlette==1.0.0 \
     # via
     #   mcp
     #   sse-starlette
+types-pyyaml==6.0.12.20260510 \
+    --hash=sha256:09c1f1cb65a6eebea1e2e51ccf4918b8288e152909609a35cdb0d805efd125ad \
+    --hash=sha256:3492eb9ba4d9d833473214c4d5736cccf5f37d93f5854059721e1c84f785309d
+    # via -r requirements-dev.in
 typing-extensions==4.15.0 \
     --hash=sha256:0cea48d173cc12fa28ecabc3b837ea3cf6f38c6d1136f85cbaaf598984861466 \
     --hash=sha256:f0fa19c6845758ab08074a0cfa8b7aecb71c999ca73d62883bc25cc018c4e548
