@@ -8,7 +8,6 @@ export default defineConfig({
     starlight({
       title: 'mcp-unifi',
       description: 'The safest UniFi MCP server. Multi-site, dry-run, audit log, Network + Protect.',
-      logo: { text: 'mcp-unifi' },
       social: [
         { icon: 'github', label: 'GitHub', href: 'https://github.com/pete-builds/mcp-unifi' }
       ],

@@ -119,9 +119,7 @@ def multi_site_server(
     """FastMCP server wired with two controllers, each with its own state."""
     from mcp_unifi.backends import StubBackend
 
-    overrides = {
-        name: StubBackend(state) for name, state in two_controller_states.items()
-    }
+    overrides = {name: StubBackend(state) for name, state in two_controller_states.items()}
     registry = build_registry(two_controller_settings, stub_overrides=overrides)
     mcp = FastMCP("UniFi-MultiSite-Test")
     register_modules(mcp, two_controller_settings, registry)

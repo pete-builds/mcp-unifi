@@ -101,9 +101,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                     "dry_run": True,
                     "controller": controller,
                     "would_create": {"port_forward": payload},
-                    "summary": (
-                        f"Would forward WAN:{dst_port} -> {fwd}:{fwd_port} ({proto})"
-                    ),
+                    "summary": (f"Would forward WAN:{dst_port} -> {fwd}:{fwd_port} ({proto})"),
                 }
             )
         try:

@@ -80,9 +80,7 @@ def _normalized_view(state: StubState) -> dict[str, list[dict[str, Any]]]:
     for rtype, items in snap.items():
         cleaned: list[dict[str, Any]] = []
         for item in items:
-            without_id = {
-                k: v for k, v in item.items() if k not in {"_id", "site_id"}
-            }
+            without_id = {k: v for k, v in item.items() if k not in {"_id", "site_id"}}
             cleaned.append(without_id)
         out[rtype] = cleaned
     return out
@@ -149,9 +147,7 @@ async def test_backup_drops_internal_ids(stub_server: FastMCP) -> None:
     envelope = await _call(stub_server, "backup_config", {})
     for rtype, items in envelope["resources"].items():
         for item in items:
-            assert "site_id" not in item, (
-                f"{rtype} record leaked site_id into backup"
-            )
+            assert "site_id" not in item, f"{rtype} record leaked site_id into backup"
             if rtype == "networks":
                 # Networks intentionally keep _id for restore-time rebinding.
                 continue
@@ -175,9 +171,7 @@ async def test_round_trip_clean_state_is_noop(stub_server: FastMCP) -> None:
     backup_json = json.dumps(envelope)
 
     # Dry-run plan
-    dry = await _call(
-        stub_server, "restore_config", {"backup_json": backup_json, "dry_run": True}
-    )
+    dry = await _call(stub_server, "restore_config", {"backup_json": backup_json, "dry_run": True})
     assert dry["dry_run"] is True
     create_actions = [a for a in dry["would_apply"] if a["action"] == "create"]
     delete_actions = [a for a in dry["would_apply"] if a["action"] == "delete"]
@@ -185,9 +179,7 @@ async def test_round_trip_clean_state_is_noop(stub_server: FastMCP) -> None:
     assert delete_actions == []
 
     # Real apply also yields zero create/delete actions.
-    real = await _call(
-        stub_server, "restore_config", {"backup_json": backup_json}
-    )
+    real = await _call(stub_server, "restore_config", {"backup_json": backup_json})
     assert "error" not in real
     creates = [a for a in real["applied"] if a.get("result") == "created"]
     deletes = [a for a in real["applied"] if a.get("result") == "deleted"]
@@ -218,14 +210,8 @@ async def test_round_trip_with_added_vlan_dry_run_flags_delete(
         }
     )
 
-    dry = await _call(
-        fresh_server, "restore_config", {"backup_json": backup_json, "dry_run": True}
-    )
-    deletes = [
-        a
-        for a in dry["would_apply"]
-        if a["action"] == "delete" and a["type"] == "networks"
-    ]
+    dry = await _call(fresh_server, "restore_config", {"backup_json": backup_json, "dry_run": True})
+    deletes = [a for a in dry["would_apply"] if a["action"] == "delete" and a["type"] == "networks"]
     assert any(a["name"] == "Lab" for a in deletes), (
         f"expected delete of 'Lab' in plan, got {deletes}"
     )
@@ -253,9 +239,7 @@ async def test_round_trip_with_added_vlan_real_apply_restores(
     )
     assert any(n["name"] == "Lab" for n in fresh_state.networks)
 
-    result = await _call(
-        fresh_server, "restore_config", {"backup_json": backup_json}
-    )
+    result = await _call(fresh_server, "restore_config", {"backup_json": backup_json})
     assert "error" not in result
     assert not any(n["name"] == "Lab" for n in fresh_state.networks)
 
@@ -282,9 +266,7 @@ async def test_round_trip_with_removed_vlan_real_apply_recreates(
     fresh_state.delete_network(target_id)
     assert not any(n["name"] == "Keep-Me" for n in fresh_state.networks)
 
-    result = await _call(
-        fresh_server, "restore_config", {"backup_json": backup_json}
-    )
+    result = await _call(fresh_server, "restore_config", {"backup_json": backup_json})
     assert "error" not in result
     assert any(n["name"] == "Keep-Me" for n in fresh_state.networks)
 
@@ -294,9 +276,7 @@ async def test_round_trip_with_removed_vlan_real_apply_recreates(
 # ---------------------------------------------------------------------------
 
 
-async def test_dry_run_never_mutates(
-    fresh_state: StubState, fresh_server: FastMCP
-) -> None:
+async def test_dry_run_never_mutates(fresh_state: StubState, fresh_server: FastMCP) -> None:
     envelope = await _call(fresh_server, "backup_config", {})
     backup_json = json.dumps(envelope)
 
@@ -329,9 +309,7 @@ async def test_schema_mismatch_returns_clean_error(
 ) -> None:
     bad = {"schema": "2", "controller": "default", "resources": {}}
     snapshot = _resource_snapshot(fresh_state)
-    result = await _call(
-        fresh_server, "restore_config", {"backup_json": json.dumps(bad)}
-    )
+    result = await _call(fresh_server, "restore_config", {"backup_json": json.dumps(bad)})
     assert "error" in result
     assert "schema" in result["error"].lower()
     assert _resource_snapshot(fresh_state) == snapshot
@@ -341,9 +319,7 @@ async def test_malformed_json_returns_clean_error(
     fresh_state: StubState, fresh_server: FastMCP
 ) -> None:
     snapshot = _resource_snapshot(fresh_state)
-    result = await _call(
-        fresh_server, "restore_config", {"backup_json": "{not json"}
-    )
+    result = await _call(fresh_server, "restore_config", {"backup_json": "{not json"})
     assert "error" in result
     assert _resource_snapshot(fresh_state) == snapshot
 
@@ -352,9 +328,7 @@ async def test_missing_resources_object_returns_clean_error(
     fresh_state: StubState, fresh_server: FastMCP
 ) -> None:
     bad = {"schema": "1", "controller": "default"}
-    result = await _call(
-        fresh_server, "restore_config", {"backup_json": json.dumps(bad)}
-    )
+    result = await _call(fresh_server, "restore_config", {"backup_json": json.dumps(bad)})
     assert "error" in result
     assert "resources" in result["error"]
 
@@ -426,17 +400,11 @@ async def test_wlan_rebinds_to_recreated_network(
     )
     fresh_state.delete_network(new_net["_id"])
 
-    result = await _call(
-        fresh_server, "restore_config", {"backup_json": backup_json}
-    )
+    result = await _call(fresh_server, "restore_config", {"backup_json": backup_json})
     assert "error" not in result
 
-    restored_net = next(
-        n for n in fresh_state.networks if n["name"] == "Rebound"
-    )
-    restored_wlan = next(
-        w for w in fresh_state.wlans if w["name"] == "Rebound-SSID"
-    )
+    restored_net = next(n for n in fresh_state.networks if n["name"] == "Rebound")
+    restored_wlan = next(w for w in fresh_state.wlans if w["name"] == "Rebound-SSID")
     # The restored WLAN's networkconf_id must equal the *new* network id.
     assert restored_wlan["networkconf_id"] == restored_net["_id"]
 
@@ -464,14 +432,9 @@ async def test_stripped_secrets_force_disables_restored_wlans(
     fresh_state.delete_wlan(seed_wlan_id)
     assert fresh_state.wlans == []
 
-    result = await _call(
-        fresh_server, "restore_config", {"backup_json": backup_json}
-    )
+    result = await _call(fresh_server, "restore_config", {"backup_json": backup_json})
     assert "error" not in result
-    assert any(
-        "passphrase" in w.lower() and "disabled" in w.lower()
-        for w in result["warnings"]
-    )
+    assert any("passphrase" in w.lower() and "disabled" in w.lower() for w in result["warnings"])
     # The recreated WLAN must be disabled.
     assert len(fresh_state.wlans) == 1
     assert fresh_state.wlans[0]["enabled"] is False
@@ -499,13 +462,9 @@ async def test_partial_failure_rolls_back_creates(
     # Fail the firewall_rule create — the plan should already have created
     # the wlan and dhcp lease before that step (CREATE_ORDER is networks ->
     # port_profiles -> dhcp_leases -> wlans -> port_forwards -> firewall_rules).
-    fresh_state.fail_next(
-        "create_firewall_rule", UniFiError("injected at create_firewall_rule")
-    )
+    fresh_state.fail_next("create_firewall_rule", UniFiError("injected at create_firewall_rule"))
 
-    result = await _call(
-        fresh_server, "restore_config", {"backup_json": backup_json}
-    )
+    result = await _call(fresh_server, "restore_config", {"backup_json": backup_json})
     assert "error" in result
     assert "rolled_back" in result
     # Every successful create must have been deleted by the rollback.
@@ -514,8 +473,7 @@ async def test_partial_failure_rolls_back_creates(
     # state we entered the call with).
     for rtype, items in pre.items():
         assert len(post[rtype]) == len(items), (
-            f"{rtype}: pre had {len(items)}, post has {len(post[rtype])}; "
-            f"rollback incomplete"
+            f"{rtype}: pre had {len(items)}, post has {len(post[rtype])}; rollback incomplete"
         )
 
 
@@ -542,9 +500,7 @@ _mutation_kinds = st.sampled_from(
 
 _vlan_ids = st.integers(min_value=2, max_value=4094)
 _safe_names = st.text(
-    alphabet=st.characters(
-        min_codepoint=0x41, max_codepoint=0x7A, blacklist_categories=("Cs",)
-    ),
+    alphabet=st.characters(min_codepoint=0x41, max_codepoint=0x7A, blacklist_categories=("Cs",)),
     min_size=2,
     max_size=10,
 ).filter(lambda s: s.strip() and "/" not in s and '"' not in s)
@@ -657,8 +613,5 @@ async def test_property_restore_converges_to_backup(
         return out
 
     assert _strip_wlan_passphrases(post_view) == _strip_wlan_passphrases(pre_view), (
-        f"restore did not converge.\n"
-        f"mutations: {mutations}\n"
-        f"pre:  {pre_view}\n"
-        f"post: {post_view}"
+        f"restore did not converge.\nmutations: {mutations}\npre:  {pre_view}\npost: {post_view}"
     )

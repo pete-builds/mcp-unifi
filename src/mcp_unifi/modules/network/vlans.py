@@ -111,9 +111,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                     "dry_run": True,
                     "controller": controller,
                     "would_create": {"network": payload},
-                    "summary": (
-                        f"Would create VLAN '{name}' (id={vlan_id}) on {subnet}"
-                    ),
+                    "summary": (f"Would create VLAN '{name}' (id={vlan_id}) on {subnet}"),
                 }
             )
         try:

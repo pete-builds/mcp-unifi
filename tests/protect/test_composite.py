@@ -14,9 +14,7 @@ from tests.protect.conftest import _call
 
 def _camera_snapshot(state: ProtectStubState, cam_id: str) -> dict[str, Any]:
     """Deep copy of the camera record so we can assert byte-equality after rollback."""
-    cam = next(
-        c for c in state.cameras if c.get("id") == cam_id or c.get("_id") == cam_id
-    )
+    cam = next(c for c in state.cameras if c.get("id") == cam_id or c.get("_id") == cam_id)
     return copy.deepcopy(cam)
 
 
@@ -223,9 +221,7 @@ async def test_provision_camera_rolls_back_on_recording_failure(
     cam_id = stub_protect_state.cameras[0]["id"]
     pre = _camera_snapshot(stub_protect_state, cam_id)
 
-    stub_protect_state.fail_next(
-        "update_camera", UniFiError("simulated recording failure")
-    )
+    stub_protect_state.fail_next("update_camera", UniFiError("simulated recording failure"))
 
     result = await _call(
         protect_registry,
@@ -257,9 +253,7 @@ async def test_provision_camera_snapshot_fetch_failure(
 
     stub_protect_state.get_camera = boom  # type: ignore[method-assign]
 
-    result = await _call(
-        protect_registry, "provision_camera", {"camera_id": cam_id}
-    )
+    result = await _call(protect_registry, "provision_camera", {"camera_id": cam_id})
     assert "error" in result
     assert "snapshot fetch" in result["error"]
 

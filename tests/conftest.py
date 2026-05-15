@@ -12,9 +12,7 @@ from mcp_unifi.config import Settings
 
 
 @pytest.fixture(autouse=True)
-def _isolated_audit_log(
-    tmp_path: object, monkeypatch: pytest.MonkeyPatch
-) -> Iterator[None]:
+def _isolated_audit_log(tmp_path: object, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Redirect the audit-log singleton at a per-test tmp file.
 
     Prevents the test suite from ever writing to the repo's CWD as a side

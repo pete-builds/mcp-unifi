@@ -148,9 +148,7 @@ class StubBackend:
     async def create_network(self, payload: dict[str, Any]) -> UniFiRecord:
         return self.state.create_network(payload)
 
-    async def update_network(
-        self, network_id: str, patch: dict[str, Any]
-    ) -> UniFiRecord | None:
+    async def update_network(self, network_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
         return self.state.update_network(network_id, patch)
 
     async def delete_network(self, network_id: str) -> bool:
@@ -176,9 +174,7 @@ class StubBackend:
     async def create_firewall_rule(self, payload: dict[str, Any]) -> UniFiRecord:
         return self.state.create_firewall_rule(payload)
 
-    async def update_firewall_rule(
-        self, rule_id: str, patch: dict[str, Any]
-    ) -> UniFiRecord | None:
+    async def update_firewall_rule(self, rule_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
         return self.state.update_firewall_rule(rule_id, patch)
 
     async def delete_firewall_rule(self, rule_id: str) -> bool:
@@ -319,9 +315,7 @@ class RealBackend:
     async def create_network(self, payload: dict[str, Any]) -> UniFiRecord:
         return await self.client.create_network(payload)
 
-    async def update_network(
-        self, network_id: str, patch: dict[str, Any]
-    ) -> UniFiRecord | None:
+    async def update_network(self, network_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
         return await self.client.update_network(network_id, patch)
 
     async def delete_network(self, network_id: str) -> bool:
@@ -347,9 +341,7 @@ class RealBackend:
     async def create_firewall_rule(self, payload: dict[str, Any]) -> UniFiRecord:
         return await self.client.create_firewall_rule(payload)
 
-    async def update_firewall_rule(
-        self, rule_id: str, patch: dict[str, Any]
-    ) -> UniFiRecord | None:
+    async def update_firewall_rule(self, rule_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
         return await self.client.update_firewall_rule(rule_id, patch)
 
     async def delete_firewall_rule(self, rule_id: str) -> bool:
@@ -447,9 +439,7 @@ class ProtectBackend(Protocol):
     # ----- Cameras --------------------------------------------------------
     async def list_cameras(self) -> list[UniFiRecord]: ...
     async def get_camera(self, camera_id: str) -> UniFiRecord | None: ...
-    async def update_camera(
-        self, camera_id: str, patch: dict[str, Any]
-    ) -> UniFiRecord | None: ...
+    async def update_camera(self, camera_id: str, patch: dict[str, Any]) -> UniFiRecord | None: ...
 
     # ----- Events ---------------------------------------------------------
     async def list_events(
@@ -483,9 +473,7 @@ class ProtectStubBackend:
     async def get_camera(self, camera_id: str) -> UniFiRecord | None:
         return self.state.get_camera(camera_id)
 
-    async def update_camera(
-        self, camera_id: str, patch: dict[str, Any]
-    ) -> UniFiRecord | None:
+    async def update_camera(self, camera_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
         return self.state.update_camera(camera_id, patch)
 
     async def list_events(
@@ -522,9 +510,7 @@ class ProtectRealBackend:
             return None
         return record
 
-    async def update_camera(
-        self, camera_id: str, patch: dict[str, Any]
-    ) -> UniFiRecord | None:
+    async def update_camera(self, camera_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
         record = await self.client.update_camera(camera_id, patch)
         if not record:
             return None

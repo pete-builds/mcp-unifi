@@ -61,9 +61,7 @@ def real_protect_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[Settings]
 async def real_protect_server(
     real_protect_settings: Settings,
 ) -> AsyncIterator[FastMCP]:
-    client = ProtectClient(
-        host="gateway.test", api_key="test-api-key-real", port=443
-    )
+    client = ProtectClient(host="gateway.test", api_key="test-api-key-real", port=443)
     server = build_server(real_protect_settings, protect=client)
     yield server
     await client.aclose()
@@ -100,21 +98,15 @@ async def test_real_get_camera(real_protect_server: FastMCP) -> None:
 @respx.mock
 async def test_real_get_camera_not_found(real_protect_server: FastMCP) -> None:
     """Empty dict response should surface as a 'not found' error."""
-    respx.get(f"{PROTECT_BASE}/cameras/missing").mock(
-        return_value=httpx.Response(200, json={})
-    )
-    result = await _call(
-        real_protect_server, "get_camera", {"camera_id": "missing"}
-    )
+    respx.get(f"{PROTECT_BASE}/cameras/missing").mock(return_value=httpx.Response(200, json={}))
+    result = await _call(real_protect_server, "get_camera", {"camera_id": "missing"})
     assert "error" in result
     assert "not found" in result["error"]
 
 
 @respx.mock
 async def test_real_list_cameras_500(real_protect_server: FastMCP) -> None:
-    respx.get(f"{PROTECT_BASE}/cameras").mock(
-        return_value=httpx.Response(500, text="boom")
-    )
+    respx.get(f"{PROTECT_BASE}/cameras").mock(return_value=httpx.Response(500, text="boom"))
     result = await _call(real_protect_server, "list_cameras")
     assert "error" in result
     assert result["stub_mode"] is False
@@ -134,36 +126,26 @@ async def test_real_list_smart_detections_500(real_protect_server: FastMCP) -> N
     respx.get(host="gateway.test", path__regex=r"^/proxy/protect/api/events.*").mock(
         return_value=httpx.Response(500, text="boom")
     )
-    result = await _call(
-        real_protect_server, "list_smart_detections", {"detection_type": "person"}
-    )
+    result = await _call(real_protect_server, "list_smart_detections", {"detection_type": "person"})
     assert "error" in result
 
 
 @respx.mock
 async def test_real_list_recordings_happy(real_protect_server: FastMCP) -> None:
-    respx.get(
-        host="gateway.test", path__regex=r"^/proxy/protect/api/recordings.*"
-    ).mock(
-        return_value=httpx.Response(
-            200, json=[{"id": "r1", "camera": "c1", "start": 1, "end": 2}]
-        )
+    respx.get(host="gateway.test", path__regex=r"^/proxy/protect/api/recordings.*").mock(
+        return_value=httpx.Response(200, json=[{"id": "r1", "camera": "c1", "start": 1, "end": 2}])
     )
-    result = await _call(
-        real_protect_server, "list_recordings", {"camera_id": "c1"}
-    )
+    result = await _call(real_protect_server, "list_recordings", {"camera_id": "c1"})
     assert isinstance(result, list)
     assert result[0]["id"] == "r1"
 
 
 @respx.mock
 async def test_real_list_recordings_500(real_protect_server: FastMCP) -> None:
-    respx.get(
-        host="gateway.test", path__regex=r"^/proxy/protect/api/recordings.*"
-    ).mock(return_value=httpx.Response(500, text="boom"))
-    result = await _call(
-        real_protect_server, "list_recordings", {"camera_id": "c1"}
+    respx.get(host="gateway.test", path__regex=r"^/proxy/protect/api/recordings.*").mock(
+        return_value=httpx.Response(500, text="boom")
     )
+    result = await _call(real_protect_server, "list_recordings", {"camera_id": "c1"})
     assert "error" in result
 
 
@@ -193,9 +175,7 @@ async def test_real_get_event_thumbnail(real_protect_server: FastMCP) -> None:
     respx.get(f"{PROTECT_BASE}/events/e1/thumbnail").mock(
         return_value=httpx.Response(200, content=jpeg)
     )
-    result = await _call(
-        real_protect_server, "get_event_thumbnail", {"event_id": "e1"}
-    )
+    result = await _call(real_protect_server, "get_event_thumbnail", {"event_id": "e1"})
     assert base64.b64decode(result["data"]) == jpeg
 
 
@@ -204,18 +184,14 @@ async def test_real_get_event_thumbnail_500(real_protect_server: FastMCP) -> Non
     respx.get(f"{PROTECT_BASE}/events/e1/thumbnail").mock(
         return_value=httpx.Response(500, text="boom")
     )
-    result = await _call(
-        real_protect_server, "get_event_thumbnail", {"event_id": "e1"}
-    )
+    result = await _call(real_protect_server, "get_event_thumbnail", {"event_id": "e1"})
     assert "error" in result
 
 
 @respx.mock
 async def test_real_set_recording_mode(real_protect_server: FastMCP) -> None:
     respx.patch(f"{PROTECT_BASE}/cameras/c1").mock(
-        return_value=httpx.Response(
-            200, json={"id": "c1", "recordingSettings": {"mode": "always"}}
-        )
+        return_value=httpx.Response(200, json={"id": "c1", "recordingSettings": {"mode": "always"}})
     )
     result = await _call(
         real_protect_server,
@@ -227,9 +203,7 @@ async def test_real_set_recording_mode(real_protect_server: FastMCP) -> None:
 
 @respx.mock
 async def test_real_set_recording_mode_500(real_protect_server: FastMCP) -> None:
-    respx.patch(f"{PROTECT_BASE}/cameras/c1").mock(
-        return_value=httpx.Response(500, text="boom")
-    )
+    respx.patch(f"{PROTECT_BASE}/cameras/c1").mock(return_value=httpx.Response(500, text="boom"))
     result = await _call(
         real_protect_server,
         "set_camera_recording_mode",
@@ -241,9 +215,7 @@ async def test_real_set_recording_mode_500(real_protect_server: FastMCP) -> None
 @respx.mock
 async def test_real_set_privacy_mode(real_protect_server: FastMCP) -> None:
     respx.patch(f"{PROTECT_BASE}/cameras/c1").mock(
-        return_value=httpx.Response(
-            200, json={"id": "c1", "privacyMask": {"enabled": True}}
-        )
+        return_value=httpx.Response(200, json={"id": "c1", "privacyMask": {"enabled": True}})
     )
     result = await _call(
         real_protect_server,
@@ -256,9 +228,7 @@ async def test_real_set_privacy_mode(real_protect_server: FastMCP) -> None:
 @respx.mock
 async def test_real_set_motion_sensitivity(real_protect_server: FastMCP) -> None:
     respx.patch(f"{PROTECT_BASE}/cameras/c1").mock(
-        return_value=httpx.Response(
-            200, json={"id": "c1", "motionSettings": {"sensitivity": 75}}
-        )
+        return_value=httpx.Response(200, json={"id": "c1", "motionSettings": {"sensitivity": 75}})
     )
     result = await _call(
         real_protect_server,
@@ -270,18 +240,14 @@ async def test_real_set_motion_sensitivity(real_protect_server: FastMCP) -> None
 
 @respx.mock
 async def test_real_get_camera_500(real_protect_server: FastMCP) -> None:
-    respx.get(f"{PROTECT_BASE}/cameras/c1").mock(
-        return_value=httpx.Response(500, text="boom")
-    )
+    respx.get(f"{PROTECT_BASE}/cameras/c1").mock(return_value=httpx.Response(500, text="boom"))
     result = await _call(real_protect_server, "get_camera", {"camera_id": "c1"})
     assert "error" in result
 
 
 @respx.mock
 async def test_real_set_privacy_mode_500(real_protect_server: FastMCP) -> None:
-    respx.patch(f"{PROTECT_BASE}/cameras/c1").mock(
-        return_value=httpx.Response(500, text="boom")
-    )
+    respx.patch(f"{PROTECT_BASE}/cameras/c1").mock(return_value=httpx.Response(500, text="boom"))
     result = await _call(
         real_protect_server,
         "set_camera_privacy_mode",
@@ -294,9 +260,7 @@ async def test_real_set_privacy_mode_500(real_protect_server: FastMCP) -> None:
 async def test_real_set_motion_sensitivity_500(
     real_protect_server: FastMCP,
 ) -> None:
-    respx.patch(f"{PROTECT_BASE}/cameras/c1").mock(
-        return_value=httpx.Response(500, text="boom")
-    )
+    respx.patch(f"{PROTECT_BASE}/cameras/c1").mock(return_value=httpx.Response(500, text="boom"))
     result = await _call(
         real_protect_server,
         "set_motion_sensitivity",
@@ -310,9 +274,7 @@ async def test_real_set_recording_mode_not_found(
     real_protect_server: FastMCP,
 ) -> None:
     """Empty body coerces to None in ProtectRealBackend.update_camera."""
-    respx.patch(f"{PROTECT_BASE}/cameras/missing").mock(
-        return_value=httpx.Response(200, json={})
-    )
+    respx.patch(f"{PROTECT_BASE}/cameras/missing").mock(return_value=httpx.Response(200, json={}))
     result = await _call(
         real_protect_server,
         "set_camera_recording_mode",
@@ -324,9 +286,7 @@ async def test_real_set_recording_mode_not_found(
 
 @respx.mock
 async def test_real_list_doorbell_messages_500(real_protect_server: FastMCP) -> None:
-    respx.get(f"{PROTECT_BASE}/cameras").mock(
-        return_value=httpx.Response(500, text="boom")
-    )
+    respx.get(f"{PROTECT_BASE}/cameras").mock(return_value=httpx.Response(500, text="boom"))
     result = await _call(real_protect_server, "list_doorbell_messages")
     assert "error" in result
 
@@ -377,9 +337,7 @@ async def test_client_handles_empty_body() -> None:
     """A 204-style empty body yields None, normalised to []/{} by list/get."""
     client = ProtectClient(host="gateway.test", api_key="k", port=443)
     try:
-        respx.get(f"{PROTECT_BASE}/cameras").mock(
-            return_value=httpx.Response(204, content=b"")
-        )
+        respx.get(f"{PROTECT_BASE}/cameras").mock(return_value=httpx.Response(204, content=b""))
         assert await client.list_cameras() == []
     finally:
         await client.aclose()
@@ -390,9 +348,7 @@ async def test_client_http_error_wraps_uniferror() -> None:
     """Non-ConnectError httpx errors get wrapped into UniFiError."""
     client = ProtectClient(host="gateway.test", api_key="k", port=443)
     try:
-        respx.get(f"{PROTECT_BASE}/cameras").mock(
-            side_effect=httpx.TimeoutException("slow")
-        )
+        respx.get(f"{PROTECT_BASE}/cameras").mock(side_effect=httpx.TimeoutException("slow"))
         with pytest.raises(UniFiError):
             await client.list_cameras()
     finally:
@@ -513,9 +469,7 @@ async def test_client_get_camera_handles_scalar_response() -> None:
     """An unexpected scalar coerces to {}, not a raise."""
     client = ProtectClient(host="gateway.test", api_key="k", port=443)
     try:
-        respx.get(f"{PROTECT_BASE}/cameras/c1").mock(
-            return_value=httpx.Response(200, json=42)
-        )
+        respx.get(f"{PROTECT_BASE}/cameras/c1").mock(return_value=httpx.Response(200, json=42))
         out = await client.get_camera("c1")
         assert out == {}
     finally:
@@ -532,9 +486,9 @@ async def test_client_list_recordings_query_string() -> None:
             captured["url"] = str(request.url)
             return httpx.Response(200, json=[])
 
-        respx.get(
-            host="gateway.test", path__regex=r"^/proxy/protect/api/recordings.*"
-        ).mock(side_effect=handler)
+        respx.get(host="gateway.test", path__regex=r"^/proxy/protect/api/recordings.*").mock(
+            side_effect=handler
+        )
         await client.list_recordings("c1", 1000, 2000)
         url = captured["url"]
         assert "camera=c1" in url

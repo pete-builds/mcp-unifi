@@ -348,9 +348,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                         + (f" with {len(ports)} port(s)" if ports else "")
                         + (" (WAN-exposed)" if wan_expose and ports else "")
                     ),
-                    "note": (
-                        "Composite preview. Real apply rolls back on partial failure."
-                    ),
+                    "note": ("Composite preview. Real apply rolls back on partial failure."),
                 }
             )
 

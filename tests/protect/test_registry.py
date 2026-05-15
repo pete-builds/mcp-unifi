@@ -68,11 +68,7 @@ def test_build_registry_real_mode_wires_protect_client(
     settings = Settings(
         stub_mode=False,
         log_format="text",
-        controllers=[
-            ControllerConfig(
-                name="default", host="example", api_key="k", port=443
-            )
-        ],
+        controllers=[ControllerConfig(name="default", host="example", api_key="k", port=443)],
     )
     registry = build_registry(settings)
     from mcp_unifi.backends import ProtectRealBackend

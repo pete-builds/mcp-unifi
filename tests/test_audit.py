@@ -251,9 +251,7 @@ def test_default_sink_is_file_at_default_path(env_clean: pytest.MonkeyPatch) -> 
     assert sink.path == Path(audit.DEFAULT_PATH)
 
 
-def test_env_sink_file_with_custom_path(
-    env_clean: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_env_sink_file_with_custom_path(env_clean: pytest.MonkeyPatch, tmp_path: Path) -> None:
     custom = tmp_path / "custom.jsonl"
     env_clean.setenv(audit.ENV_SINK, "file")
     env_clean.setenv(audit.ENV_PATH, str(custom))
@@ -349,9 +347,7 @@ async def test_stdout_sink_writes_one_line_per_event(
 # ---------------------------------------------------------------------------
 
 
-def test_get_audit_log_builds_lazy_singleton(
-    env_clean: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_get_audit_log_builds_lazy_singleton(env_clean: pytest.MonkeyPatch, tmp_path: Path) -> None:
     target = tmp_path / "lazy.jsonl"
     env_clean.setenv(audit.ENV_SINK, "file")
     env_clean.setenv(audit.ENV_PATH, str(target))
@@ -513,7 +509,5 @@ async def test_stdoutsink_aclose_is_noop() -> None:
 async def test_latency_rounded_to_three_decimals(tmp_path: Path) -> None:
     sink = FileSink(tmp_path / "lat.jsonl")
     log = AuditLog(sink=sink)
-    event = await log.emit(
-        "default", "list_devices", {}, [], True, latency_ms=12.3456789
-    )
+    event = await log.emit("default", "list_devices", {}, [], True, latency_ms=12.3456789)
     assert event.latency_ms == 12.346

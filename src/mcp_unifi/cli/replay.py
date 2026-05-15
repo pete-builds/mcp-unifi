@@ -94,9 +94,7 @@ async def replay_events(
     not match ``target_controller`` are skipped (not failed).
     """
     if not stub_mode and (not target_controller or not i_mean_it):
-        raise RuntimeError(
-            "Real-mode replay requires --target-controller <name> AND --i-mean-it."
-        )
+        raise RuntimeError("Real-mode replay requires --target-controller <name> AND --i-mean-it.")
 
     srv = server if server is not None else _build_server(stub_mode=stub_mode)
     results: list[ReplayResult] = []

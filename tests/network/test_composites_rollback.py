@@ -151,9 +151,7 @@ _octet = st.integers(min_value=1, max_value=254)
 # create_iot_network — 3 sub-steps: create_network, create_wlan, create_firewall_rule
 # ---------------------------------------------------------------------------
 
-_iot_failure_points = st.sampled_from(
-    ["create_network", "create_wlan", "create_firewall_rule"]
-)
+_iot_failure_points = st.sampled_from(["create_network", "create_wlan", "create_firewall_rule"])
 
 
 @given(
@@ -273,9 +271,7 @@ async def test_provision_without_ports_rolls_back_on_lease_failure(
 @given(
     name=_safe_names,
     octet=_octet,
-    ports=st.lists(
-        st.integers(min_value=1, max_value=65535), min_size=1, max_size=3, unique=True
-    ),
+    ports=st.lists(st.integers(min_value=1, max_value=65535), min_size=1, max_size=3, unique=True),
     wan_expose=st.booleans(),
     fail_at=_provision_failure_points_with_ports,
 )

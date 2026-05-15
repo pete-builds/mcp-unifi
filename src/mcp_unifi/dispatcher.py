@@ -163,9 +163,7 @@ def build_registry(
     """
     backends: dict[str, Backend] = {}
     protect_backends: dict[str, ProtectBackend] = {}
-    overrides = (
-        stub_overrides if settings.stub_mode else real_overrides
-    ) or {}
+    overrides = (stub_overrides if settings.stub_mode else real_overrides) or {}
     protect_overrides = (
         protect_stub_overrides if settings.stub_mode else protect_real_overrides
     ) or {}
@@ -224,9 +222,7 @@ def register_modules(
     registered: list[str] = []
     for name in enabled:
         if name not in KNOWN_MODULES:
-            raise UnknownModuleError(
-                f"Unknown module '{name}'. Known: {sorted(KNOWN_MODULES)}"
-            )
+            raise UnknownModuleError(f"Unknown module '{name}'. Known: {sorted(KNOWN_MODULES)}")
         module = importlib.import_module(f"mcp_unifi.modules.{name}")
         register_fn = module.register
         register_fn(mcp, settings, registry)

@@ -179,20 +179,12 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 ``"default"``.
         """
         if detection_type not in SMART_DETECT_TYPES:
-            return err(
-                f"detection_type {detection_type!r} not in {sorted(SMART_DETECT_TYPES)}"
-            )
+            return err(f"detection_type {detection_type!r} not in {sorted(SMART_DETECT_TYPES)}")
         try:
             backend = registry.get_protect(controller)
             start_ms, end_ms = _hours_window(hours_back)
-            raw = await backend.list_events(
-                ["smartDetectZone"], start_ms, end_ms, limit
-            )
-            filtered = [
-                evt
-                for evt in raw
-                if detection_type in (evt.get("smartDetectTypes") or [])
-            ]
+            raw = await backend.list_events(["smartDetectZone"], start_ms, end_ms, limit)
+            filtered = [evt for evt in raw if detection_type in (evt.get("smartDetectTypes") or [])]
             filtered = _filter_by_camera(filtered, camera_id)
             return format_json(filtered)
         except UniFiError as exc:
@@ -295,9 +287,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         try:
             backend = registry.get_protect(controller)
             start_ms, end_ms = _hours_window(hours_back)
-            return format_json(
-                await backend.list_recordings(camera_id, start_ms, end_ms)
-            )
+            return format_json(await backend.list_recordings(camera_id, start_ms, end_ms))
         except UniFiError as exc:
             logger.exception("list_recordings failed", extra={"camera_id": camera_id})
             return err(str(exc))
@@ -347,9 +337,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 return err(f"camera {camera_id} not found")
             return format_json(updated)
         except UniFiError as exc:
-            logger.exception(
-                "set_camera_recording_mode failed", extra={"camera_id": camera_id}
-            )
+            logger.exception("set_camera_recording_mode failed", extra={"camera_id": camera_id})
             return err(str(exc))
 
     @mcp.tool()
@@ -399,9 +387,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 return err(f"camera {camera_id} not found")
             return format_json(updated)
         except UniFiError as exc:
-            logger.exception(
-                "set_camera_privacy_mode failed", extra={"camera_id": camera_id}
-            )
+            logger.exception("set_camera_privacy_mode failed", extra={"camera_id": camera_id})
             return err(str(exc))
 
     @mcp.tool()
@@ -452,9 +438,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 return err(f"camera {camera_id} not found")
             return format_json(updated)
         except UniFiError as exc:
-            logger.exception(
-                "set_motion_sensitivity failed", extra={"camera_id": camera_id}
-            )
+            logger.exception("set_motion_sensitivity failed", extra={"camera_id": camera_id})
             return err(str(exc))
 
     @mcp.tool()
@@ -536,9 +520,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 predicted change set.
         """
         if recording_mode not in RECORDING_MODES:
-            return err(
-                f"recording_mode {recording_mode!r} not in {sorted(RECORDING_MODES)}"
-            )
+            return err(f"recording_mode {recording_mode!r} not in {sorted(RECORDING_MODES)}")
         if not 0 <= sensitivity <= 100:
             return err(f"sensitivity {sensitivity} out of range (0-100)")
         if retention_days < 0:
@@ -551,9 +533,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 "retentionDurationMs": retention_ms,
             }
         }
-        sensitivity_patch: dict[str, Any] = {
-            "motionSettings": {"sensitivity": sensitivity}
-        }
+        sensitivity_patch: dict[str, Any] = {"motionSettings": {"sensitivity": sensitivity}}
         privacy_patch: dict[str, Any] = {"privacyMask": {"enabled": privacy_enabled}}
 
         if dry_run:
@@ -609,9 +589,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             # exactly the pre-call state regardless of which step blew up.
             if applied["sensitivity"] is not None:
                 try:
-                    await backend.update_camera(
-                        camera_id, {"motionSettings": original_motion}
-                    )
+                    await backend.update_camera(camera_id, {"motionSettings": original_motion})
                     actions.append({"sensitivity": "restored"})
                 except UniFiError as restore_exc:
                     logger.error(
@@ -650,25 +628,19 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
 
         # Step 1: recording mode + retention.
         try:
-            applied["recording"] = await backend.update_camera(
-                camera_id, recording_patch
-            )
+            applied["recording"] = await backend.update_camera(camera_id, recording_patch)
         except UniFiError as exc:
             return await _fail("recording", exc)
 
         # Step 2: motion sensitivity.
         try:
-            applied["sensitivity"] = await backend.update_camera(
-                camera_id, sensitivity_patch
-            )
+            applied["sensitivity"] = await backend.update_camera(camera_id, sensitivity_patch)
         except UniFiError as exc:
             return await _fail("sensitivity", exc)
 
         # Step 3: privacy mask.
         try:
-            applied["privacy"] = await backend.update_camera(
-                camera_id, privacy_patch
-            )
+            applied["privacy"] = await backend.update_camera(camera_id, privacy_patch)
         except UniFiError as exc:
             return await _fail("privacy", exc)
 

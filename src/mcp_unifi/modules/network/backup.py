@@ -313,9 +313,7 @@ async def _delete_by_type(backend: Backend, rtype: str, resource_id: str) -> boo
     raise ValueError(f"unknown resource type for delete: {rtype}")
 
 
-async def _create_by_type(
-    backend: Backend, rtype: str, payload: dict[str, Any]
-) -> dict[str, Any]:
+async def _create_by_type(backend: Backend, rtype: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Dispatch a create call to the right backend method for ``rtype``."""
     if rtype == "networks":
         return await backend.create_network(payload)
@@ -332,9 +330,7 @@ async def _create_by_type(
     raise ValueError(f"unknown resource type for create: {rtype}")
 
 
-def _force_disable_if_redacted(
-    payload: dict[str, Any], secrets_stripped: bool
-) -> dict[str, Any]:
+def _force_disable_if_redacted(payload: dict[str, Any], secrets_stripped: bool) -> dict[str, Any]:
     """If the WLAN payload still carries the redaction sentinel, force disable.
 
     Protects against broadcasting a sentinel-passphrase SSID on the wire.
@@ -472,9 +468,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(f"malformed backup_json: {exc}")
 
         if not isinstance(envelope, dict):
-            return err(
-                f"backup_json must be a JSON object, got {type(envelope).__name__}"
-            )
+            return err(f"backup_json must be a JSON object, got {type(envelope).__name__}")
 
         schema = envelope.get("schema")
         if schema != BACKUP_SCHEMA:
@@ -496,9 +490,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             cleaned: list[dict[str, Any]] = []
             for item in section:
                 if not isinstance(item, dict):
-                    return err(
-                        f"backup resources.{rtype} contains a non-object entry"
-                    )
+                    return err(f"backup resources.{rtype} contains a non-object entry")
                 cleaned.append(item)
             backup_resources[rtype] = cleaned
 
@@ -601,9 +593,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                             "error": str(exc),
                         },
                     )
-                    actions.append(
-                        {"type": rtype, "id": resource_id, "deleted": False}
-                    )
+                    actions.append({"type": rtype, "id": resource_id, "deleted": False})
                     continue
                 actions.append({"type": rtype, "id": resource_id, "deleted": ok})
             logger.warning(
@@ -616,11 +606,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         # it after creates so WLAN/lease bindings resolve correctly.
         async def _network_name_to_id() -> dict[str, str]:
             nets = list(await backend.list_networks())
-            return {
-                _norm(n.get("name")): n["_id"]
-                for n in nets
-                if isinstance(n.get("_id"), str)
-            }
+            return {_norm(n.get("name")): n["_id"] for n in nets if isinstance(n.get("_id"), str)}
 
         try:
             for action in plan:
@@ -632,9 +618,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                     rid = action["id"]
                     rtype = action["type"]
                     if not rid:
-                        applied.append(
-                            {**action, "result": "skipped", "reason": "no _id"}
-                        )
+                        applied.append({**action, "result": "skipped", "reason": "no _id"})
                         continue
                     ok = await _delete_by_type(backend, rtype, rid)
                     applied.append({**action, "result": "deleted" if ok else "missing"})
@@ -675,15 +659,11 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                                 payload["network_id"] = target
 
                     if rtype == "wlans":
-                        payload = _force_disable_if_redacted(
-                            payload, secrets_stripped
-                        )
+                        payload = _force_disable_if_redacted(payload, secrets_stripped)
 
                     record = await _create_by_type(backend, rtype, payload)
                     created_for_rollback.append((rtype, record))
-                    applied.append(
-                        {**action, "result": "created", "id": record.get("_id")}
-                    )
+                    applied.append({**action, "result": "created", "id": record.get("_id")})
                     continue
 
                 # Unknown action — surface but don't fail the apply.

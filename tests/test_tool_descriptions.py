@@ -135,9 +135,7 @@ def test_descriptions_meet_minimum_length(all_tools: list[dict[str, Any]]) -> No
         for t in all_tools
         if len(t["description"]) < MIN_DESCRIPTION_LEN
     ]
-    assert not too_short, (
-        f"Descriptions shorter than {MIN_DESCRIPTION_LEN} chars: {too_short}"
-    )
+    assert not too_short, f"Descriptions shorter than {MIN_DESCRIPTION_LEN} chars: {too_short}"
 
 
 def test_destructive_tools_mention_dry_run(all_tools: list[dict[str, Any]]) -> None:
@@ -148,9 +146,7 @@ def test_destructive_tools_mention_dry_run(all_tools: list[dict[str, Any]]) -> N
         desc = by_name.get(name, "")
         if "dry_run" not in desc:
             missing.append(name)
-    assert not missing, (
-        f"Destructive tools that don't mention dry_run in description: {missing}"
-    )
+    assert not missing, f"Destructive tools that don't mention dry_run in description: {missing}"
 
 
 def test_composite_tools_mention_rollback(all_tools: list[dict[str, Any]]) -> None:
@@ -161,9 +157,7 @@ def test_composite_tools_mention_rollback(all_tools: list[dict[str, Any]]) -> No
         desc = by_name.get(name, "")
         if "Rollback" not in desc and "rollback" not in desc and "rolled back" not in desc:
             missing.append(name)
-    assert not missing, (
-        f"Composite tools that don't mention rollback in description: {missing}"
-    )
+    assert not missing, f"Composite tools that don't mention rollback in description: {missing}"
 
 
 def test_no_unknown_destructive_tools(all_tools: list[dict[str, Any]]) -> None:
@@ -189,9 +183,7 @@ def test_no_unknown_destructive_tools(all_tools: list[dict[str, Any]]) -> None:
         "restore_",
     )
     presumed_destructive = {
-        t["name"]
-        for t in all_tools
-        if t["name"].startswith(destructive_prefixes)
+        t["name"] for t in all_tools if t["name"].startswith(destructive_prefixes)
     }
     missing = sorted(presumed_destructive - DESTRUCTIVE_TOOLS)
     assert not missing, (

@@ -118,10 +118,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                     "dry_run": True,
                     "controller": controller,
                     "would_create": {"firewall_rule": payload},
-                    "summary": (
-                        f"Would create firewall rule '{name}' "
-                        f"({action} on {ruleset})"
-                    ),
+                    "summary": (f"Would create firewall rule '{name}' ({action} on {ruleset})"),
                 }
             )
         try:
@@ -168,9 +165,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                     "dry_run": True,
                     "controller": controller,
                     "would_update": {"rule_id": rule_id, "patch": updates},
-                    "summary": (
-                        f"Would update firewall rule {rule_id} ({len(updates)} field(s))"
-                    ),
+                    "summary": (f"Would update firewall rule {rule_id} ({len(updates)} field(s))"),
                 }
             )
         try:

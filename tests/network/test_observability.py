@@ -175,6 +175,7 @@ async def test_real_list_alarms(real_server: FastMCP) -> None:
 @respx.mock
 async def test_real_trigger_speedtest(real_server: FastMCP) -> None:
     import json as _json
+
     captured: dict = {}
 
     def capture(request: httpx.Request) -> httpx.Response:

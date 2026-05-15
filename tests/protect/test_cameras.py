@@ -37,9 +37,7 @@ async def test_get_camera_by_id(
 
 
 async def test_get_camera_not_found(protect_registry: FastMCP) -> None:
-    result = await _call(
-        protect_registry, "get_camera", {"camera_id": "doesnotexist"}
-    )
+    result = await _call(protect_registry, "get_camera", {"camera_id": "doesnotexist"})
     assert "error" in result
     assert "not found" in result["error"]
 
@@ -62,9 +60,7 @@ async def test_get_event_thumbnail_returns_base64_jpeg(
     protect_registry: FastMCP, stub_protect_state: ProtectStubState
 ) -> None:
     evt_id = stub_protect_state.events[0]["id"]
-    result = await _call(
-        protect_registry, "get_event_thumbnail", {"event_id": evt_id}
-    )
+    result = await _call(protect_registry, "get_event_thumbnail", {"event_id": evt_id})
     assert result["event_id"] == evt_id
     assert result["format"] == "jpeg"
     decoded = base64.b64decode(result["data"])

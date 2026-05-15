@@ -67,9 +67,7 @@ def stub_protect_state() -> ProtectStubState:
 
 
 @pytest.fixture
-def protect_registry(
-    protect_settings: Settings, stub_protect_state: ProtectStubState
-) -> FastMCP:
+def protect_registry(protect_settings: Settings, stub_protect_state: ProtectStubState) -> FastMCP:
     """FastMCP server with the Protect module wired and a fresh stub state.
 
     Returns the server (not the registry directly) so test bodies use the same

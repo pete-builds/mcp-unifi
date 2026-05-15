@@ -34,9 +34,7 @@ async def test_list_motion_events_camera_filter(
 
 
 async def test_list_motion_events_respects_limit(protect_registry: FastMCP) -> None:
-    events = await _call(
-        protect_registry, "list_motion_events", {"limit": 2, "hours_back": 24}
-    )
+    events = await _call(protect_registry, "list_motion_events", {"limit": 2, "hours_back": 24})
     assert len(events) == 2
 
 

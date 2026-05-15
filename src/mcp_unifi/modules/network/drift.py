@@ -459,8 +459,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             spec = {}
         if not isinstance(spec, dict):
             return err(
-                f"spec_yaml must be a YAML mapping at the top level, "
-                f"got {type(spec).__name__}"
+                f"spec_yaml must be a YAML mapping at the top level, got {type(spec).__name__}"
             )
 
         try:
@@ -491,9 +490,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             except UniFiError as exc:
                 logger.exception("audit_network_drift: list_wlans failed")
                 return err(str(exc))
-            drifts.extend(
-                _diff_wlans(spec_wlans, actual_wlans, actual_networks)
-            )
+            drifts.extend(_diff_wlans(spec_wlans, actual_wlans, actual_networks))
 
         if "firewall_rules" in spec:
             spec_rules = spec.get("firewall_rules") or []

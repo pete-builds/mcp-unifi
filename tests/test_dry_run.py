@@ -173,9 +173,7 @@ async def test_dry_run_per_resource_destructive(
     payload = await _call(stub_server, tool, {**args, "dry_run": True})
 
     assert payload.get("dry_run") is True, f"{tool}: missing dry_run=True"
-    assert payload.get("controller") == "default", (
-        f"{tool}: controller missing or wrong"
-    )
+    assert payload.get("controller") == "default", f"{tool}: controller missing or wrong"
     assert expect_key in payload, f"{tool}: missing {expect_key} block"
     assert "summary" in payload and isinstance(payload["summary"], str)
     _assert_unchanged(before, stub_state)
@@ -302,9 +300,7 @@ async def test_provision_homelab_service_dry_run_no_ports_lease_only(
     assert "port_forwards" not in would
 
 
-async def test_quarantine_client_dry_run(
-    stub_server: FastMCP, stub_state: StubState
-) -> None:
+async def test_quarantine_client_dry_run(stub_server: FastMCP, stub_state: StubState) -> None:
     before = _state_snapshot(stub_state)
     payload = await _call(
         stub_server,
@@ -427,9 +423,7 @@ READ_ONLY_TOOLS = (
 
 
 @pytest.mark.parametrize("tool", READ_ONLY_TOOLS)
-async def test_read_only_tools_have_no_dry_run_param(
-    tool: str, stub_server: FastMCP
-) -> None:
+async def test_read_only_tools_have_no_dry_run_param(tool: str, stub_server: FastMCP) -> None:
     """Schema introspection must not show ``dry_run`` on read-only tools."""
     tools = await stub_server.list_tools()
     by_name = {t.name: t for t in tools}

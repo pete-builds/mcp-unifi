@@ -83,10 +83,7 @@ def scrub(value: Any) -> Any:
     without affecting their input.
     """
     if isinstance(value, dict):
-        return {
-            k: (REDACTED if _is_sensitive(str(k)) else scrub(v))
-            for k, v in value.items()
-        }
+        return {k: (REDACTED if _is_sensitive(str(k)) else scrub(v)) for k, v in value.items()}
     if isinstance(value, list):
         return [scrub(item) for item in value]
     if isinstance(value, tuple):
@@ -297,9 +294,7 @@ def _build_sink_from_env(env: dict[str, str] | None = None) -> Sink:
     e = env if env is not None else os.environ
     sink_name = (e.get(ENV_SINK) or "file").strip().lower()
     if sink_name not in VALID_SINKS:
-        raise ValueError(
-            f"{ENV_SINK}={sink_name!r} is not one of {sorted(VALID_SINKS)}"
-        )
+        raise ValueError(f"{ENV_SINK}={sink_name!r} is not one of {sorted(VALID_SINKS)}")
     if sink_name == "stdout":
         return StdoutSink()
     if sink_name == "syslog":

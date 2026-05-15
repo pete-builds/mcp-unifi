@@ -33,9 +33,28 @@ def _ts_ms() -> int:
 # image fixture.
 _TINY_JPEG = bytes(
     [
-        0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46,
-        0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00,
-        0xFF, 0xD9,
+        0xFF,
+        0xD8,
+        0xFF,
+        0xE0,
+        0x00,
+        0x10,
+        0x4A,
+        0x46,
+        0x49,
+        0x46,
+        0x00,
+        0x01,
+        0x01,
+        0x00,
+        0x00,
+        0x01,
+        0x00,
+        0x01,
+        0x00,
+        0x00,
+        0xFF,
+        0xD9,
     ]
 )
 
@@ -229,9 +248,7 @@ class ProtectStubState:
         return _TINY_JPEG
 
     # ----- Recordings -----------------------------------------------------
-    def list_recordings(
-        self, camera_id: str, start_ms: int, end_ms: int
-    ) -> list[UniFiRecord]:
+    def list_recordings(self, camera_id: str, start_ms: int, end_ms: int) -> list[UniFiRecord]:
         """Three deterministic recordings inside the requested window."""
         if end_ms <= start_ms:
             return []

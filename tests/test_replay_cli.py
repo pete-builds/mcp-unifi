@@ -235,9 +235,7 @@ def test_main_returns_1_when_any_event_fails(
     assert rc == 1
 
 
-def test_main_invalid_jsonl_returns_2(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_main_invalid_jsonl_returns_2(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     log = tmp_path / "audit.jsonl"
     log.write_text("{not json\n", encoding="utf-8")
     rc = replay_mod.main([str(log)])

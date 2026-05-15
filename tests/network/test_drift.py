@@ -39,18 +39,16 @@ async def test_drift_in_sync_when_spec_matches_seed(stub_server: FastMCP) -> Non
     assert result["summary"] == "in sync"
 
 
-async def test_drift_in_sync_with_field_match(
-    stub_server: FastMCP, stub_state: StubState
-) -> None:
+async def test_drift_in_sync_with_field_match(stub_server: FastMCP, stub_state: StubState) -> None:
     # Seed network "Default" has whatever the stub picks; align the spec to
     # whatever the stub seeded so we can assert sync at the field level.
     seed = stub_state.list_networks()[0]
     spec = textwrap.dedent(
         f"""
         networks:
-          - name: "{seed['name']}"
-            subnet: "{seed.get('ip_subnet', '')}"
-            purpose: "{seed.get('purpose', '')}"
+          - name: "{seed["name"]}"
+            subnet: "{seed.get("ip_subnet", "")}"
+            purpose: "{seed.get("purpose", "")}"
         """
     )
     result = await _call(stub_server, "audit_network_drift", {"spec_yaml": spec})
@@ -75,11 +73,7 @@ async def test_drift_missing_network(stub_server: FastMCP) -> None:
     result = await _call(stub_server, "audit_network_drift", {"spec_yaml": spec})
     assert result["in_sync"] is False
 
-    missing = [
-        d
-        for d in result["drifts"]
-        if d["name"] == "iot" and d["field"] == "_resource"
-    ]
+    missing = [d for d in result["drifts"] if d["name"] == "iot" and d["field"] == "_resource"]
     assert len(missing) == 1
     assert missing[0]["expected"] == "present"
     assert missing[0]["actual"] is None
@@ -115,9 +109,7 @@ async def test_drift_extra_network_on_controller(
     extras = [
         d
         for d in result["drifts"]
-        if d["resource_type"] == "vlan"
-        and d["field"] == "_resource"
-        and d["expected"] is None
+        if d["resource_type"] == "vlan" and d["field"] == "_resource" and d["expected"] is None
     ]
     assert any(d["name"] == "lab" for d in extras)
     assert result["in_sync"] is False
@@ -135,15 +127,13 @@ async def test_drift_field_level_subnet_mismatch(
     spec = textwrap.dedent(
         f"""
         networks:
-          - name: "{seed['name']}"
+          - name: "{seed["name"]}"
             subnet: "10.99.99.0/24"
         """
     )
     result = await _call(stub_server, "audit_network_drift", {"spec_yaml": spec})
     field_drifts = [
-        d
-        for d in result["drifts"]
-        if d["resource_type"] == "vlan" and d["field"] == "subnet"
+        d for d in result["drifts"] if d["resource_type"] == "vlan" and d["field"] == "subnet"
     ]
     assert len(field_drifts) == 1
     assert field_drifts[0]["expected"] == "10.99.99.0/24"
@@ -155,9 +145,7 @@ async def test_drift_field_level_subnet_mismatch(
 # ---------------------------------------------------------------------------
 
 
-async def test_drift_multi_resource(
-    stub_server: FastMCP, stub_state: StubState
-) -> None:
+async def test_drift_multi_resource(stub_server: FastMCP, stub_state: StubState) -> None:
     # Seed extras to drive both the "extra" path on WLANs and a missing
     # firewall rule via the spec.
     stub_state.create_wlan(
@@ -192,9 +180,7 @@ async def test_drift_multi_resource(
 
     # WLAN field drift on security
     wlan_field = [
-        d
-        for d in result["drifts"]
-        if d["resource_type"] == "wlan" and d["field"] == "security"
+        d for d in result["drifts"] if d["resource_type"] == "wlan" and d["field"] == "security"
     ]
     assert len(wlan_field) == 1
     assert wlan_field[0]["expected"] == "wpaeap"
@@ -268,14 +254,12 @@ async def test_drift_wlan_network_binding_match(
         f"""
         wlans:
           - name: "Cameras-IoT"
-            network: "{default_net['name']}"
+            network: "{default_net["name"]}"
         """
     )
     result = await _call(stub_server, "audit_network_drift", {"spec_yaml": spec})
     binding_drifts = [
-        d
-        for d in result["drifts"]
-        if d["resource_type"] == "wlan" and d["field"] == "network"
+        d for d in result["drifts"] if d["resource_type"] == "wlan" and d["field"] == "network"
     ]
     assert binding_drifts == []
 
@@ -306,9 +290,7 @@ async def test_drift_wlan_network_binding_unknown_name(
     )
     result = await _call(stub_server, "audit_network_drift", {"spec_yaml": spec})
     binding_drifts = [
-        d
-        for d in result["drifts"]
-        if d["resource_type"] == "wlan" and d["field"] == "network"
+        d for d in result["drifts"] if d["resource_type"] == "wlan" and d["field"] == "network"
     ]
     assert len(binding_drifts) == 1
     assert binding_drifts[0]["expected"] == "DoesNotExist"
@@ -349,11 +331,7 @@ async def test_drift_unnamed_resource_flagged(stub_server: FastMCP) -> None:
         """
     )
     result = await _call(stub_server, "audit_network_drift", {"spec_yaml": spec})
-    name_drifts = [
-        d
-        for d in result["drifts"]
-        if d["field"] == "name" and d["name"] == "<unnamed>"
-    ]
+    name_drifts = [d for d in result["drifts"] if d["field"] == "name" and d["name"] == "<unnamed>"]
     assert len(name_drifts) == 1
 
 
