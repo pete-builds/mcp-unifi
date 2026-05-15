@@ -8,13 +8,16 @@ was copied from any reference implementation.
 The state machine holds in-memory data so create/update/delete tools behave
 consistently within a single container lifetime. State resets on restart. Each
 ``StubState`` instance is fully independent so tests can exercise it in
-isolation without sharing module-level singletons.
+isolation. Multi-controller stub mode (Step 3) gives each controller its own
+:class:`StubState` via :func:`make_stub_state`; there is no module-level
+singleton.
 """
 
 from __future__ import annotations
 
 import time
 import uuid
+from collections import defaultdict, deque
 from typing import Any
 
 from mcp_unifi.models import UniFiRecord
@@ -385,9 +388,9 @@ def _seed_speedtest_results() -> list[UniFiRecord]:
 class StubState:
     """In-memory mock controller state.
 
-    A fresh instance always starts from seeded data. The module-level
-    :data:`STUB` singleton is what ``server.py`` uses; tests should construct
-    their own ``StubState()`` to avoid cross-test pollution.
+    A fresh instance always starts from seeded data. The dispatcher gives each
+    controller its own :class:`StubState` (see :func:`make_stub_state`); tests
+    construct their own to avoid cross-test pollution.
     """
 
     def __init__(self) -> None:
@@ -405,6 +408,32 @@ class StubState:
         self.health: list[UniFiRecord] = _seed_health()
         self.speedtest_results: list[UniFiRecord] = _seed_speedtest_results()
         self.audit_log: list[UniFiRecord] = []  # records of block/unblock/reconnect/etc.
+        # Failure-injection queue: maps method name to a FIFO deque of
+        # exceptions to raise on subsequent calls. Used by property tests
+        # (Hypothesis) to verify rollback correctness on the composites.
+        self._failure_queue: dict[str, deque[BaseException]] = defaultdict(deque)
+
+    # ----- Failure injection (test helper) --------------------------------
+    def fail_next(self, method_name: str, exception: BaseException) -> None:
+        """Queue an exception to be raised on the next call to ``method_name``.
+
+        The first invocation of ``method_name`` after this call consumes the
+        queued exception, raises it, and clears that one entry. Multiple
+        queued failures for the same method are honored in FIFO order. Tests
+        use this to deterministically fail one sub-step of a composite and
+        then verify rollback restores the prior state.
+
+        This helper is purely additive — it does not alter the behavior of
+        any existing :class:`StubState` method outside of consuming a queued
+        failure when one is present.
+        """
+        self._failure_queue[method_name].append(exception)
+
+    def _check_failure(self, method_name: str) -> None:
+        """Raise and consume a queued failure for ``method_name`` if any."""
+        queue = self._failure_queue.get(method_name)
+        if queue:
+            raise queue.popleft()
 
     # ----- Devices --------------------------------------------------------
     def list_devices(self) -> list[UniFiRecord]:
@@ -469,6 +498,7 @@ class StubState:
         return self.networks
 
     def create_network(self, payload: dict[str, Any]) -> UniFiRecord:
+        self._check_failure("create_network")
         record: UniFiRecord = {
             "_id": _oid(),
             "site_id": "default",
@@ -486,6 +516,7 @@ class StubState:
         return None
 
     def delete_network(self, network_id: str) -> bool:
+        self._check_failure("delete_network")
         before = len(self.networks)
         self.networks = [n for n in self.networks if n.get("_id") != network_id]
         return len(self.networks) < before
@@ -495,6 +526,7 @@ class StubState:
         return self.wlans
 
     def create_wlan(self, payload: dict[str, Any]) -> UniFiRecord:
+        self._check_failure("create_wlan")
         record: UniFiRecord = {"_id": _oid(), "enabled": True, **payload}
         # Don't echo the passphrase back in stub responses.
         if "x_passphrase" in record:
@@ -512,6 +544,7 @@ class StubState:
         return None
 
     def delete_wlan(self, wlan_id: str) -> bool:
+        self._check_failure("delete_wlan")
         before = len(self.wlans)
         self.wlans = [w for w in self.wlans if w.get("_id") != wlan_id]
         return len(self.wlans) < before
@@ -521,6 +554,7 @@ class StubState:
         return self.firewall_rules
 
     def create_firewall_rule(self, payload: dict[str, Any]) -> UniFiRecord:
+        self._check_failure("create_firewall_rule")
         record: UniFiRecord = {"_id": _oid(), "enabled": True, **payload}
         self.firewall_rules.append(record)
         return record
@@ -533,6 +567,7 @@ class StubState:
         return None
 
     def delete_firewall_rule(self, rule_id: str) -> bool:
+        self._check_failure("delete_firewall_rule")
         before = len(self.firewall_rules)
         self.firewall_rules = [r for r in self.firewall_rules if r.get("_id") != rule_id]
         return len(self.firewall_rules) < before
@@ -563,6 +598,7 @@ class StubState:
         return self.clients
 
     def block_client(self, mac: str) -> UniFiRecord | None:
+        self._check_failure("block_client")
         for c in self.clients:
             if c.get("mac") == mac:
                 c["blocked"] = True
@@ -608,11 +644,13 @@ class StubState:
         return [u for u in self.dhcp_leases if u.get("use_fixedip")]
 
     def create_dhcp_lease(self, payload: dict[str, Any]) -> UniFiRecord:
+        self._check_failure("create_dhcp_lease")
         record: UniFiRecord = {"_id": _oid(), "use_fixedip": True, **payload}
         self.dhcp_leases.append(record)
         return record
 
     def delete_dhcp_lease(self, lease_id: str) -> bool:
+        self._check_failure("delete_dhcp_lease")
         before = len(self.dhcp_leases)
         self.dhcp_leases = [u for u in self.dhcp_leases if u.get("_id") != lease_id]
         return len(self.dhcp_leases) < before
@@ -622,6 +660,7 @@ class StubState:
         return self.port_forwards
 
     def create_port_forward(self, payload: dict[str, Any]) -> UniFiRecord:
+        self._check_failure("create_port_forward")
         record: UniFiRecord = {"_id": _oid(), "enabled": True, **payload}
         self.port_forwards.append(record)
         return record
@@ -634,6 +673,7 @@ class StubState:
         return None
 
     def delete_port_forward(self, forward_id: str) -> bool:
+        self._check_failure("delete_port_forward")
         before = len(self.port_forwards)
         self.port_forwards = [p for p in self.port_forwards if p.get("_id") != forward_id]
         return len(self.port_forwards) < before
@@ -679,6 +719,11 @@ class StubState:
         return self.speedtest_results[:limit]
 
 
-# Module-level singleton — server.py imports this directly so create/update/
-# delete calls within a session see consistent state.
-STUB = StubState()
+def make_stub_state() -> StubState:
+    """Return a fresh seeded :class:`StubState`.
+
+    Step 3 removed the module-level singleton: each controller in stub mode
+    now owns an isolated state instance. Use this helper instead of constructing
+    ``StubState()`` directly so future seeding hooks have one entrypoint.
+    """
+    return StubState()

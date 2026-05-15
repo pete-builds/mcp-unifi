@@ -1,0 +1,437 @@
+"""Backend protocol unifying stub and real UniFi controllers.
+
+Tools call methods on a ``Backend`` instance instead of branching on
+``settings.stub_mode``. ``StubBackend`` wraps an in-memory ``StubState`` and
+``RealBackend`` wraps the async ``UniFiClient``. Both expose the same async
+surface so tool bodies have one path.
+
+This is the seam the dispatcher uses to route tool calls to the right
+controller (single-site or multi-site), and the seam Step 4 will use to wrap
+audit + dry-run uniformly.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Protocol, runtime_checkable
+
+from mcp_unifi.clients.stubs import StubState
+from mcp_unifi.clients.unifi import UniFiClient, UniFiError
+from mcp_unifi.models import UniFiRecord
+
+
+@runtime_checkable
+class Backend(Protocol):
+    """Async surface every tool calls into.
+
+    Implementations: :class:`StubBackend` (in-memory) and :class:`RealBackend`
+    (HTTP via ``UniFiClient``). Methods mirror the existing tool actions —
+    nothing new, nothing renamed.
+    """
+
+    # ----- Devices --------------------------------------------------------
+    async def list_devices(self) -> list[UniFiRecord]: ...
+    async def restart_device(self, mac: str) -> bool: ...
+    async def locate_device(self, mac: str, on: bool) -> bool: ...
+    async def set_port_state(
+        self,
+        device_mac: str,
+        port_idx: int,
+        *,
+        enable: bool | None,
+        poe_mode: str | None,
+        portconf_id: str | None,
+    ) -> UniFiRecord | None: ...
+
+    # ----- Networks / VLANs -----------------------------------------------
+    async def list_networks(self) -> list[UniFiRecord]: ...
+    async def create_network(self, payload: dict[str, Any]) -> UniFiRecord: ...
+    async def update_network(
+        self, network_id: str, patch: dict[str, Any]
+    ) -> UniFiRecord | None: ...
+    async def delete_network(self, network_id: str) -> bool: ...
+
+    # ----- WLANs ----------------------------------------------------------
+    async def list_wlans(self) -> list[UniFiRecord]: ...
+    async def create_wlan(self, payload: dict[str, Any]) -> UniFiRecord: ...
+    async def update_wlan(self, wlan_id: str, patch: dict[str, Any]) -> UniFiRecord | None: ...
+    async def delete_wlan(self, wlan_id: str) -> bool: ...
+
+    # ----- Firewall -------------------------------------------------------
+    async def list_firewall_rules(self) -> list[UniFiRecord]: ...
+    async def create_firewall_rule(self, payload: dict[str, Any]) -> UniFiRecord: ...
+    async def update_firewall_rule(
+        self, rule_id: str, patch: dict[str, Any]
+    ) -> UniFiRecord | None: ...
+    async def delete_firewall_rule(self, rule_id: str) -> bool: ...
+
+    # ----- Port profiles --------------------------------------------------
+    async def list_port_profiles(self) -> list[UniFiRecord]: ...
+    async def create_port_profile(self, payload: dict[str, Any]) -> UniFiRecord: ...
+    async def update_port_profile(
+        self, profile_id: str, patch: dict[str, Any]
+    ) -> UniFiRecord | None: ...
+    async def delete_port_profile(self, profile_id: str) -> bool: ...
+
+    # ----- Clients --------------------------------------------------------
+    async def list_clients(self) -> list[UniFiRecord]: ...
+    async def block_client(self, mac: str) -> UniFiRecord | None: ...
+    async def unblock_client(self, mac: str) -> UniFiRecord | None: ...
+    async def reconnect_client(self, mac: str) -> bool: ...
+    async def top_talkers(self, limit: int) -> list[UniFiRecord]: ...
+
+    # ----- DHCP leases (static) -------------------------------------------
+    async def list_dhcp_leases(self) -> list[UniFiRecord]: ...
+    async def create_dhcp_lease(self, payload: dict[str, Any]) -> UniFiRecord: ...
+    async def delete_dhcp_lease(self, lease_id: str) -> bool: ...
+
+    # ----- Port forwarding ------------------------------------------------
+    async def list_port_forwards(self) -> list[UniFiRecord]: ...
+    async def create_port_forward(self, payload: dict[str, Any]) -> UniFiRecord: ...
+    async def update_port_forward(
+        self, forward_id: str, patch: dict[str, Any]
+    ) -> UniFiRecord | None: ...
+    async def delete_port_forward(self, forward_id: str) -> bool: ...
+
+    # ----- Observability --------------------------------------------------
+    async def get_site_health(self) -> list[UniFiRecord]: ...
+    async def get_wan_status(self) -> UniFiRecord: ...
+    async def list_events(self, limit: int) -> list[UniFiRecord]: ...
+    async def list_alarms(self, limit: int, archived: bool) -> list[UniFiRecord]: ...
+    async def trigger_speedtest(self) -> UniFiRecord: ...
+    async def get_speedtest_results(self, limit: int) -> list[UniFiRecord]: ...
+
+
+class StubBackend:
+    """In-memory backend wrapping a single :class:`StubState` instance.
+
+    The state is per-controller so two controllers in stub mode have isolated
+    state. Methods are ``async def`` to match the protocol; under the hood they
+    delegate synchronously.
+    """
+
+    def __init__(self, state: StubState) -> None:
+        self.state = state
+
+    # ----- Devices --------------------------------------------------------
+    async def list_devices(self) -> list[UniFiRecord]:
+        return self.state.list_devices()
+
+    async def restart_device(self, mac: str) -> bool:
+        return self.state.restart_device(mac)
+
+    async def locate_device(self, mac: str, on: bool) -> bool:
+        return self.state.locate_device(mac, on)
+
+    async def set_port_state(
+        self,
+        device_mac: str,
+        port_idx: int,
+        *,
+        enable: bool | None,
+        poe_mode: str | None,
+        portconf_id: str | None,
+    ) -> UniFiRecord | None:
+        return self.state.set_port_state(
+            device_mac,
+            port_idx,
+            enable=enable,
+            poe_mode=poe_mode,
+            portconf_id=portconf_id,
+        )
+
+    # ----- Networks / VLANs -----------------------------------------------
+    async def list_networks(self) -> list[UniFiRecord]:
+        return self.state.list_networks()
+
+    async def create_network(self, payload: dict[str, Any]) -> UniFiRecord:
+        return self.state.create_network(payload)
+
+    async def update_network(
+        self, network_id: str, patch: dict[str, Any]
+    ) -> UniFiRecord | None:
+        return self.state.update_network(network_id, patch)
+
+    async def delete_network(self, network_id: str) -> bool:
+        return self.state.delete_network(network_id)
+
+    # ----- WLANs ----------------------------------------------------------
+    async def list_wlans(self) -> list[UniFiRecord]:
+        return self.state.list_wlans()
+
+    async def create_wlan(self, payload: dict[str, Any]) -> UniFiRecord:
+        return self.state.create_wlan(payload)
+
+    async def update_wlan(self, wlan_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        return self.state.update_wlan(wlan_id, patch)
+
+    async def delete_wlan(self, wlan_id: str) -> bool:
+        return self.state.delete_wlan(wlan_id)
+
+    # ----- Firewall -------------------------------------------------------
+    async def list_firewall_rules(self) -> list[UniFiRecord]:
+        return self.state.list_firewall_rules()
+
+    async def create_firewall_rule(self, payload: dict[str, Any]) -> UniFiRecord:
+        return self.state.create_firewall_rule(payload)
+
+    async def update_firewall_rule(
+        self, rule_id: str, patch: dict[str, Any]
+    ) -> UniFiRecord | None:
+        return self.state.update_firewall_rule(rule_id, patch)
+
+    async def delete_firewall_rule(self, rule_id: str) -> bool:
+        return self.state.delete_firewall_rule(rule_id)
+
+    # ----- Port profiles --------------------------------------------------
+    async def list_port_profiles(self) -> list[UniFiRecord]:
+        return self.state.list_port_profiles()
+
+    async def create_port_profile(self, payload: dict[str, Any]) -> UniFiRecord:
+        return self.state.create_port_profile(payload)
+
+    async def update_port_profile(
+        self, profile_id: str, patch: dict[str, Any]
+    ) -> UniFiRecord | None:
+        return self.state.update_port_profile(profile_id, patch)
+
+    async def delete_port_profile(self, profile_id: str) -> bool:
+        return self.state.delete_port_profile(profile_id)
+
+    # ----- Clients --------------------------------------------------------
+    async def list_clients(self) -> list[UniFiRecord]:
+        return self.state.list_clients()
+
+    async def block_client(self, mac: str) -> UniFiRecord | None:
+        return self.state.block_client(mac)
+
+    async def unblock_client(self, mac: str) -> UniFiRecord | None:
+        return self.state.unblock_client(mac)
+
+    async def reconnect_client(self, mac: str) -> bool:
+        return self.state.reconnect_client(mac)
+
+    async def top_talkers(self, limit: int) -> list[UniFiRecord]:
+        return self.state.top_talkers(limit)
+
+    # ----- DHCP leases ----------------------------------------------------
+    async def list_dhcp_leases(self) -> list[UniFiRecord]:
+        return self.state.list_dhcp_leases()
+
+    async def create_dhcp_lease(self, payload: dict[str, Any]) -> UniFiRecord:
+        return self.state.create_dhcp_lease(payload)
+
+    async def delete_dhcp_lease(self, lease_id: str) -> bool:
+        return self.state.delete_dhcp_lease(lease_id)
+
+    # ----- Port forwarding ------------------------------------------------
+    async def list_port_forwards(self) -> list[UniFiRecord]:
+        return self.state.list_port_forwards()
+
+    async def create_port_forward(self, payload: dict[str, Any]) -> UniFiRecord:
+        return self.state.create_port_forward(payload)
+
+    async def update_port_forward(
+        self, forward_id: str, patch: dict[str, Any]
+    ) -> UniFiRecord | None:
+        return self.state.update_port_forward(forward_id, patch)
+
+    async def delete_port_forward(self, forward_id: str) -> bool:
+        return self.state.delete_port_forward(forward_id)
+
+    # ----- Observability --------------------------------------------------
+    async def get_site_health(self) -> list[UniFiRecord]:
+        return self.state.get_site_health()
+
+    async def get_wan_status(self) -> UniFiRecord:
+        return self.state.get_wan_status()
+
+    async def list_events(self, limit: int) -> list[UniFiRecord]:
+        return self.state.list_events(limit)
+
+    async def list_alarms(self, limit: int, archived: bool) -> list[UniFiRecord]:
+        return self.state.list_alarms(limit, archived)
+
+    async def trigger_speedtest(self) -> UniFiRecord:
+        return self.state.trigger_speedtest()
+
+    async def get_speedtest_results(self, limit: int) -> list[UniFiRecord]:
+        return self.state.get_speedtest_results(limit)
+
+
+class RealBackend:
+    """Async backend wrapping a :class:`UniFiClient` for real HTTP calls.
+
+    A few methods (``set_port_state``, ``get_wan_status``) need the same small
+    composition the legacy server.py did: list devices to find the ``_id``,
+    filter health to find the WAN subsystem record. The composition lives here
+    once instead of inside every tool.
+    """
+
+    def __init__(self, client: UniFiClient) -> None:
+        self.client = client
+
+    # ----- Devices --------------------------------------------------------
+    async def list_devices(self) -> list[UniFiRecord]:
+        return await self.client.list_devices()
+
+    async def restart_device(self, mac: str) -> bool:
+        await self.client.restart_device(mac)
+        return True
+
+    async def locate_device(self, mac: str, on: bool) -> bool:
+        await self.client.locate_device(mac, on)
+        return True
+
+    async def set_port_state(
+        self,
+        device_mac: str,
+        port_idx: int,
+        *,
+        enable: bool | None,
+        poe_mode: str | None,
+        portconf_id: str | None,
+    ) -> UniFiRecord | None:
+        devices = await self.client.list_devices()
+        target = next((d for d in devices if d.get("mac") == device_mac), None)
+        if target is None:
+            return None
+        device_id = target.get("_id")
+        if not device_id:
+            raise UniFiError(f"device {device_mac} has no _id")
+        existing = list(target.get("port_overrides") or [])
+        override: dict[str, Any] = {"port_idx": port_idx}
+        if enable is not None:
+            override["enable"] = enable
+        if poe_mode:
+            override["poe_mode"] = poe_mode
+        if portconf_id:
+            override["portconf_id"] = portconf_id
+        existing = [o for o in existing if o.get("port_idx") != port_idx]
+        existing.append(override)
+        return await self.client.set_port_state(device_id, existing)
+
+    # ----- Networks / VLANs -----------------------------------------------
+    async def list_networks(self) -> list[UniFiRecord]:
+        return await self.client.list_networks()
+
+    async def create_network(self, payload: dict[str, Any]) -> UniFiRecord:
+        return await self.client.create_network(payload)
+
+    async def update_network(
+        self, network_id: str, patch: dict[str, Any]
+    ) -> UniFiRecord | None:
+        return await self.client.update_network(network_id, patch)
+
+    async def delete_network(self, network_id: str) -> bool:
+        return await self.client.delete_network(network_id)
+
+    # ----- WLANs ----------------------------------------------------------
+    async def list_wlans(self) -> list[UniFiRecord]:
+        return await self.client.list_wlans()
+
+    async def create_wlan(self, payload: dict[str, Any]) -> UniFiRecord:
+        return await self.client.create_wlan(payload)
+
+    async def update_wlan(self, wlan_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        return await self.client.update_wlan(wlan_id, patch)
+
+    async def delete_wlan(self, wlan_id: str) -> bool:
+        return await self.client.delete_wlan(wlan_id)
+
+    # ----- Firewall -------------------------------------------------------
+    async def list_firewall_rules(self) -> list[UniFiRecord]:
+        return await self.client.list_firewall_rules()
+
+    async def create_firewall_rule(self, payload: dict[str, Any]) -> UniFiRecord:
+        return await self.client.create_firewall_rule(payload)
+
+    async def update_firewall_rule(
+        self, rule_id: str, patch: dict[str, Any]
+    ) -> UniFiRecord | None:
+        return await self.client.update_firewall_rule(rule_id, patch)
+
+    async def delete_firewall_rule(self, rule_id: str) -> bool:
+        return await self.client.delete_firewall_rule(rule_id)
+
+    # ----- Port profiles --------------------------------------------------
+    async def list_port_profiles(self) -> list[UniFiRecord]:
+        return await self.client.list_port_profiles()
+
+    async def create_port_profile(self, payload: dict[str, Any]) -> UniFiRecord:
+        return await self.client.create_port_profile(payload)
+
+    async def update_port_profile(
+        self, profile_id: str, patch: dict[str, Any]
+    ) -> UniFiRecord | None:
+        return await self.client.update_port_profile(profile_id, patch)
+
+    async def delete_port_profile(self, profile_id: str) -> bool:
+        return await self.client.delete_port_profile(profile_id)
+
+    # ----- Clients --------------------------------------------------------
+    async def list_clients(self) -> list[UniFiRecord]:
+        return await self.client.list_clients()
+
+    async def block_client(self, mac: str) -> UniFiRecord | None:
+        return await self.client.block_client(mac)
+
+    async def unblock_client(self, mac: str) -> UniFiRecord | None:
+        return await self.client.unblock_client(mac)
+
+    async def reconnect_client(self, mac: str) -> bool:
+        await self.client.reconnect_client(mac)
+        return True
+
+    async def top_talkers(self, limit: int) -> list[UniFiRecord]:
+        return await self.client.list_top_talkers(limit)
+
+    # ----- DHCP leases ----------------------------------------------------
+    async def list_dhcp_leases(self) -> list[UniFiRecord]:
+        return await self.client.list_dhcp_leases()
+
+    async def create_dhcp_lease(self, payload: dict[str, Any]) -> UniFiRecord:
+        return await self.client.create_dhcp_lease(payload)
+
+    async def delete_dhcp_lease(self, lease_id: str) -> bool:
+        return await self.client.delete_dhcp_lease(lease_id)
+
+    # ----- Port forwarding ------------------------------------------------
+    async def list_port_forwards(self) -> list[UniFiRecord]:
+        return await self.client.list_port_forwards()
+
+    async def create_port_forward(self, payload: dict[str, Any]) -> UniFiRecord:
+        return await self.client.create_port_forward(payload)
+
+    async def update_port_forward(
+        self, forward_id: str, patch: dict[str, Any]
+    ) -> UniFiRecord | None:
+        return await self.client.update_port_forward(forward_id, patch)
+
+    async def delete_port_forward(self, forward_id: str) -> bool:
+        return await self.client.delete_port_forward(forward_id)
+
+    # ----- Observability --------------------------------------------------
+    async def get_site_health(self) -> list[UniFiRecord]:
+        return await self.client.get_site_health()
+
+    async def get_wan_status(self) -> UniFiRecord:
+        health = await self.client.get_site_health()
+        for h in health:
+            if isinstance(h, dict) and h.get("subsystem") == "wan":
+                return h
+        return {"subsystem": "wan", "status": "unknown"}
+
+    async def list_events(self, limit: int) -> list[UniFiRecord]:
+        return await self.client.list_events(limit)
+
+    async def list_alarms(self, limit: int, archived: bool) -> list[UniFiRecord]:
+        return await self.client.list_alarms(limit, archived)
+
+    async def trigger_speedtest(self) -> UniFiRecord:
+        return await self.client.trigger_speedtest()
+
+    async def get_speedtest_results(self, limit: int) -> list[UniFiRecord]:
+        return await self.client.get_speedtest_results(limit)
+
+
+__all__ = ["Backend", "RealBackend", "StubBackend"]

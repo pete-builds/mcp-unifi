@@ -6,8 +6,30 @@ from collections.abc import Iterator
 
 import pytest
 
+from mcp_unifi import audit
 from mcp_unifi.clients.stubs import StubState
 from mcp_unifi.config import Settings
+
+
+@pytest.fixture(autouse=True)
+def _isolated_audit_log(
+    tmp_path: object, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[None]:
+    """Redirect the audit-log singleton at a per-test tmp file.
+
+    Prevents the test suite from ever writing to the repo's CWD as a side
+    effect of any tool call (every tool now emits via the @audited decorator).
+    Tests that need to assert on audit contents pin their own sink via
+    ``audit.set_audit_log(...)``; this fixture just makes the default safe.
+    """
+    log_path = tmp_path / "test-audit.jsonl"  # type: ignore[operator]
+    monkeypatch.setenv(audit.ENV_SINK, "file")
+    monkeypatch.setenv(audit.ENV_PATH, str(log_path))
+    audit.set_audit_log(None)
+    try:
+        yield
+    finally:
+        audit.set_audit_log(None)
 
 
 @pytest.fixture

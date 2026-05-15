@@ -39,3 +39,12 @@ docker-compose.override.yml
 
 # Internal Forge agent build notes (not for public consumption)
 SESSION-RESUME.md
+
+# Scratch artefacts (e.g. tool-schema snapshots from scripts/dump_tool_schemas.py)
+scripts/*.json
+
+# Audit log default sink (when running locally / from tests)
+audit.jsonl
+
+# uv side-effect lockfile — project uses requirements*.lock as source of truth
+uv.lock

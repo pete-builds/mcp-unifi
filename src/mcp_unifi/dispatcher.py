@@ -1,0 +1,170 @@
+"""Controller registry and module loader for mcp-unifi.
+
+The :class:`ControllerRegistry` holds one :class:`Backend` per named
+controller. Tools fetch a backend by name (``controller="default"``) instead
+of branching on ``settings.stub_mode`` or hard-wiring a single client.
+
+:func:`register_modules` reads ``MCP_UNIFI_MODULES_ENABLED`` (CSV, default
+``"network"``) and imports the matching ``mcp_unifi.modules.<name>`` package,
+calling its ``register(mcp, settings, registry)`` entrypoint. This keeps the
+phase-3 Protect module out of the import path until it's wired in.
+"""
+
+from __future__ import annotations
+
+import importlib
+import logging
+import os
+from typing import TYPE_CHECKING
+
+from mcp_unifi.backends import Backend, RealBackend, StubBackend
+from mcp_unifi.clients.stubs import make_stub_state
+from mcp_unifi.clients.unifi import UniFiClient
+
+if TYPE_CHECKING:
+    from fastmcp import FastMCP
+
+    from mcp_unifi.config import Settings
+
+logger = logging.getLogger("mcp_unifi.dispatcher")
+
+#: Default module set when ``MCP_UNIFI_MODULES_ENABLED`` is unset.
+DEFAULT_MODULES = ("network",)
+
+#: All modules the dispatcher knows how to import. Keep this in sync with the
+#: ``src/mcp_unifi/modules/<name>/__init__.py`` packages on disk.
+KNOWN_MODULES = frozenset({"network", "protect"})
+
+
+class UnknownControllerError(KeyError):
+    """Raised when a tool requests a controller name that wasn't configured."""
+
+
+class UnknownModuleError(ValueError):
+    """Raised when ``MCP_UNIFI_MODULES_ENABLED`` references an unknown module."""
+
+
+class ControllerRegistry:
+    """Map of controller name → :class:`Backend`.
+
+    Built once at startup from ``settings.controllers`` (and optional injected
+    overrides for tests). Tools call ``registry.get(name)`` to route a request
+    to the right controller.
+    """
+
+    def __init__(self, backends: dict[str, Backend]) -> None:
+        if not backends:
+            raise ValueError("ControllerRegistry requires at least one backend.")
+        self._backends = dict(backends)
+
+    def get(self, name: str) -> Backend:
+        try:
+            return self._backends[name]
+        except KeyError as exc:
+            available = ", ".join(sorted(self._backends)) or "(none)"
+            raise UnknownControllerError(
+                f"Unknown controller '{name}'. Available: {available}."
+            ) from exc
+
+    def names(self) -> list[str]:
+        return sorted(self._backends)
+
+    def __len__(self) -> int:
+        return len(self._backends)
+
+    def __contains__(self, name: object) -> bool:
+        return name in self._backends
+
+
+def build_registry(
+    settings: Settings,
+    *,
+    stub_overrides: dict[str, Backend] | None = None,
+    real_overrides: dict[str, Backend] | None = None,
+) -> ControllerRegistry:
+    """Construct a :class:`ControllerRegistry` from settings.
+
+    In stub mode each configured controller gets its own fresh
+    :class:`StubBackend` (state is per-controller, not shared). In real mode
+    each gets a :class:`RealBackend` wrapping a per-controller
+    :class:`UniFiClient`.
+
+    Args:
+        settings: Validated :class:`Settings` instance. Must have at least one
+            entry in ``settings.controllers``.
+        stub_overrides: Optional ``{name: Backend}`` map that wins over the
+            stub defaults for the matching names. Used by tests to inject a
+            specific :class:`StubState`.
+        real_overrides: Optional ``{name: Backend}`` map for real mode (used
+            by tests passing a respx-mocked :class:`UniFiClient`).
+    """
+    backends: dict[str, Backend] = {}
+    overrides = (
+        stub_overrides if settings.stub_mode else real_overrides
+    ) or {}
+
+    for ctrl in settings.controllers:
+        if ctrl.name in overrides:
+            backends[ctrl.name] = overrides[ctrl.name]
+            continue
+        if settings.stub_mode:
+            backends[ctrl.name] = StubBackend(make_stub_state())
+        else:
+            client = UniFiClient(
+                host=ctrl.host,
+                api_key=ctrl.api_key.get_secret_value(),
+                port=ctrl.port,
+                site=ctrl.site,
+                verify_ssl=ctrl.verify_ssl,
+            )
+            backends[ctrl.name] = RealBackend(client)
+
+    return ControllerRegistry(backends)
+
+
+def _enabled_modules() -> tuple[str, ...]:
+    raw = os.environ.get("MCP_UNIFI_MODULES_ENABLED", "").strip()
+    if not raw:
+        return DEFAULT_MODULES
+    parts = tuple(p.strip() for p in raw.split(",") if p.strip())
+    return parts or DEFAULT_MODULES
+
+
+def register_modules(
+    mcp: FastMCP, settings: Settings, registry: ControllerRegistry
+) -> tuple[str, ...]:
+    """Import each enabled module and call its ``register`` entrypoint.
+
+    Returns the tuple of module names actually registered (in order).
+
+    Raises:
+        UnknownModuleError: ``MCP_UNIFI_MODULES_ENABLED`` references a module
+            that doesn't exist in ``mcp_unifi.modules``.
+    """
+    enabled = _enabled_modules()
+    registered: list[str] = []
+    for name in enabled:
+        if name not in KNOWN_MODULES:
+            raise UnknownModuleError(
+                f"Unknown module '{name}'. Known: {sorted(KNOWN_MODULES)}"
+            )
+        module = importlib.import_module(f"mcp_unifi.modules.{name}")
+        register_fn = module.register
+        register_fn(mcp, settings, registry)
+        registered.append(name)
+    logger.info(
+        "registered modules",
+        extra={"modules": registered, "controllers": registry.names()},
+    )
+    return tuple(registered)
+
+
+__all__ = [
+    "DEFAULT_MODULES",
+    "KNOWN_MODULES",
+    "ControllerRegistry",
+    "UnknownControllerError",
+    "UnknownModuleError",
+    "build_registry",
+    "register_modules",
+]

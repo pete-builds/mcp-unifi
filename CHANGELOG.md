@@ -5,6 +5,93 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0-rc.1] - 2026-05-14
+
+> **Release candidate.** v0.5.0 stable awaits real-mode validation against
+> Pete's UCG-Fiber. Single-controller users running v0.4.x see no behavioral
+> change in real mode; legacy `UNIFI_HOST` + `UNIFI_API_KEY` env vars still
+> auto-promote to a one-controller config. Multi-site, dry-run, and audit
+> logging are additive.
+
+### Added — Phase 1 (Multi-site, Dry-run, Audit)
+
+- **Multi-site config.** `MCPUnifiConfig.controllers: list[ControllerConfig]`
+  with `name`, `host`, `api_key`, `port`, `site`, `verify_ssl`. Optional
+  `MCP_UNIFI_CONTROLLERS_FILE` env var points at a YAML file for >1
+  controller. Every tool now accepts an optional `controller: str = "default"`
+  parameter that selects which controller the call routes to.
+- **Backward compat.** Existing single-controller env vars (`UNIFI_HOST`,
+  `UNIFI_API_KEY`, `UNIFI_PORT`, `UNIFI_SITE`, `UNIFI_VERIFY_SSL`) auto-promote
+  to `controllers=[ControllerConfig(name="default", ...)]`. No config change
+  required for v0.4.x users.
+- **`SecretStr` on `api_key`.** Controller credentials are now wrapped in
+  Pydantic's `SecretStr`. Accessor `api_key.get_secret_value()` is required
+  to read the cleartext; `repr()` and structured logging never echo the raw
+  key. Existing logs already redacted the key; this hardens the in-memory
+  representation too.
+- **Module dispatcher.** `MCP_UNIFI_MODULES_ENABLED` env (default `"network"`)
+  controls which modules register tools at startup. Currently only `network`
+  ships; `protect` is reserved for Phase 3.
+- **Network module split.** The single 1000-line `server.py` was split into
+  10 files under `src/mcp_unifi/modules/network/` (vlans, wlans, firewall,
+  port_profiles, clients, devices, dhcp, port_forwards, observability,
+  composites). 43 tools, no behavior change, no schema change.
+- **`Backend` protocol.** `StubBackend` (in-memory) and `RealBackend` (HTTP
+  via `UniFiClient`) now share one async surface. Tools call `backend.X()`
+  instead of branching on `settings.stub_mode`.
+- **Dry-run on 27 destructive tools.** `dry_run: bool = False` parameter
+  returns the predicted change set (payloads, predicted IDs, summary) without
+  writing. Composite dry-runs return the full graph with placeholder IDs
+  (`<dry-run-network-id>`, etc.) so callers can preview the shape end-to-end.
+- **Audit log substrate.** `src/mcp_unifi/audit.py` writes one JSONL record
+  per tool call: timestamp (UTC), controller, tool, scrubbed args, result
+  shape, success flag, latency_ms. Configurable sink: file (default,
+  `audit.jsonl`), stdout, or syslog. Args containing `passphrase`,
+  `api_key`, `x_passphrase`, `password`, `secret` are scrubbed before
+  emission.
+- **`@audited` decorator.** Wraps every tool registration; emit happens
+  uniformly so individual tool bodies stay clean.
+- **`mcp-unifi-replay` CLI.** Re-issues calls from a JSONL audit log.
+  Useful for migrations (export from controller A, replay against
+  controller B) and reproducing test scenarios.
+- **Hypothesis property tests.** Five property tests verify rollback
+  correctness on the four destructive composites (`create_iot_network`,
+  `create_guest_network`, `provision_homelab_service`, `quarantine_client`).
+  For each, Hypothesis injects a failure at any of the composite's
+  sub-steps and asserts that post-failure stub state is byte-identical to
+  the pre-call snapshot. Deterministic CI profile pinned via
+  `settings.register_profile("ci", deadline=None, derandomize=True)`.
+- **`StubState.fail_next(method_name, exception)`.** Test helper that
+  queues an exception to be raised on the next call to a named method.
+  FIFO; multiple queued failures supported. Used by the property tests
+  above. Purely additive — does not alter behavior outside of consuming
+  a queued failure when one is present.
+- **Multi-site test fixtures.** `two_controller_settings`,
+  `two_controller_states`, `multi_site_server` in
+  `tests/network/conftest.py`. Opt-in via explicit fixture request; per-
+  resource tests still use single-controller defaults.
+
+### Changed
+
+- **Test layout.** `tests/test_tools.py` (~3000 lines) split into
+  `tests/network/` per source module. Test count and assertions
+  unchanged from v0.4.1; this is a pure reorganisation that mirrors the
+  module split.
+- Test count: 224 → 346 (added: dry-run, audit, replay-CLI, multi-site,
+  property-rollback). Coverage: 91% (gate is 80%).
+
+### Notes for upgrading
+
+- **Single-controller users**: no action required. Set nothing new; the
+  legacy env vars continue to work and auto-promote into the
+  `controllers=[default]` shape internally.
+- **Multi-controller users**: write a YAML file (one entry per
+  controller) and point `MCP_UNIFI_CONTROLLERS_FILE` at it.
+- **Audit log**: defaults to `audit.jsonl` in CWD. Set `MCP_UNIFI_AUDIT_SINK`
+  to `stdout` or `syslog` to redirect, or `MCP_UNIFI_AUDIT_PATH` to choose
+  a different file location.
+- **Real-mode behavior unchanged** for single-controller users.
+
 ## [0.4.1] - 2026-05-14
 
 ### Fixed
@@ -201,6 +288,7 @@ UniFi controller endpoint paths were cross-referenced against the
 [`sirkirby/unifi-mcp`](https://github.com/sirkirby/unifi-mcp) project. No code
 was copied; the implementation here is an independent FastMCP + httpx build.
 
+[0.5.0-rc.1]: https://github.com/pete-builds/mcp-unifi/releases/tag/v0.5.0-rc.1
 [0.4.0]: https://github.com/pete-builds/mcp-unifi/releases/tag/v0.4.0
 [0.3.0]: https://github.com/pete-builds/mcp-unifi/releases/tag/v0.3.0
 [0.2.0]: https://github.com/pete-builds/mcp-unifi/releases/tag/v0.2.0

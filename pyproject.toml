@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mcp-unifi"
-version = "0.4.0"
+version = "0.5.0rc1"
 description = "MCP server for self-hosted UniFi gateway management."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -27,6 +27,7 @@ dependencies = [
     "python-dotenv==1.2.2",
     "pydantic==2.13.3",
     "pydantic-settings==2.14.0",
+    "pyyaml==6.0.3",
 ]
 
 [project.optional-dependencies]
@@ -37,11 +38,14 @@ dev = [
     "respx==0.23.1",
     "ruff==0.15.12",
     "mypy==1.20.2",
+    "types-PyYAML==6.0.12.20260510",
+    "hypothesis==6.152.7",
 ]
 
 [project.scripts]
 mcp-unifi = "mcp_unifi.server:main"
 mcp-unifi-healthcheck = "mcp_unifi.healthcheck:main"
+mcp-unifi-replay = "mcp_unifi.cli.replay:main"
 
 [project.urls]
 Homepage = "https://github.com/pete-builds/mcp-unifi"
