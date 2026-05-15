@@ -7,12 +7,12 @@
     "url": "https://github.com/pete-builds/mcp-unifi",
     "source": "github"
   },
-  "version": "0.5.0",
+  "version": "0.5.1",
   "websiteUrl": "https://pete-builds.github.io/mcp-unifi/",
   "packages": [
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/pete-builds/mcp-unifi:0.5.0",
+      "identifier": "ghcr.io/pete-builds/mcp-unifi:0.5.1",
       "transport": {
         "type": "streamable-http",
         "url": "http://localhost:3714/mcp"

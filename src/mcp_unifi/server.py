@@ -24,6 +24,8 @@ from __future__ import annotations
 import logging
 
 from fastmcp import FastMCP
+from starlette.requests import Request
+from starlette.responses import PlainTextResponse
 
 from mcp_unifi.backends import (
     Backend,
@@ -92,6 +94,16 @@ def build_server(
     )
 
     mcp = FastMCP("UniFi")
+
+    @mcp.custom_route("/health", methods=["GET"])
+    async def health(_request: Request) -> PlainTextResponse:
+        """Lightweight liveness endpoint for Docker / Kubernetes healthchecks.
+
+        Returns 200 OK without touching the MCP transport, so the streamable-
+        http server doesn't log 406 noise every healthcheck interval.
+        """
+        return PlainTextResponse("ok")
+
     register_modules(mcp, settings, registry)
     return mcp
 

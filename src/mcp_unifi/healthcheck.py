@@ -1,8 +1,9 @@
 """Health check used by the Docker HEALTHCHECK directive.
 
-Streamable HTTP exposes a single ``/mcp`` endpoint that responds to a bare
-GET with HTTP 405/406 (the transport rejects non-streaming requests). Treat
-that as healthy: it confirms the FastMCP server is listening and routing.
+Hits the dedicated ``/health`` endpoint exposed by ``build_server``. The
+endpoint returns 200 with body ``"ok"`` and is intentionally separate from
+``/mcp`` so the streamable-http MCP transport doesn't log noise on every
+healthcheck interval.
 """
 
 from __future__ import annotations
@@ -12,18 +13,16 @@ import sys
 import urllib.error
 import urllib.request
 
-_HEALTHY_NON_OK_CODES: frozenset[int] = frozenset({400, 405, 406})
-
 
 def check() -> int:
     """Return 0 if the server is healthy, 1 otherwise. Pure function for tests."""
     port = os.getenv("MCP_PORT", "3714")
-    url = f"http://localhost:{port}/mcp"
+    url = f"http://localhost:{port}/health"
     try:
-        urllib.request.urlopen(url, timeout=5)  # noqa: S310 - localhost only
-        return 0
-    except urllib.error.HTTPError as exc:
-        return 0 if exc.code in _HEALTHY_NON_OK_CODES else 1
+        with urllib.request.urlopen(url, timeout=5) as resp:  # noqa: S310 - localhost only
+            return 0 if resp.status == 200 else 1
+    except urllib.error.HTTPError:
+        return 1
     except Exception:
         return 1
 

@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-05-15
+
+### Fixed
+
+- **Dedicated `/health` endpoint.** Added a Starlette custom route at
+  `/health` that returns 200 OK with body `"ok"`. The Docker healthcheck
+  now hits this endpoint instead of `/mcp`, eliminating the `406 Not
+  Acceptable` log line emitted on every healthcheck interval (every 30s)
+  by the streamable-http MCP transport. Behavior of `/mcp` is unchanged.
+
+---
+
 ## [0.5.0] - 2026-05-15
 
 > **Stable release.** Promotes rc.1 + rc.2 to final, adds Phase 3 (UniFi

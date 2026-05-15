@@ -3,33 +3,39 @@
 from __future__ import annotations
 
 import urllib.error
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from mcp_unifi.healthcheck import check
 
 
 def test_healthcheck_ok_on_200() -> None:
-    class FakeResp:
-        status = 200
+    resp = MagicMock()
+    resp.status = 200
+    resp.__enter__.return_value = resp
+    resp.__exit__.return_value = False
 
-    with patch("urllib.request.urlopen", return_value=FakeResp()):
+    with patch("urllib.request.urlopen", return_value=resp):
         assert check() == 0
 
 
-def test_healthcheck_ok_on_405() -> None:
-    err = urllib.error.HTTPError("u", 405, "method not allowed", None, None)  # type: ignore[arg-type]
-    with patch("urllib.request.urlopen", side_effect=err):
-        assert check() == 0
+def test_healthcheck_fails_on_non_200() -> None:
+    resp = MagicMock()
+    resp.status = 503
+    resp.__enter__.return_value = resp
+    resp.__exit__.return_value = False
+
+    with patch("urllib.request.urlopen", return_value=resp):
+        assert check() == 1
 
 
-def test_healthcheck_ok_on_400() -> None:
-    err = urllib.error.HTTPError("u", 400, "bad request", None, None)  # type: ignore[arg-type]
-    with patch("urllib.request.urlopen", side_effect=err):
-        assert check() == 0
-
-
-def test_healthcheck_fails_on_500() -> None:
+def test_healthcheck_fails_on_http_error() -> None:
     err = urllib.error.HTTPError("u", 500, "ise", None, None)  # type: ignore[arg-type]
+    with patch("urllib.request.urlopen", side_effect=err):
+        assert check() == 1
+
+
+def test_healthcheck_fails_on_404() -> None:
+    err = urllib.error.HTTPError("u", 404, "not found", None, None)  # type: ignore[arg-type]
     with patch("urllib.request.urlopen", side_effect=err):
         assert check() == 1
 
