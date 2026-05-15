@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.pete-builds/unifi",
   "title": "UniFi Gateway",
-  "description": "Self-hosted UniFi gateway management with safe-by-default semantics. 46 Network tools (devices, VLANs, WLANs, firewall, switch ports, port forwards, DHCP, observability, composites with rollback) plus 12 opt-in Protect tools (cameras, motion events, smart detections, recording config). Multi-site via MCP_UNIFI_CONTROLLERS_FILE; every tool accepts a 'controller' parameter. Every destructive tool accepts dry_run=True to preview without writing. Every call is captured to a JSONL audit log with secrets scrubbed. Runs as either a stdio subprocess (Claude Desktop / uvx / .dxt) or a long-running Streamable HTTP server (Docker / Helm).",
+  "description": "Safe-by-default UniFi MCP: Network + Protect, multi-site, dry-run, audit log.",
   "repository": {
     "url": "https://github.com/pete-builds/mcp-unifi",
     "source": "github"
