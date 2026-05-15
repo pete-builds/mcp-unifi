@@ -2,20 +2,20 @@
 
 ## Context
 
-Pete owns `pete-builds/mcp-unifi` (v0.4.1, Python/FastMCP, 41 tools, 90% test coverage, dual transport, GHCR + uvx + official MCP Registry, Trivy-scanned, hardened). The technical foundation is strong. The market position is weak: **8+ competing UniFi MCP servers** exist (sirkirby/unifi-mcp has 166 tools, claytono/go-unifi-mcp has 242 ops in Go), and most users don't know mcp-unifi exists.
+Pete owns `pete-builds/mcp-unifi` (v0.4.1, Python/FastMCP, 41 tools, 90% test coverage, dual transport, GHCR + uvx + official MCP Registry, Trivy-scanned, hardened). The technical foundation is strong. There are other UniFi MCP servers in the ecosystem with broader feature surface; the goal of v1.0 is not to out-feature them but to ship a coherent, well-documented option with a specific design point.
 
-The win condition for v1.0 is not "most features." It's **"the one still maintained in 12 months, with the safest defaults, available where users actually look."** Six of the eight competitors look abandoned. Quality + distribution + steady maintenance wins this market, not feature count.
+The win condition for v1.0 is **a single-image, opinionated, safety-first build with multi-site support, available where users actually look.** Quality + distribution + steady maintenance, not feature count.
 
 **Scope decisions (Pete-approved, 2026-05-14):**
 - **Keep the name `mcp-unifi`** — preserve v0.x equity, keyword SEO, existing MCP Registry entry. Differentiate on positioning, not naming.
 - **Network + Protect modules** at v1.0. Skip Access/Drive (rare/niche; revisit post-v1.0 if requested).
-- **Multi-site in v1.0** — the architectural commitment that's painful to retrofit. Real differentiator: zero competitors have it.
+- **Multi-site in v1.0** — the architectural commitment that's painful to retrofit. Single process, multiple named controllers via `MCP_UNIFI_CONTROLLERS_FILE` + a `controller` param on every tool.
 - **Dry-run + audit log** on every destructive op — the safety differentiator.
 - **No hosted demo, no Anthropic Connectors, no Discord, no separate domain** at v1.0. All are post-v1.0 options if traction warrants.
 - **4 distributions** (Docker, .mcpb, uvx, Helm) + **4 catalog listings** (Smithery, Glama, mcp.so, PulseMCP).
 - **6 weeks to v1.0** (~Jun 25, 2026).
 
-**Intended outcome**: mcp-unifi 1.0 ships with the safest defaults in the category, multi-site support, Network + Protect coverage, available across the four distribution channels that actually matter, listed in every directory people browse. Becomes the recommended UniFi MCP for homelab and prosumer use.
+**Intended outcome**: mcp-unifi 1.0 ships with safety-first defaults (dry-run + audit + rollback composites), multi-site support, Network + Protect coverage, available across the four distribution channels that actually matter, listed in every directory people browse.
 
 ---
 
@@ -161,9 +161,8 @@ The win condition for v1.0 is not "most features." It's **"the one still maintai
    - Sections: Quickstart per channel (Docker, .mcpb, Helm, uvx), Tool Reference (auto-generated from FastMCP introspection where possible), Multi-Site Setup, Dry-Run + Audit, Security Model, Migration from v0.x, Changelog
    - Recipes: Claude Desktop, Claude Code, Cursor, Cline, Goose (one page each, copy-paste config + sample prompt)
 3. **README overhaul**
-   - Hero section with positioning: "The safest UniFi MCP server. Multi-site, dry-run, audit log, Network + Protect."
+   - Hero section: descriptive positioning (e.g. "Self-hosted UniFi MCP server. Multi-site, dry-run, audit log, Network + Protect.") — no comparative superlatives.
    - 4 install paths front and center (Docker, .mcpb one-click, Helm, uvx)
-   - Comparison table vs alternatives (factual, not snide)
    - Badges: CI, coverage, MCP spec version, cosign-signed, OpenSSF Scorecard
 
 **Verification**: Each catalog shows mcp-unifi v1.0. Docs site live, all 4 install paths verified on a clean machine. Cold-start test: a stranger lands on the docs site and gets a successful tool call within 5 minutes.
@@ -200,13 +199,14 @@ The win condition for v1.0 is not "most features." It's **"the one still maintai
 
 ---
 
-## What Makes mcp-unifi Different (positioning for every README, blog post, screencast)
+## Design choices (positioning language for README, blog posts, screencast)
 
-1. **Safe by default** — dry-run on every destructive op, replayable audit log, composite tools with rollback. Other MCPs hand the LLM a raw firewall API.
-2. **Multi-site** — manage home + office + parents' from one MCP instance. Zero competitors do this.
-3. **Network + Protect** — the two UniFi apps homelab actually uses (Access/Drive can come in v1.1 if asked for).
-4. **Available everywhere** — Docker, .mcpb (one-click for Claude Desktop), Helm, uvx. Listed in Smithery, Glama, mcp.so, PulseMCP.
-5. **Hardened** — cosign-signed images, SBOM, non-root, read-only fs, Trivy-scanned, 90%+ test coverage.
+1. **Safety primitives** — `dry_run=True` on every destructive op returns the predicted change set without writing. Composites capture pre-state and roll back applied steps on partial failure. Every tool call lands in a JSONL audit log with secrets scrubbed; `mcp-unifi-replay` replays a log against any controller.
+2. **Single image, multi-controller** — one container runs Network and Protect together; one process manages multiple UniFi sites in parallel via `MCP_UNIFI_CONTROLLERS_FILE` and a `controller` parameter on every tool.
+3. **Network + Protect scope** — Network on by default; Protect opt-in via `MCP_UNIFI_MODULES_ENABLED=network,protect`. Access and Drive are not in scope for v1.0.
+4. **API-key-first auth** — local API key from Settings → Control Plane → Integrations. No username/password storage, no cloud account.
+5. **Available everywhere** — Docker, .mcpb one-click, Helm, uvx. Listed on Smithery, Glama, mcp.so, PulseMCP, and the official MCP Registry.
+6. **Supply-chain hardened** — cosign-signed images, CycloneDX SBOM per release, GitHub-attested build provenance, hash-locked Python deps, non-root read-only container, Trivy-scanned, 91%+ test coverage.
 
 ---
 
