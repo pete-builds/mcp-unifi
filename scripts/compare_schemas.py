@@ -97,6 +97,11 @@ DESTRUCTIVE_TOOLS: frozenset[str] = frozenset(
         "quarantine_client",
         # Phase 2 destructive tool
         "restore_config",
+        # Phase 3 destructive (Protect)
+        "set_camera_recording_mode",
+        "set_camera_privacy_mode",
+        "set_motion_sensitivity",
+        "provision_camera",
     }
 )
 

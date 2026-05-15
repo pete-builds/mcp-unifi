@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 
+from mcp_unifi.clients.protect import ProtectClient
+from mcp_unifi.clients.protect_stubs import ProtectStubState
 from mcp_unifi.clients.stubs import StubState
 from mcp_unifi.clients.unifi import UniFiClient, UniFiError
 from mcp_unifi.models import UniFiRecord
@@ -434,4 +436,122 @@ class RealBackend:
         return await self.client.get_speedtest_results(limit)
 
 
-__all__ = ["Backend", "RealBackend", "StubBackend"]
+@runtime_checkable
+class ProtectBackend(Protocol):
+    """Async surface every Protect tool calls into.
+
+    Implementations: :class:`ProtectStubBackend` (in-memory) and
+    :class:`ProtectRealBackend` (HTTP via :class:`ProtectClient`).
+    """
+
+    # ----- Cameras --------------------------------------------------------
+    async def list_cameras(self) -> list[UniFiRecord]: ...
+    async def get_camera(self, camera_id: str) -> UniFiRecord | None: ...
+    async def update_camera(
+        self, camera_id: str, patch: dict[str, Any]
+    ) -> UniFiRecord | None: ...
+
+    # ----- Events ---------------------------------------------------------
+    async def list_events(
+        self, types: list[str], start_ms: int, end_ms: int, limit: int
+    ) -> list[UniFiRecord]: ...
+
+    # ----- Snapshots / thumbnails ----------------------------------------
+    async def get_snapshot(self, camera_id: str) -> bytes: ...
+    async def get_event_thumbnail(self, event_id: str) -> bytes: ...
+
+    # ----- Recordings -----------------------------------------------------
+    async def list_recordings(
+        self, camera_id: str, start_ms: int, end_ms: int
+    ) -> list[UniFiRecord]: ...
+
+
+class ProtectStubBackend:
+    """In-memory backend wrapping a single :class:`ProtectStubState` instance.
+
+    Per-controller state isolation matches :class:`StubBackend`. Methods are
+    ``async def`` to satisfy :class:`ProtectBackend`; under the hood they
+    delegate synchronously to the state machine.
+    """
+
+    def __init__(self, state: ProtectStubState) -> None:
+        self.state = state
+
+    async def list_cameras(self) -> list[UniFiRecord]:
+        return self.state.list_cameras()
+
+    async def get_camera(self, camera_id: str) -> UniFiRecord | None:
+        return self.state.get_camera(camera_id)
+
+    async def update_camera(
+        self, camera_id: str, patch: dict[str, Any]
+    ) -> UniFiRecord | None:
+        return self.state.update_camera(camera_id, patch)
+
+    async def list_events(
+        self, types: list[str], start_ms: int, end_ms: int, limit: int
+    ) -> list[UniFiRecord]:
+        return self.state.list_events(types, start_ms, end_ms, limit)
+
+    async def get_snapshot(self, camera_id: str) -> bytes:
+        return self.state.get_snapshot(camera_id)
+
+    async def get_event_thumbnail(self, event_id: str) -> bytes:
+        return self.state.get_event_thumbnail(event_id)
+
+    async def list_recordings(
+        self, camera_id: str, start_ms: int, end_ms: int
+    ) -> list[UniFiRecord]:
+        return self.state.list_recordings(camera_id, start_ms, end_ms)
+
+
+class ProtectRealBackend:
+    """Async backend wrapping a :class:`ProtectClient` for real HTTP calls."""
+
+    def __init__(self, client: ProtectClient) -> None:
+        self.client = client
+
+    async def list_cameras(self) -> list[UniFiRecord]:
+        return await self.client.list_cameras()
+
+    async def get_camera(self, camera_id: str) -> UniFiRecord | None:
+        # Protect returns the camera dict directly; we coerce 404-like empties
+        # to None so tools can render a clean "not found" error.
+        record = await self.client.get_camera(camera_id)
+        if not record:
+            return None
+        return record
+
+    async def update_camera(
+        self, camera_id: str, patch: dict[str, Any]
+    ) -> UniFiRecord | None:
+        record = await self.client.update_camera(camera_id, patch)
+        if not record:
+            return None
+        return record
+
+    async def list_events(
+        self, types: list[str], start_ms: int, end_ms: int, limit: int
+    ) -> list[UniFiRecord]:
+        return await self.client.list_events(types, start_ms, end_ms, limit)
+
+    async def get_snapshot(self, camera_id: str) -> bytes:
+        return await self.client.get_snapshot(camera_id)
+
+    async def get_event_thumbnail(self, event_id: str) -> bytes:
+        return await self.client.get_event_thumbnail(event_id)
+
+    async def list_recordings(
+        self, camera_id: str, start_ms: int, end_ms: int
+    ) -> list[UniFiRecord]:
+        return await self.client.list_recordings(camera_id, start_ms, end_ms)
+
+
+__all__ = [
+    "Backend",
+    "ProtectBackend",
+    "ProtectRealBackend",
+    "ProtectStubBackend",
+    "RealBackend",
+    "StubBackend",
+]

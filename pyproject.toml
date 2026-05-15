@@ -121,6 +121,7 @@ ignore = [
 # examples over 100 chars. Splitting them across lines would break the
 # single-Example-per-tool pattern that the LLM tool-selection prompt expects.
 "src/mcp_unifi/modules/network/*.py" = ["E501"]
+"src/mcp_unifi/modules/protect/*.py" = ["E501"]
 
 [tool.ruff.format]
 quote-style = "double"

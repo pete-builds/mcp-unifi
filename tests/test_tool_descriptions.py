@@ -63,6 +63,11 @@ DESTRUCTIVE_TOOLS: frozenset[str] = frozenset(
         "quarantine_client",
         # Phase 2 destructive
         "restore_config",
+        # Phase 3 destructive (Protect)
+        "set_camera_recording_mode",
+        "set_camera_privacy_mode",
+        "set_motion_sensitivity",
+        "provision_camera",
     }
 )
 
@@ -75,6 +80,7 @@ COMPOSITE_TOOLS: frozenset[str] = frozenset(
         "provision_homelab_service",
         "quarantine_client",
         "restore_config",
+        "provision_camera",
     }
 )
 
@@ -83,11 +89,24 @@ MIN_DESCRIPTION_LEN = 50
 
 @pytest.fixture(scope="module")
 def all_tools() -> list[dict[str, Any]]:
-    """Build the server in stub mode, list every registered tool."""
-    import asyncio
+    """Build the server in stub mode with every module enabled, list every tool.
 
-    settings = Settings(stub_mode=True, log_format="text")
-    server = build_server(settings)
+    Phase 3 added the Protect module; we explicitly enable it here so the
+    description allowlist below sees Protect's tools alongside Network's.
+    """
+    import asyncio
+    import os
+
+    prior = os.environ.get("MCP_UNIFI_MODULES_ENABLED")
+    os.environ["MCP_UNIFI_MODULES_ENABLED"] = "network,protect"
+    try:
+        settings = Settings(stub_mode=True, log_format="text")
+        server = build_server(settings)
+    finally:
+        if prior is None:
+            os.environ.pop("MCP_UNIFI_MODULES_ENABLED", None)
+        else:
+            os.environ["MCP_UNIFI_MODULES_ENABLED"] = prior
 
     async def _list() -> list[Any]:
         tools_obj = await server.list_tools()

@@ -25,7 +25,16 @@ import logging
 
 from fastmcp import FastMCP
 
-from mcp_unifi.backends import Backend, RealBackend, StubBackend
+from mcp_unifi.backends import (
+    Backend,
+    ProtectBackend,
+    ProtectRealBackend,
+    ProtectStubBackend,
+    RealBackend,
+    StubBackend,
+)
+from mcp_unifi.clients.protect import ProtectClient
+from mcp_unifi.clients.protect_stubs import ProtectStubState
 from mcp_unifi.clients.stubs import StubState
 from mcp_unifi.clients.unifi import UniFiClient
 from mcp_unifi.config import Settings, load_settings
@@ -40,6 +49,8 @@ def build_server(
     *,
     stub: StubState | None = None,
     unifi: UniFiClient | None = None,
+    protect_stub: ProtectStubState | None = None,
+    protect: ProtectClient | None = None,
 ) -> FastMCP:
     """Construct a FastMCP instance with all modules registered.
 
@@ -47,11 +58,17 @@ def build_server(
         settings: Validated runtime configuration. Must have at least one
             controller in ``settings.controllers``.
         stub: Optional :class:`StubState` injected as the ``"default"``
-            controller's backend. Used by tests to assert against a known
-            seeded state. Only honored when ``settings.stub_mode`` is True.
+            controller's Network backend. Used by tests to assert against a
+            known seeded state. Only honored when ``settings.stub_mode`` is True.
         unifi: Optional :class:`UniFiClient` injected as the ``"default"``
-            controller's backend. Used by tests to mock HTTP via respx. Only
-            honored when ``settings.stub_mode`` is False.
+            controller's Network backend. Used by tests to mock HTTP via respx.
+            Only honored when ``settings.stub_mode`` is False.
+        protect_stub: Optional :class:`ProtectStubState` injected as the
+            ``"default"`` controller's Protect backend. Mirrors ``stub`` for
+            the Protect module.
+        protect: Optional :class:`ProtectClient` injected as the ``"default"``
+            controller's Protect backend. Mirrors ``unifi`` for the Protect
+            module.
     """
     stub_overrides: dict[str, Backend] | None = (
         {"default": StubBackend(stub)} if stub is not None else None
@@ -59,11 +76,19 @@ def build_server(
     real_overrides: dict[str, Backend] | None = (
         {"default": RealBackend(unifi)} if unifi is not None else None
     )
+    protect_stub_overrides: dict[str, ProtectBackend] | None = (
+        {"default": ProtectStubBackend(protect_stub)} if protect_stub is not None else None
+    )
+    protect_real_overrides: dict[str, ProtectBackend] | None = (
+        {"default": ProtectRealBackend(protect)} if protect is not None else None
+    )
 
     registry = build_registry(
         settings,
         stub_overrides=stub_overrides,
         real_overrides=real_overrides,
+        protect_stub_overrides=protect_stub_overrides,
+        protect_real_overrides=protect_real_overrides,
     )
 
     mcp = FastMCP("UniFi")
