@@ -113,4 +113,4 @@ Replay skips entries with `success: false` by default and honors `dry_run` exact
 
 ## Why this matters
 
-Most UniFi MCP servers hand the LLM a raw firewall API and hope nothing bad happens. mcp-unifi's design assumption is the opposite: the LLM **will** propose changes that need a second look, and you **will** want a forensic trail when something goes sideways at 11 pm. Dry-run lets the model and the human cooperate on a preview before any mutation. The audit log makes "what did Claude touch?" a one-grep question.
+The design assumption: the LLM **will** propose changes that need a second look, and you **will** want a forensic trail when something goes sideways at 11 pm. Dry-run lets the model and the human cooperate on a preview before any mutation. The audit log makes "what did Claude touch?" a one-grep question, and `mcp-unifi-replay` makes those captures executable against any controller.

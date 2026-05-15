@@ -2,7 +2,7 @@
 
 <!-- mcp-name: io.github.pete-builds/unifi -->
 
-**The safest UniFi MCP server. Multi-site, dry-run, audit log, Network + Protect.**
+**Self-hosted UniFi MCP server. Multi-site config, dry-run previews, JSONL audit log. Network + Protect.**
 
 [![CI](https://github.com/pete-builds/mcp-unifi/actions/workflows/ci.yml/badge.svg)](https://github.com/pete-builds/mcp-unifi/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/coverage-91%25-brightgreen)](https://github.com/pete-builds/mcp-unifi)
@@ -52,12 +52,13 @@ Pin a release with `@v0.5.0-rc.2` (or any tag) appended to the URL.
 
 Full guides for each install path live in the [docs site](https://pete-builds.github.io/mcp-unifi/).
 
-## What makes mcp-unifi different
+## Design
 
-- **Safe by default.** `dry_run=True` on every destructive op returns the predicted change set without writing. Composite tools (`create_iot_network`, `create_guest_network`, `provision_homelab_service`, `provision_camera`) roll back on partial failure. Every call lands in a JSONL audit log with secrets scrubbed. Other UniFi MCPs hand the LLM a raw firewall API.
-- **Multi-site.** Manage home + office + parents' controllers from one MCP instance. Every tool accepts an optional `controller` parameter. Zero competing UniFi MCPs do this.
-- **Network + Protect.** The two UniFi apps homelab actually uses, in one server. Network on by default; Protect opt-in via `MCP_UNIFI_MODULES_ENABLED=network,protect`.
-- **Available everywhere.** Docker, .dxt one-click, Helm, uvx. Listed on Smithery and the official MCP Registry.
+- **Safety primitives.** Every destructive tool accepts `dry_run=True` and returns the predicted change set without writing. Composite tools (`create_iot_network`, `create_guest_network`, `provision_homelab_service`, `provision_camera`) capture pre-state and roll back applied steps on partial failure. Every tool call lands in a JSONL audit log with secrets scrubbed; the included `mcp-unifi-replay` CLI can re-issue a log against a fresh controller.
+- **Single image, multi-controller.** One container runs Network and Protect together. The same process manages multiple UniFi sites in parallel via the `controller` parameter and a YAML controllers file (`MCP_UNIFI_CONTROLLERS_FILE`). No need to run a separate process per controller.
+- **API-key-first auth.** Uses the local API key from Settings → Control Plane → Integrations against the `/proxy/network/api` endpoint. No username/password storage, no cloud account, no Site Manager dependency.
+- **Available everywhere.** Docker, .dxt one-click for Claude Desktop, Helm chart, uvx. Listed on the official MCP Registry. Container images are cosign-signed (keyless OIDC) with a CycloneDX SBOM attached to each release.
+- **Network + Protect.** Network on by default; Protect opt-in via `MCP_UNIFI_MODULES_ENABLED=network,protect`. Other UniFi apps (Access, Drive) are not currently in scope.
 
 ## Quick start
 
@@ -95,19 +96,6 @@ Fastest cold-start: Docker + Claude Code in stub mode, no hardware required.
    ```
 
 Generate the API key under **Settings → Control Plane → Integrations → Create API Key** on the gateway.
-
-## Compared to alternatives
-
-A factual comparison against the other actively-listed UniFi MCP servers. `?` means the project's README doesn't document the property.
-
-| Project | Tools | Multi-site | dry-run | Audit log | Cosign-signed | Last commit |
-|---|---|---|---|---|---|---|
-| **mcp-unifi** | 46 Network + 12 Protect | ✓ | ✓ | ✓ | ✓ | Active |
-| sirkirby/unifi-mcp | 166 | – | – | – | – | ? |
-| claytono/go-unifi-mcp | 242 ops (Go) | – | – | – | – | ? |
-| Other community UniFi MCPs | varies | – | – | – | – | mostly stale |
-
-mcp-unifi trades raw tool count for safety primitives, multi-site, and supply-chain provenance. The premise: the LLM doesn't need 166 endpoints, it needs the 60 that cover the operations homelab actually does every week, with safe-by-default semantics on the destructive ones.
 
 ## Configuration
 

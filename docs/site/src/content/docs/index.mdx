@@ -1,9 +1,9 @@
 ---
 title: mcp-unifi
-description: The safest UniFi MCP server. Multi-site, dry-run, audit log, Network + Protect.
+description: Self-hosted UniFi MCP server. Multi-site config, dry-run previews, JSONL audit log. Network + Protect.
 template: splash
 hero:
-  tagline: The safest UniFi MCP server. Multi-site, dry-run, audit log, Network + Protect.
+  tagline: Self-hosted UniFi MCP server. Multi-site config, dry-run previews, JSONL audit log. Network + Protect.
   actions:
     - text: Get Started
       link: /mcp-unifi/getting-started/
@@ -61,22 +61,26 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
   </Card>
 </CardGrid>
 
-## What makes mcp-unifi different
+## Design
 
 <CardGrid>
-  <Card title="Safe by default" icon="approve-check">
-    `dry_run=True` on every destructive op returns the predicted change set without writing. Composites roll back on partial failure. Every call lands in a JSONL audit log.
+  <Card title="Safety primitives" icon="approve-check">
+    `dry_run=True` on every destructive op returns the predicted change set without writing. Composites capture pre-state and roll back applied steps on partial failure. Every tool call lands in a JSONL audit log with secrets scrubbed.
   </Card>
 
-  <Card title="Multi-site" icon="seti:config">
-    Manage home + office + parents' controllers from one MCP instance. Every tool accepts an optional `controller` parameter.
+  <Card title="Single image, multi-controller" icon="seti:config">
+    One container runs Network and Protect together; one process manages multiple UniFi sites in parallel via the `controller` parameter and a YAML controllers file.
+  </Card>
+
+  <Card title="API-key-first auth" icon="seti:lock">
+    Uses the local API key from Settings → Control Plane → Integrations. No username/password storage, no cloud account, no Site Manager dependency.
   </Card>
 
   <Card title="Network + Protect" icon="puzzle">
-    46 Network tools (VLANs, WLANs, firewall, switch ports, port forwards, observability) plus 12 Protect tools (cameras, motion events, smart detections, recording config).
+    46 Network tools plus 12 opt-in Protect tools. Network on by default; Protect via `MCP_UNIFI_MODULES_ENABLED=network,protect`.
   </Card>
 
-  <Card title="Available everywhere" icon="rocket">
-    Docker, .dxt one-click, Helm, uvx. Listed on Smithery, the MCP Registry, and the major catalogs.
+  <Card title="Supply-chain hardened" icon="rocket">
+    Cosign-signed images, CycloneDX SBOM per release, GitHub-attested build provenance, hash-locked Python deps, non-root read-only container.
   </Card>
 </CardGrid>
