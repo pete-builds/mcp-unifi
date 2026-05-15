@@ -3,7 +3,7 @@ name: mcp-unifi
 description: MCP server for self-hosted UniFi gateway management
 type: application
 version: 0.1.0
-appVersion: "0.5.0-rc.2"
+appVersion: "0.5.0"
 home: https://github.com/pete-builds/mcp-unifi
 sources:
   - https://github.com/pete-builds/mcp-unifi

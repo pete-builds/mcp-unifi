@@ -5,6 +5,68 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-05-15
+
+> **Stable release.** Promotes rc.1 + rc.2 to final, adds Phase 3 (UniFi
+> Protect module), Phase 4 (distribution builds), and Phase 5 (docs site).
+> Behavior of existing Network tools unchanged; all v0.4.x env vars still
+> work. New capabilities are additive and opt-in.
+
+### Added — Phase 3 (UniFi Protect Module)
+
+- **12 Protect tools.** Read-only: `list_cameras`, `get_camera`,
+  `list_motion_events`, `list_smart_detections`, `get_snapshot`,
+  `get_event_thumbnail`, `list_recordings`, `list_doorbell_messages`.
+  Destructive with `dry_run` support: `set_camera_recording_mode`,
+  `set_camera_privacy_mode`, `set_motion_sensitivity`. Composite with
+  rollback: `provision_camera` (recording mode + retention + sensitivity +
+  privacy, rolls back applied steps on any failure).
+- **`ProtectClient`.** Async httpx client for `/proxy/protect/api`, same
+  `X-API-Key` auth as the Network client. Snapshot/thumbnail endpoints
+  return raw bytes (base64-encoded in the tool response).
+- **`ProtectStubState`.** In-memory state machine with 2 seed cameras (1
+  G4 Doorbell, 1 G4 Pro), 5 motion events, 2 person smart-detections, tiny
+  valid JPEGs for snapshots.
+- **Opt-in.** Set `MCP_UNIFI_MODULES_ENABLED=network,protect` to enable.
+  Default stays `network` only — no surface change for existing users.
+
+### Added — Phase 4 (Distribution Builds)
+
+- **`.dxt` Desktop Extension** for one-click install in Claude Desktop.
+  `manifest.json` declares stdio transport and config UI for host, API key,
+  stub mode, and modules. Built and attached to GitHub releases.
+- **Helm chart** at `charts/mcp-unifi/`. Deployment + Service + Secret +
+  Ingress (off) + NetworkPolicy (off). Published to GitHub Pages at
+  `https://pete-builds.github.io/mcp-unifi/` via `chart-releaser-action`.
+- **Smithery manifest** (`smithery.yaml`) for one-click install via
+  smithery.ai. Docker runtime, config schema for host + API key + modules.
+- **Cosign keyless signing** of container images via OIDC. Verify with
+  `cosign verify ghcr.io/pete-builds/mcp-unifi:0.5.0
+  --certificate-identity-regexp '...' --certificate-oidc-issuer
+  https://token.actions.githubusercontent.com`.
+- **Syft CycloneDX SBOM** attached to GitHub releases as a downloadable
+  artifact (in addition to the OCI-attached SBOM from
+  `docker/build-push-action`).
+
+### Added — Phase 5 (Docs Site)
+
+- **Astro Starlight docs site** at `docs/site/`, deployed to
+  `https://pete-builds.github.io/mcp-unifi/` on push to main and on
+  version tags. 21 pages: getting started, 4 install paths, 4 guides
+  (multi-site, dry-run/audit, security, migration), 4 recipes (Claude
+  Desktop, Claude Code, Cursor, Cline), 3 reference pages.
+- **README overhaul.** Positioning, badges (CI, coverage, cosign, MIT),
+  4 prominent install paths, factual comparison vs alternatives,
+  quickstart, config table, links.
+
+### Tests
+
+- **461 tests passing** (was 383 at end of rc.2, +78 across Phase 3).
+- **91% overall coverage.** `modules/protect/__init__.py`: 100%.
+  `clients/protect.py`: 100%. `clients/protect_stubs.py`: 98%.
+
+---
+
 ## [0.5.0-rc.2] - 2026-05-14
 
 > **Release candidate.** Phase 2 polish on top of rc.1: drift audit,
