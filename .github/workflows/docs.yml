@@ -26,10 +26,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: npm
-          cache-dependency-path: docs/site/package-lock.json
       - name: Install dependencies
-        run: cd docs/site && npm ci
+        run: cd docs/site && npm install --no-audit --no-fund
       - name: Build
         run: cd docs/site && npm run build
       - uses: actions/upload-pages-artifact@v3
