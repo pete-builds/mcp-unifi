@@ -77,10 +77,10 @@ Every tool returns a JSON string. Errors are returned as a structured `{"error":
 
 | Mode | When to use | Behavior |
 |---|---|---|
-| **Stub** (`STUB_MODE=true`, default) | Development, demos, wiring up Claude flows before hardware arrives | In-memory state machine seeded with one gateway, one AP, one network, one SSID, one firewall rule, two port profiles. Create/update/delete persist within the container's lifetime. Resets on restart. |
+| **Stub** (`STUB_MODE=true`, default) | Development, demos, wiring up Claude flows before hardware arrives | In-memory state machine seeded with one gateway, one AP, one network, one SSID, one firewall rule, two port profiles, and four clients (two wireless, one wired NAS, one IoT). Create/update/delete persist within the container's lifetime. Resets on restart. |
 | **Real** (`STUB_MODE=false`) | Production with a UCG-Fiber/UDM/other UniFi OS gateway | Talks HTTPS to the gateway with your local API key. Requires `UNIFI_HOST` and `UNIFI_API_KEY`. |
 
-Switching modes is a config change, not a code change. The same eleven tools, the same response shapes.
+Switching modes is a config change, not a code change. The same fifteen tools, the same response shapes.
 
 ## Configuration
 
@@ -172,7 +172,7 @@ python -m venv .venv && source .venv/bin/activate
 pip install --require-hashes -r requirements-dev.lock
 pip install -e . --no-deps
 
-# Run the test suite (101 tests, ~95% coverage)
+# Run the test suite (126 tests, ~95% coverage)
 pytest
 
 # Lint and format
@@ -192,25 +192,7 @@ docker compose up --build
 
 ### Tests
 
-```text
-======================= 101 passed in 1.5s =======================
-
-Name                          Stmts  Miss  Branch  BrPart  Cover
------------------------------------------------------------------
-src/mcp_unifi/__init__.py         2     0       0       0   100%
-src/mcp_unifi/clients/__init__    3     0       0       0   100%
-src/mcp_unifi/clients/stubs.py   70     1       6       0    99%
-src/mcp_unifi/clients/unifi.py   82     0      12       0   100%
-src/mcp_unifi/config.py          38     1       8       0    98%
-src/mcp_unifi/healthcheck.py     18     1       0       0    94%
-src/mcp_unifi/logging_setup.py   33     1      12       2    93%
-src/mcp_unifi/models.py           6     0       0       0   100%
-src/mcp_unifi/server.py         232    15      70       5    92%
------------------------------------------------------------------
-TOTAL                           484    19     108       7    95%
-```
-
-CI gates on **80% coverage minimum**, ruff lint, ruff format, mypy strict, and a Trivy fs+image scan that fails on any HIGH or CRITICAL finding.
+126 tests, ~95% line+branch coverage across `src/mcp_unifi/`. CI gates on **80% coverage minimum**, ruff lint, ruff format, mypy strict, and a Trivy fs+image scan that fails on any HIGH or CRITICAL finding.
 
 ### Updating dependencies
 
