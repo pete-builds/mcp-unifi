@@ -1,0 +1,40 @@
+name: Feature request
+description: Propose a new tool, gateway compatibility, or change in behavior
+labels: ["enhancement", "triage"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What do you want to be able to do?
+      description: Describe the outcome, not the implementation.
+      placeholder: "I want to be able to ask Claude to set a per-AP transmit power..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why does this matter?
+      description: What's the scenario? What can't you do today?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - New tool in an existing module (Network / Protect)
+        - New UniFi app module (Access / Drive / Talk)
+        - Composite tool combining existing primitives
+        - Safety primitive / audit-log feature
+        - Distribution / install path
+        - Documentation
+    validations:
+      required: true
+
+  - type: textarea
+    id: dry_run
+    attributes:
+      label: dry_run + rollback expectations (for destructive tools)
+      description: If this is a write tool, how should `dry_run` behave? If it's a composite, what should roll back on partial failure?

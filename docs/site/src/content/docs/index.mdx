@@ -17,6 +17,10 @@ hero:
 
 import { Card, CardGrid } from '@astrojs/starlight/components';
 
+`mcp-unifi` is a [Model Context Protocol](https://modelcontextprotocol.io/) server for self-hosted UniFi gateways, built around the assumption that LLM-driven infrastructure calls need guardrails. Every destructive tool ships with a `dry_run` preview that returns the predicted change set without writing. Every call — preview or real — lands in a JSONL audit log with secrets scrubbed. Composite tools (e.g. "create an IoT VLAN with isolation rule") capture pre-state and roll back applied steps if any sub-step fails.
+
+Beyond the safety substrate: **46 Network tools** (devices, VLANs, WLANs, firewall, switch ports, port forwards, observability) plus **12 opt-in Protect tools** (cameras, motion events, smart detections, recording config). One container runs both modules, and one process manages multiple UniFi sites in parallel via a `controller` parameter. Works against a UCG-Fiber, UDM Pro, or any UniFi OS gateway using a local API key — no Site Manager or cloud account required.
+
 ## Install in 30 seconds
 
 <CardGrid>
@@ -85,3 +89,38 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
     Cosign-signed images, CycloneDX SBOM per release, GitHub-attested build provenance, hash-locked Python deps, non-root read-only container.
   </Card>
 </CardGrid>
+
+## Architecture
+
+```text
+┌─────────────────────────┐     ┌──────────────────────────┐
+│  MCP client             │     │  YAML controllers file   │
+│  (Claude Desktop /      │     │  (optional, multi-site)  │
+│  Claude Code / Cursor)  │     └────────────┬─────────────┘
+└────────────┬────────────┘                  │ loaded at boot
+             │ stdio  /  Streamable HTTP     │
+             ▼                               ▼
+        ┌────────────────────────────────────────────┐
+        │  mcp-unifi server  (FastMCP, Python 3.13)  │
+        │  ┌─────────────────────────────────────┐   │
+        │  │  Tool dispatcher (per-module)       │   │
+        │  ├──────────────────┬──────────────────┤   │
+        │  │  Network module  │  Protect module  │   │
+        │  │  (46 tools)      │  (12 tools, opt) │   │
+        │  └─────┬────────────┴────────┬─────────┘   │
+        │        │                     │             │
+        │  ┌─────▼──────────┐  ┌───────▼──────────┐  │
+        │  │  Safety layer  │  │  Audit log       │  │
+        │  │  dry_run +     │  │  JSONL,          │  │
+        │  │  rollback      │  │  secrets scrubbed│  │
+        │  └─────┬──────────┘  └──────────────────┘  │
+        └────────┼───────────────────────────────────┘
+                 │ X-API-Key (local API)
+                 ▼
+        ┌────────────────────────────────────────────┐
+        │  UniFi gateway  (UCG-Fiber / UDM / UniFi OS)│
+        │  /proxy/network/api   /proxy/protect/api   │
+        └────────────────────────────────────────────┘
+```
+
+The dispatcher gates which modules are loaded at startup via `MCP_UNIFI_MODULES_ENABLED`; everything else (composite tools, audit log, rollback) is module-agnostic plumbing.

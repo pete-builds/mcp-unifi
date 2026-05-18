@@ -1,0 +1,75 @@
+name: Bug report
+description: Report something that's broken or behaves unexpectedly
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. The more specific you are, the faster this gets fixed.
+
+  - type: input
+    id: version
+    attributes:
+      label: mcp-unifi version
+      description: Docker image tag, .dxt version, or git SHA
+      placeholder: "ghcr.io/pete-builds/mcp-unifi:0.5.1"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install_path
+    attributes:
+      label: Install path
+      options:
+        - Docker
+        - Claude Desktop (.dxt)
+        - Helm
+        - uvx / pipx
+        - Source / dev install
+    validations:
+      required: true
+
+  - type: input
+    id: gateway
+    attributes:
+      label: UniFi gateway model and firmware
+      description: From `get_site_health` or the controller UI
+      placeholder: "UCG-Fiber, fw 5.0.16"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Stub mode or real mode?
+      options:
+        - Stub (STUB_MODE=true)
+        - Real (talking to a gateway)
+    validations:
+      required: true
+
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened?
+      description: What did you call, what did you expect, what did you get?
+      placeholder: |
+        Called `create_iot_network` with vlan_id=50. Expected the SSID to come up bound to that VLAN. Got... [paste response]
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs / audit entries
+      description: Lines from container logs or `audit.jsonl` around the call. Redact passphrases.
+      render: text
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Repro steps (if not obvious)
+      placeholder: |
+        1. Start container with STUB_MODE=true
+        2. Call ...
+        3. ...

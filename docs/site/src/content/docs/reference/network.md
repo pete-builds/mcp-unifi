@@ -113,6 +113,97 @@ These tools chain primitive operations into one call and roll back on partial fa
 | `backup_config` | read | — | Snapshot controller state into a versioned JSON envelope (`schema=1`). WLAN passphrases stripped to a sentinel; envelope flagged `secrets_stripped: true`. |
 | `restore_config` | write | yes | Compute an action plan from a backup envelope and apply it with rollback on partial failure. Restored WLANs from a secrets-stripped envelope are recreated with `enabled=False` so the operator resets passphrases before they go live. |
 
+## Response envelope shape
+
+Every tool returns a JSON string. Three shapes to expect:
+
+**Success (read or write):**
+
+```json
+{ "result": { ... tool-specific payload ... }, "stub_mode": false }
+```
+
+**Dry-run preview (write tools with `dry_run=true`):**
+
+```json
+{
+  "dry_run": true,
+  "would_create": { "name": "iot", "vlan": 40, "subnet": "10.0.40.0/24" },
+  "preconditions_ok": true,
+  "stub_mode": false
+}
+```
+
+**Composite partial failure (rollback engaged):**
+
+```json
+{
+  "partial": true,
+  "applied": ["vlan_created", "ssid_created"],
+  "failed_step": "isolation_rule",
+  "failed_reason": "controller returned 400: rule slot exhausted",
+  "rolled_back": ["ssid_deleted", "vlan_deleted"],
+  "stub_mode": false
+}
+```
+
+**Structured error (no mutation occurred):**
+
+```json
+{ "error": "controller unreachable", "stub_mode": false }
+```
+
+The LLM-facing tool descriptions all reference these keys explicitly, which is what drives reliable composite-rollback handling from Claude / Cursor / Cline.
+
+## Common scenarios
+
+**Block a guest device by MAC.**
+
+```jsonc
+// Tool: block_client
+{ "mac": "aa:bb:cc:dd:ee:ff", "controller": "default", "dry_run": false }
+```
+
+**Stand up a fully-isolated IoT network in one call (VLAN + SSID + isolation rule).**
+
+```jsonc
+// Tool: create_iot_network
+{
+  "vlan_id": 40,
+  "subnet": "10.0.40.0/24",
+  "ssid": "iot",
+  "passphrase": "rotate-me",
+  "isolate_from_default": true,
+  "dry_run": true
+}
+```
+
+Run it with `dry_run=true` first to inspect the predicted change set. Re-run with `dry_run=false` to apply. If the isolation rule fails, the SSID and VLAN are rolled back automatically.
+
+**Snapshot the controller before a risky change, then audit drift.**
+
+```jsonc
+// 1. Take a backup (secrets stripped)
+{ "tool": "backup_config", "args": { "controller": "default" } }
+
+// 2. Audit drift against a declared YAML spec
+{ "tool": "audit_network_drift", "args": { "spec_path": "./network-spec.yml" } }
+```
+
+**Pin a homelab service: static lease + LAN-local accept rule + (optional) port forward.**
+
+```jsonc
+// Tool: provision_homelab_service
+{
+  "mac": "11:22:33:44:55:66",
+  "ip": "192.168.1.40",
+  "hostname": "nas",
+  "tcp_ports": [445, 5000],
+  "wan_forward": false,
+  "dry_run": false
+}
+```
+
 ## Notes
 
 - **Stub mode**: every tool works in stub mode. The in-memory state machine is seeded with one gateway, one AP, one switch, one network, one SSID, one firewall rule, two port profiles, and four clients. Create/update/delete persist for the lifetime of the process and reset on restart.
