@@ -1,4 +1,5 @@
 ---
+draft: false
 title: Protect Tools
 description: Full reference for the 12 Protect module tools.
 ---

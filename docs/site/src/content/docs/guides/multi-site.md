@@ -1,4 +1,5 @@
 ---
+draft: false
 title: Multi-Site Setup
 description: Configure mcp-unifi to manage multiple UniFi controllers from one server.
 ---

@@ -1,4 +1,5 @@
 ---
+draft: false
 title: Docker
 description: Run mcp-unifi as a long-running container with Streamable HTTP transport.
 ---

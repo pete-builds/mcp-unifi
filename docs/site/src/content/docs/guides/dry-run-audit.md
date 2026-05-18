@@ -1,4 +1,5 @@
 ---
+draft: false
 title: Dry-Run & Audit Log
 description: Preview destructive operations before applying them, and capture every call to a replayable JSONL log.
 ---

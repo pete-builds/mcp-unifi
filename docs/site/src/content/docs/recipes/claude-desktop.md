@@ -1,4 +1,5 @@
 ---
+draft: false
 title: Claude Desktop
 description: Configure Claude Desktop to use mcp-unifi over stdio or Streamable HTTP.
 ---

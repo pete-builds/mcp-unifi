@@ -1,4 +1,5 @@
 ---
+draft: false
 title: uvx / pipx
 description: Run mcp-unifi straight from the GitHub repo with no install footprint.
 ---

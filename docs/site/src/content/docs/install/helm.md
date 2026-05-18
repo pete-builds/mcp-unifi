@@ -1,4 +1,5 @@
 ---
+draft: false
 title: Helm
 description: Kubernetes deployment via the published Helm chart.
 ---

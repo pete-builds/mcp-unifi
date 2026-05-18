@@ -1,4 +1,5 @@
 ---
+draft: false
 title: Migrate from v0.x
 description: Upgrade from v0.4.x to v0.5.x without changing your existing config.
 ---

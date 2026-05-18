@@ -1,4 +1,5 @@
 ---
+draft: false
 title: Changelog
 description: Notable changes across mcp-unifi releases.
 ---

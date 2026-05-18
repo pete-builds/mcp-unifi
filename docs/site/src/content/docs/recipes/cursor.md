@@ -1,4 +1,5 @@
 ---
+draft: false
 title: Cursor
 description: Wire mcp-unifi into Cursor's MCP config.
 ---

@@ -1,4 +1,5 @@
 ---
+draft: false
 title: Configuration
 description: Full env var reference for mcp-unifi.
 ---

@@ -1,4 +1,5 @@
 ---
+draft: false
 title: Cline
 description: Wire mcp-unifi into Cline (VS Code MCP client).
 ---

@@ -1,4 +1,5 @@
 ---
+draft: false
 title: Security Model
 description: Threat model, hardening, image signing, and supply-chain provenance.
 ---

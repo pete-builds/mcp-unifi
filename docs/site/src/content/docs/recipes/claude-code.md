@@ -1,4 +1,5 @@
 ---
+draft: false
 title: Claude Code
 description: Register mcp-unifi with Claude Code over Streamable HTTP or stdio.
 ---

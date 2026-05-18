@@ -1,4 +1,5 @@
 ---
+draft: false
 title: Claude Desktop (.dxt)
 description: One-click install for Claude Desktop via the Desktop Extension bundle.
 ---
