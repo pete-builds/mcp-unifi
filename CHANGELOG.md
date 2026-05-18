@@ -50,8 +50,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Helm chart** at `charts/mcp-unifi/`. Deployment + Service + Secret +
   Ingress (off) + NetworkPolicy (off). Published to GitHub Pages at
   `https://pete-builds.github.io/mcp-unifi/` via `chart-releaser-action`.
-- **Smithery manifest** (`smithery.yaml`) for one-click install via
-  smithery.ai. Docker runtime, config schema for host + API key + modules.
+- **Smithery deployment manifest** (`smithery.yaml`). Docker runtime, config
+  schema for host + API key + modules.
 - **Cosign keyless signing** of container images via OIDC. Verify with
   `cosign verify ghcr.io/pete-builds/mcp-unifi:0.5.0
   --certificate-identity-regexp '...' --certificate-oidc-issuer

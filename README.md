@@ -2,7 +2,7 @@
 
 <!-- mcp-name: io.github.pete-builds/unifi -->
 
-**Self-hosted UniFi MCP server. Multi-site config, dry-run previews, JSONL audit log. Network + Protect.**
+**Safety-first MCP server for self-hosted UniFi. Dry-run previews, JSONL audit log, composite rollback. Network + Protect.**
 
 [![CI](https://github.com/pete-builds/mcp-unifi/actions/workflows/ci.yml/badge.svg)](https://github.com/pete-builds/mcp-unifi/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/coverage-91%25-brightgreen)](https://github.com/pete-builds/mcp-unifi)
@@ -10,9 +10,9 @@
 [![MCP](https://img.shields.io/badge/MCP-stdio%20%2B%20Streamable%20HTTP-brightgreen.svg)](https://modelcontextprotocol.io/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-An [MCP server](https://modelcontextprotocol.io/) for self-hosted UniFi gateway management. 46 Network tools (devices, VLANs, WLANs, firewall, switch ports, port forwards, observability, plus composites with rollback) and 12 Protect tools (cameras, motion events, smart detections, recording config). Every destructive tool accepts `dry_run=True` to preview without writing. Every call lands in a JSONL audit log. Every tool accepts a `controller` parameter so one server instance can manage multiple sites.
+An [MCP server](https://modelcontextprotocol.io/) built around the assumption that LLM-driven infrastructure calls need guardrails. Every destructive tool accepts `dry_run=True` and returns the predicted change set without writing. Composite tools (`create_iot_network`, `create_guest_network`, `provision_homelab_service`, `provision_camera`) capture pre-state and roll back applied steps on partial failure. Every call — dry-run or real — lands in a JSONL audit log with secrets scrubbed; the included `mcp-unifi-replay` CLI can re-issue a log against a fresh controller.
 
-Speaks both **stdio** (Claude Desktop, `uvx`, `.dxt`) and **Streamable HTTP** (Docker, Helm). Talks to a UCG-Fiber, UDM Pro, or any UniFi OS gateway via the local API key. No Site Manager or cloud account required.
+Beyond the safety substrate: 46 Network tools (devices, VLANs, WLANs, firewall, switch ports, port forwards, observability) and 12 Protect tools (cameras, motion events, smart detections, recording config). Every tool accepts a `controller` parameter so one server instance manages multiple UniFi sites. Speaks both **stdio** (Claude Desktop, `uvx`, `.dxt`) and **Streamable HTTP** (Docker, Helm). Talks to a UCG-Fiber, UDM Pro, or any UniFi OS gateway via the local API key. No Site Manager or cloud account required.
 
 ## Install
 
@@ -57,7 +57,7 @@ Full guides for each install path live in the [docs site](https://pete-builds.gi
 - **Safety primitives.** Every destructive tool accepts `dry_run=True` and returns the predicted change set without writing. Composite tools (`create_iot_network`, `create_guest_network`, `provision_homelab_service`, `provision_camera`) capture pre-state and roll back applied steps on partial failure. Every tool call lands in a JSONL audit log with secrets scrubbed; the included `mcp-unifi-replay` CLI can re-issue a log against a fresh controller.
 - **Single image, multi-controller.** One container runs Network and Protect together. The same process manages multiple UniFi sites in parallel via the `controller` parameter and a YAML controllers file (`MCP_UNIFI_CONTROLLERS_FILE`). No need to run a separate process per controller.
 - **API-key-first auth.** Uses the local API key from Settings → Control Plane → Integrations against the `/proxy/network/api` endpoint. No username/password storage, no cloud account, no Site Manager dependency.
-- **Available everywhere.** Docker, .dxt one-click for Claude Desktop, Helm chart, uvx. Listed on the official MCP Registry. Container images are cosign-signed (keyless OIDC) with a CycloneDX SBOM attached to each release.
+- **Multi-channel distribution.** Docker, .dxt one-click for Claude Desktop, Helm chart, uvx. Listed on the official MCP Registry. Container images are cosign-signed (keyless OIDC) with a CycloneDX SBOM attached to each release.
 - **Network + Protect.** Network on by default; Protect opt-in via `MCP_UNIFI_MODULES_ENABLED=network,protect`. Other UniFi apps (Access, Drive) are not currently in scope.
 
 ## Quick start
