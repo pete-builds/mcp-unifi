@@ -29,6 +29,11 @@ RUN pip install --no-cache-dir --target /wheels --no-deps .
 # ---------------------------------------------------------------------------
 FROM python:3.14-slim@sha256:1697e8e8d39bf168e177ac6b5fdab6df86d81cfc24dae17dfb96cfc3ef76b4dd AS runtime
 
+# Apply Debian security patches on top of the pinned base. Keeps the digest
+# pin for reproducibility while picking up CVE fixes between base rebuilds
+# (libcap2 CVE-2026-4878, libsystemd0/libudev1 CVE-2026-29111, etc).
+RUN apt-get update && apt-get -y upgrade && rm -rf /var/lib/apt/lists/*
+
 # MCP Registry ownership-verification label. The value MUST match the
 # `name` field in server.json so the registry can verify the publisher
 # controls this image. See:
