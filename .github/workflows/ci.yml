@@ -14,6 +14,58 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lockfile-drift:
+    name: Lockfile drift check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.8"
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Re-compile requirements.lock
+        run: |
+          uv pip compile requirements.in \
+            -o requirements.lock.regen \
+            --generate-hashes \
+            --python-version 3.13 \
+            --python-platform linux \
+            --no-header \
+            --quiet
+
+      - name: Re-compile requirements-dev.lock
+        run: |
+          uv pip compile requirements-dev.in \
+            -o requirements-dev.lock.regen \
+            --generate-hashes \
+            --python-version 3.13 \
+            --python-platform linux \
+            --no-header \
+            --quiet
+
+      - name: Fail if lockfiles drifted from .in files
+        run: |
+          set -e
+          drift=0
+          if ! diff -q <(tail -n +3 requirements.lock) requirements.lock.regen > /dev/null; then
+            echo "::error::requirements.lock is stale. Regenerate with: uv pip compile requirements.in -o requirements.lock --generate-hashes --python-version 3.13 --python-platform linux"
+            diff -u <(tail -n +3 requirements.lock) requirements.lock.regen | head -50 || true
+            drift=1
+          fi
+          if ! diff -q <(tail -n +3 requirements-dev.lock) requirements-dev.lock.regen > /dev/null; then
+            echo "::error::requirements-dev.lock is stale. Regenerate with: uv pip compile requirements-dev.in -o requirements-dev.lock --generate-hashes --python-version 3.13 --python-platform linux"
+            diff -u <(tail -n +3 requirements-dev.lock) requirements-dev.lock.regen | head -50 || true
+            drift=1
+          fi
+          exit $drift
+
   lint-and-type:
     name: Lint + Type Check
     runs-on: ubuntu-latest
