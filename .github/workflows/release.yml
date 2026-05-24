@@ -67,7 +67,7 @@ jobs:
           push-to-registry: true
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3.8.2
+        uses: sigstore/cosign-installer@v4.1.2
 
       - name: Sign image with cosign (keyless OIDC)
         run: |
@@ -75,7 +75,7 @@ jobs:
             ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}
 
       - name: Generate SBOM with Syft
-        uses: anchore/sbom-action@v0.20.0
+        uses: anchore/sbom-action@v0.24.0
         with:
           image: ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}
           artifact-name: mcp-unifi-${{ github.ref_name }}-sbom.cyclonedx.json
@@ -101,7 +101,7 @@ jobs:
           zip -r "../../mcp-unifi-${VERSION}.dxt" .
 
       - name: Attach release artifacts (SBOM + .dxt)
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             /tmp/sbom.cyclonedx.json
