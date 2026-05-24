@@ -1,0 +1,42 @@
+name: Dependabot auto-merge
+
+# Auto-approves and auto-merges Dependabot PRs for patch + minor version
+# bumps once CI passes. Major version bumps are left open for manual review
+# because they typically carry breaking changes.
+#
+# Required for this to actually merge:
+# 1. Repo setting: "Allow auto-merge" enabled (Settings -> General)
+# 2. CI configured so all required checks run on PRs (already true here)
+#
+# If you don't trust this for a specific repo, just delete the workflow.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v2
+
+      - name: Approve PR (patch + minor only)
+        if: steps.meta.outputs.update-type != 'version-update:semver-major'
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh pr review --approve "$PR_URL"
+
+      - name: Enable auto-merge (patch + minor only)
+        if: steps.meta.outputs.update-type != 'version-update:semver-major'
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh pr merge --auto --squash "$PR_URL"
