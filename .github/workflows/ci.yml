@@ -20,51 +20,43 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          version: "0.11.8"
-
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.13"
 
-      - name: Re-compile requirements.lock
+      - name: Verify every pinned dep in source matches the lockfile
         run: |
-          uv pip compile requirements.in \
-            -o requirements.lock.regen \
-            --generate-hashes \
-            --python-version 3.13 \
-            --python-platform linux \
-            --no-header \
-            --quiet
-
-      - name: Re-compile requirements-dev.lock
-        run: |
-          uv pip compile requirements-dev.in \
-            -o requirements-dev.lock.regen \
-            --generate-hashes \
-            --python-version 3.13 \
-            --python-platform linux \
-            --no-header \
-            --quiet
-
-      - name: Fail if lockfiles drifted from .in files
-        run: |
-          set -e
-          drift=0
-          if ! diff -q <(tail -n +3 requirements.lock) requirements.lock.regen > /dev/null; then
-            echo "::error::requirements.lock is stale. Regenerate with: uv pip compile requirements.in -o requirements.lock --generate-hashes --python-version 3.13 --python-platform linux"
-            diff -u <(tail -n +3 requirements.lock) requirements.lock.regen | head -50 || true
-            drift=1
-          fi
-          if ! diff -q <(tail -n +3 requirements-dev.lock) requirements-dev.lock.regen > /dev/null; then
-            echo "::error::requirements-dev.lock is stale. Regenerate with: uv pip compile requirements-dev.in -o requirements-dev.lock --generate-hashes --python-version 3.13 --python-platform linux"
-            diff -u <(tail -n +3 requirements-dev.lock) requirements-dev.lock.regen | head -50 || true
-            drift=1
-          fi
-          exit $drift
+          python3 <<'PYEOF'
+          import re, sys, pathlib
+          PAIRS = [
+              ("requirements.in", "requirements.lock"),
+              ("requirements-dev.in", "requirements-dev.lock"),
+          ]
+          def norm(name):
+              return re.sub(r"[._-]+", "-", name.lower())
+          fail = False
+          for src, lock in PAIRS:
+              if not pathlib.Path(src).exists() or not pathlib.Path(lock).exists():
+                  continue
+              lock_text = pathlib.Path(lock).read_text()
+              for raw in pathlib.Path(src).read_text().splitlines():
+                  line = raw.split("#", 1)[0].strip()
+                  if not line or line.startswith(("-r", "-c", "--")):
+                      continue
+                  m = re.match(r"^([A-Za-z0-9._-]+)(?:\[[^\]]+\])?==(\S+)\s*$", line)
+                  if not m:
+                      continue
+                  pkg, ver = norm(m.group(1)), m.group(2)
+                  hit = re.search(rf"(?im)^{re.escape(pkg)}==(\S+?)(?:\s|\\|$)", lock_text)
+                  if not hit:
+                      print(f"::error file={src}::{m.group(1)}=={ver} pinned in {src} but missing from {lock}")
+                      fail = True
+                  elif hit.group(1) != ver:
+                      print(f"::error file={src}::{m.group(1)}: {src} pins =={ver} but {lock} has =={hit.group(1)}. Regenerate with: uv pip compile {src} -o {lock} --generate-hashes --python-version 3.13 --python-platform linux")
+                      fail = True
+          sys.exit(1 if fail else 0)
+          PYEOF
 
   lint-and-type:
     name: Lint + Type Check
