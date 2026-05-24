@@ -41,6 +41,43 @@ async def test_create_firewall_rule_stub(stub_server: FastMCP) -> None:
     assert result["action"] == "drop"
 
 
+async def test_create_firewall_rule_stub_with_dst_port(stub_server: FastMCP) -> None:
+    """Port-based rules (e.g. IoT → Plex :32400) must round-trip cleanly."""
+    result = await _call(
+        stub_server,
+        "create_firewall_rule",
+        {
+            "name": "IoT to Plex",
+            "ruleset": "LAN_IN",
+            "action": "accept",
+            "protocol": "tcp",
+            "src_networkconf_id": "iot-net-id",
+            "dst_networkconf_id": "mgmt-net-id",
+            "dst_port": "32400",
+        },
+    )
+    assert result["dst_port"] == "32400"
+    assert result["protocol"] == "tcp"
+    assert result["action"] == "accept"
+
+
+async def test_create_firewall_rule_stub_omits_unset_port_fields(stub_server: FastMCP) -> None:
+    """Empty src_port/dst_port must NOT appear in the controller payload."""
+    result = await _call(
+        stub_server,
+        "create_firewall_rule",
+        {
+            "name": "Block IoT",
+            "ruleset": "LAN_IN",
+            "action": "drop",
+            "src_address": "10.0.50.0/24",
+            "dst_address": "192.168.86.0/24",
+        },
+    )
+    assert "dst_port" not in result
+    assert "src_port" not in result
+
+
 async def test_delete_firewall_rule_stub(stub_server: FastMCP, stub_state: StubState) -> None:
     rule_id = stub_state.list_firewall_rules()[0]["_id"]
     result = await _call(stub_server, "delete_firewall_rule", {"rule_id": rule_id})

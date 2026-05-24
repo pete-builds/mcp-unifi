@@ -43,6 +43,7 @@ DESTRUCTIVE_TOOLS: frozenset[str] = frozenset(
         "delete_port_profile",
         # dhcp
         "create_static_dhcp_lease",
+        "update_static_dhcp_lease",
         "delete_static_dhcp_lease",
         # port forwards
         "create_port_forward",

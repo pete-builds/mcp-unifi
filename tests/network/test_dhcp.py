@@ -93,3 +93,166 @@ async def test_real_delete_static_dhcp_lease(real_server: FastMCP) -> None:
     respx.delete(f"{BASE}/rest/user/u9").mock(return_value=httpx.Response(200))
     result = await _call(real_server, "delete_static_dhcp_lease", {"lease_id": "u9"})
     assert result["deleted"] is True
+
+
+# ---------------------------------------------------------------------------
+# update_static_dhcp_lease
+# ---------------------------------------------------------------------------
+
+
+async def test_update_static_dhcp_lease_converts_known_client_stub(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    # Pick a known client that's not already a fixed-IP lease.
+    client = stub_state.list_clients()[0]
+    mac = client["mac"]
+    net_id = stub_state.list_networks()[0]["_id"]
+    result = await _call(
+        stub_server,
+        "update_static_dhcp_lease",
+        {
+            "mac": mac,
+            "fixed_ip": "192.168.1.77",
+            "network_id": net_id,
+            "name": "promoted",
+        },
+    )
+    assert result["use_fixedip"] is True
+    assert result["fixed_ip"] == "192.168.1.77"
+    assert result["name"] == "promoted"
+    # _id should match the original client record (no new user created).
+    assert result["_id"] == client["_id"]
+
+
+async def test_update_static_dhcp_lease_updates_existing_lease_stub(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    lease = stub_state.list_dhcp_leases()[0]
+    net_id = lease["network_id"]
+    result = await _call(
+        stub_server,
+        "update_static_dhcp_lease",
+        {
+            "mac": lease["mac"],
+            "fixed_ip": "192.168.1.250",
+            "network_id": net_id,
+        },
+    )
+    assert result["_id"] == lease["_id"]
+    assert result["fixed_ip"] == "192.168.1.250"
+
+
+async def test_update_static_dhcp_lease_unknown_mac_returns_error_stub(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    net_id = stub_state.list_networks()[0]["_id"]
+    result = await _call(
+        stub_server,
+        "update_static_dhcp_lease",
+        {
+            "mac": "ff:ff:ff:ff:ff:ff",
+            "fixed_ip": "192.168.1.99",
+            "network_id": net_id,
+        },
+    )
+    assert "error" in result
+    assert "create_static_dhcp_lease" in result["error"]
+
+
+async def test_update_static_dhcp_lease_dry_run_stub(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    net_id = stub_state.list_networks()[0]["_id"]
+    result = await _call(
+        stub_server,
+        "update_static_dhcp_lease",
+        {
+            "mac": "aa:bb:cc:00:00:01",
+            "fixed_ip": "192.168.1.55",
+            "network_id": net_id,
+            "dry_run": True,
+        },
+    )
+    assert result["dry_run"] is True
+    assert result["would_update"]["mac"] == "aa:bb:cc:00:00:01"
+    assert result["would_update"]["patch"]["fixed_ip"] == "192.168.1.55"
+    assert result["would_update"]["patch"]["use_fixedip"] is True
+
+
+async def test_update_static_dhcp_lease_local_dns_record_stub(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    net_id = stub_state.list_networks()[0]["_id"]
+    result = await _call(
+        stub_server,
+        "update_static_dhcp_lease",
+        {
+            "mac": "aa:bb:cc:00:00:02",
+            "fixed_ip": "192.168.1.42",
+            "network_id": net_id,
+            "name": "iphone",
+            "local_dns_record": "iphone.lan",
+        },
+    )
+    assert result["local_dns_record"] == "iphone.lan"
+    assert result["local_dns_record_enabled"] is True
+
+
+@respx.mock
+async def test_real_update_static_dhcp_lease(real_server: FastMCP) -> None:
+    respx.get(f"{BASE}/list/user").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"_id": "u42", "mac": "d0:11:e5:03:f6:3a", "name": "cypher"},
+                    {"_id": "u43", "mac": "aa:bb:cc:dd:ee:ff"},
+                ]
+            },
+        )
+    )
+    respx.put(f"{BASE}/rest/user/u42").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "_id": "u42",
+                        "mac": "d0:11:e5:03:f6:3a",
+                        "use_fixedip": True,
+                        "fixed_ip": "192.168.1.50",
+                        "network_id": "n1",
+                        "name": "cypher",
+                    }
+                ]
+            },
+        )
+    )
+    result = await _call(
+        real_server,
+        "update_static_dhcp_lease",
+        {
+            "mac": "d0:11:e5:03:f6:3a",
+            "fixed_ip": "192.168.1.50",
+            "network_id": "n1",
+            "name": "cypher",
+        },
+    )
+    assert result["_id"] == "u42"
+    assert result["fixed_ip"] == "192.168.1.50"
+
+
+@respx.mock
+async def test_real_update_static_dhcp_lease_unknown_mac(real_server: FastMCP) -> None:
+    respx.get(f"{BASE}/list/user").mock(return_value=httpx.Response(200, json={"data": []}))
+    result = await _call(
+        real_server,
+        "update_static_dhcp_lease",
+        {
+            "mac": "ff:ff:ff:ff:ff:ff",
+            "fixed_ip": "192.168.1.99",
+            "network_id": "n1",
+        },
+    )
+    assert "error" in result
+    assert "create_static_dhcp_lease" in result["error"]

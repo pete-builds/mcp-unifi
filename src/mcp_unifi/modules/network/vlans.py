@@ -7,7 +7,12 @@ from typing import TYPE_CHECKING, Any
 
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.modules._audit import audited
-from mcp_unifi.modules.network._common import format_json, make_err, subnet_to_dhcp
+from mcp_unifi.modules.network._common import (
+    format_json,
+    make_err,
+    normalize_ip_subnet,
+    subnet_to_dhcp,
+)
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -70,7 +75,11 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         Args:
             name: Network display name (e.g. ``"iot"``, ``"cameras"``).
             vlan_id: 802.1Q VLAN ID, 2-4094.
-            subnet: CIDR for the VLAN gateway, e.g. ``"10.50.0.0/24"``.
+            subnet: Subnet in either gateway-IP form (``"10.50.0.1/24"``,
+                what the UniFi controller stores) or network form
+                (``"10.50.0.0/24"``). Network form is auto-promoted to
+                gateway form before the POST so callers don't have to
+                remember which one UniFi wants. /24 only.
             dhcp_start: First DHCP lease address. Empty = derived from
                 ``IOT_DHCP_START_OFFSET``.
             dhcp_stop: Last DHCP lease address. Empty = derived from
@@ -85,9 +94,11 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         if not 2 <= vlan_id <= 4094:
             return err(f"vlan_id {vlan_id} out of range (2-4094)")
 
+        normalized_subnet = normalize_ip_subnet(subnet)
+
         if not dhcp_start or not dhcp_stop:
             _, default_start, default_stop = subnet_to_dhcp(
-                subnet,
+                normalized_subnet,
                 settings.iot_dhcp_start_offset,
                 settings.iot_dhcp_stop_offset,
             )
@@ -99,7 +110,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             "purpose": purpose,
             "vlan_enabled": True,
             "vlan": vlan_id,
-            "ip_subnet": subnet,
+            "ip_subnet": normalized_subnet,
             "dhcpd_enabled": True,
             "dhcpd_start": dhcp_start,
             "dhcpd_stop": dhcp_stop,
@@ -144,7 +155,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         Args:
             network_id: The ``_id`` from ``list_networks``.
             updates: Partial network record. Common keys: ``name``, ``vlan``,
-                ``ip_subnet``, ``dhcpd_start``, ``dhcpd_stop``, ``enabled``.
+                ``ip_subnet``, ``dhcpd_start``, ``dhcpd_stop``, ``enabled``,
+                ``mdns_enabled`` (toggle the per-VLAN mDNS reflector
+                independently of network creation), ``purpose``.
             controller: Name of the UniFi controller to target. Defaults to
                 ``"default"``.
             dry_run: Preview the change without applying it. Returns the

@@ -74,6 +74,9 @@ class Backend(Protocol):
     ) -> UniFiRecord | None: ...
     async def delete_port_profile(self, profile_id: str) -> bool: ...
 
+    # ----- AP groups (read-only) ------------------------------------------
+    async def list_ap_groups(self) -> list[UniFiRecord]: ...
+
     # ----- Clients --------------------------------------------------------
     async def list_clients(self) -> list[UniFiRecord]: ...
     async def block_client(self, mac: str) -> UniFiRecord | None: ...
@@ -83,7 +86,9 @@ class Backend(Protocol):
 
     # ----- DHCP leases (static) -------------------------------------------
     async def list_dhcp_leases(self) -> list[UniFiRecord]: ...
+    async def find_user_by_mac(self, mac: str) -> UniFiRecord | None: ...
     async def create_dhcp_lease(self, payload: dict[str, Any]) -> UniFiRecord: ...
+    async def update_dhcp_lease(self, user_id: str, payload: dict[str, Any]) -> UniFiRecord: ...
     async def delete_dhcp_lease(self, lease_id: str) -> bool: ...
 
     # ----- Port forwarding ------------------------------------------------
@@ -195,6 +200,10 @@ class StubBackend:
     async def delete_port_profile(self, profile_id: str) -> bool:
         return self.state.delete_port_profile(profile_id)
 
+    # ----- AP groups ------------------------------------------------------
+    async def list_ap_groups(self) -> list[UniFiRecord]:
+        return self.state.list_ap_groups()
+
     # ----- Clients --------------------------------------------------------
     async def list_clients(self) -> list[UniFiRecord]:
         return self.state.list_clients()
@@ -215,8 +224,14 @@ class StubBackend:
     async def list_dhcp_leases(self) -> list[UniFiRecord]:
         return self.state.list_dhcp_leases()
 
+    async def find_user_by_mac(self, mac: str) -> UniFiRecord | None:
+        return self.state.find_user_by_mac(mac)
+
     async def create_dhcp_lease(self, payload: dict[str, Any]) -> UniFiRecord:
         return self.state.create_dhcp_lease(payload)
+
+    async def update_dhcp_lease(self, user_id: str, payload: dict[str, Any]) -> UniFiRecord:
+        return self.state.update_dhcp_lease(user_id, payload)
 
     async def delete_dhcp_lease(self, lease_id: str) -> bool:
         return self.state.delete_dhcp_lease(lease_id)
@@ -362,6 +377,10 @@ class RealBackend:
     async def delete_port_profile(self, profile_id: str) -> bool:
         return await self.client.delete_port_profile(profile_id)
 
+    # ----- AP groups ------------------------------------------------------
+    async def list_ap_groups(self) -> list[UniFiRecord]:
+        return await self.client.list_ap_groups()
+
     # ----- Clients --------------------------------------------------------
     async def list_clients(self) -> list[UniFiRecord]:
         return await self.client.list_clients()
@@ -383,8 +402,14 @@ class RealBackend:
     async def list_dhcp_leases(self) -> list[UniFiRecord]:
         return await self.client.list_dhcp_leases()
 
+    async def find_user_by_mac(self, mac: str) -> UniFiRecord | None:
+        return await self.client.find_user_by_mac(mac)
+
     async def create_dhcp_lease(self, payload: dict[str, Any]) -> UniFiRecord:
         return await self.client.create_dhcp_lease(payload)
+
+    async def update_dhcp_lease(self, user_id: str, payload: dict[str, Any]) -> UniFiRecord:
+        return await self.client.update_dhcp_lease(user_id, payload)
 
     async def delete_dhcp_lease(self, lease_id: str) -> bool:
         return await self.client.delete_dhcp_lease(lease_id)

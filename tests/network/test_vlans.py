@@ -47,6 +47,26 @@ async def test_create_vlan_uses_default_dhcp_range(
     assert len(stub_state.list_networks()) == 2
 
 
+async def test_create_vlan_normalizes_network_form_subnet(stub_server: FastMCP) -> None:
+    """Accept network form (10.0.50.0/24) and promote to gateway form (10.0.50.1/24)."""
+    result = await _call(
+        stub_server,
+        "create_vlan",
+        {"name": "IoT", "vlan_id": 50, "subnet": "10.0.50.0/24"},
+    )
+    assert result["ip_subnet"] == "10.0.50.1/24"
+
+
+async def test_create_vlan_accepts_gateway_form_subnet(stub_server: FastMCP) -> None:
+    """Gateway form (10.0.50.1/24) passes through unchanged."""
+    result = await _call(
+        stub_server,
+        "create_vlan",
+        {"name": "IoT", "vlan_id": 51, "subnet": "10.0.51.1/24"},
+    )
+    assert result["ip_subnet"] == "10.0.51.1/24"
+
+
 async def test_create_vlan_honours_custom_dhcp(stub_server: FastMCP) -> None:
     result = await _call(
         stub_server,

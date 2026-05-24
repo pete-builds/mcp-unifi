@@ -7,7 +7,11 @@ from typing import TYPE_CHECKING, Any
 
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.modules._audit import audited
-from mcp_unifi.modules.network._common import format_json, make_err
+from mcp_unifi.modules.network._common import (
+    format_json,
+    make_err,
+    resolve_default_ap_group,
+)
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -46,6 +50,34 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
+    @audited("list_ap_groups")
+    async def list_ap_groups(controller: str = "default") -> str:
+        """List access-point groups configured on the controller.
+
+        Side effects: None (read-only).
+
+        Returns one record per AP group with ``_id``, ``name``,
+        ``attr_hidden_id`` (the built-in "default" group carries
+        ``"default"`` here), ``device_macs``, and ``site_id``.
+
+        Used by ``create_wlan`` to auto-resolve the default AP group when no
+        explicit ``ap_group_ids`` is supplied. Call this directly to inspect
+        which groups exist before creating per-AP-group WLANs.
+
+        Example: list_ap_groups(controller="default")
+
+        Args:
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+        """
+        try:
+            backend = registry.get(controller)
+            return format_json(await backend.list_ap_groups())
+        except UniFiError as exc:
+            logger.exception("list_ap_groups failed")
+            return err(str(exc))
+
+    @mcp.tool()
     @audited("create_wlan")
     async def create_wlan(
         name: str,
@@ -56,6 +88,8 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         is_guest: bool = False,
         hide_ssid: bool = False,
         wlan_band: str = "both",
+        ap_group_ids: list[str] | None = None,
+        ap_group_mode: str = "all",
         controller: str = "default",
         dry_run: bool = False,
     ) -> str:
@@ -67,10 +101,17 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         - Mutates controller state. Use dry_run=True to preview the change
           without applying.
 
-        Example: create_wlan(name="guest-2.4", passphrase="hunter2hunter2", network_id="65f...", is_guest=True)
+        AP-group binding:
+        - UniFi controllers reject ``POST /rest/wlanconf`` with
+          ``api.err.ApGroupMissing`` when ``ap_group_ids`` is absent. When
+          ``ap_group_ids`` is unset, this tool calls ``list_ap_groups`` and
+          uses the controller's "default" group automatically. Pass an
+          explicit list to broadcast only on specific groups.
+
+        Example: create_wlan(name="iot", passphrase="hunter2hunter2", network_id="65f...")
 
         Args:
-            name: SSID broadcast name (e.g. ``"guest-2.4"``).
+            name: SSID broadcast name (e.g. ``"iot"``).
             passphrase: WPA pre-shared key (8-63 chars). Required unless
                 ``security="open"``.
             network_id: ``_id`` of the network/VLAN this SSID lives on. Get
@@ -82,11 +123,32 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 of the LAN.
             hide_ssid: ``True`` suppresses SSID broadcast.
             wlan_band: ``"2g"``, ``"5g"``, ``"6g"``, or ``"both"`` (default).
+            ap_group_ids: List of AP group ``_id`` strings to broadcast on.
+                Empty/None auto-resolves to the controller's "default"
+                group via ``list_ap_groups``.
+            ap_group_mode: ``"all"`` (default) broadcasts on every AP in the
+                listed groups. Matches the controller UI default.
             controller: Name of the UniFi controller to target. Defaults to
                 ``"default"``.
             dry_run: Preview the change without applying it. Returns the
                 predicted change set.
         """
+        try:
+            backend = registry.get(controller)
+        except UniFiError as exc:
+            logger.exception("create_wlan failed", extra={"wlan_name": name})
+            return err(str(exc))
+
+        resolved_groups: list[str] = list(ap_group_ids) if ap_group_ids else []
+        if not resolved_groups:
+            try:
+                resolved_groups = await resolve_default_ap_group(backend)
+            except UniFiError as exc:
+                logger.exception("create_wlan failed", extra={"wlan_name": name})
+                return err(f"failed to resolve default AP group: {exc}")
+            if not resolved_groups:
+                return err("no AP groups found on controller; pass ap_group_ids explicitly")
+
         payload: dict[str, Any] = {
             "name": name,
             "enabled": True,
@@ -96,6 +158,8 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             "is_guest": is_guest,
             "hide_ssid": hide_ssid,
             "wlan_band": wlan_band,
+            "ap_group_ids": resolved_groups,
+            "ap_group_mode": ap_group_mode,
         }
         if security != "open":
             payload["x_passphrase"] = passphrase
@@ -109,7 +173,6 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 }
             )
         try:
-            backend = registry.get(controller)
             return format_json(await backend.create_wlan(payload))
         except UniFiError as exc:
             logger.exception("create_wlan failed", extra={"wlan_name": name})

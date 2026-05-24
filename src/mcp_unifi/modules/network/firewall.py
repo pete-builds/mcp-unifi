@@ -57,6 +57,8 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         dst_address: str = "",
         src_networkconf_id: str = "",
         dst_networkconf_id: str = "",
+        src_port: str = "",
+        dst_port: str = "",
         enabled: bool = True,
         controller: str = "default",
         dry_run: bool = False,
@@ -71,7 +73,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         - Mutates controller state. Use dry_run=True to preview the change
           without applying.
 
-        Example: create_firewall_rule(name="Block iot to LAN", ruleset="LAN_IN", action="drop", src_address="10.50.0.0/24", dst_address="192.168.1.0/24")
+        Example: create_firewall_rule(name="Allow IoT to Plex", ruleset="LAN_IN", action="accept", protocol="tcp", src_networkconf_id="65f...", dst_networkconf_id="65a...", dst_port="32400")
 
         Args:
             name: Display name for the rule (e.g. ``"Block iot to LAN"``).
@@ -84,12 +86,20 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 user-defined rules typically live in the 2000-3999 range;
                 2500 is a safe default.
             protocol: ``"all"``, ``"tcp"``, ``"udp"``, ``"icmp"``, etc.
+                Port matches require ``"tcp"`` or ``"udp"``.
             src_address: Source CIDR (e.g. ``"10.50.0.0/24"``). Empty = any.
             dst_address: Destination CIDR. Empty = any.
             src_networkconf_id: Source network ``_id``. Use this OR
                 ``src_address``.
             dst_networkconf_id: Destination network ``_id``. Use this OR
                 ``dst_address``.
+            src_port: Source port match. Single port (``"443"``), CSV
+                (``"80,443"``), or range (``"3000-3100"``). Empty = any.
+                Requires ``protocol`` set to ``"tcp"`` or ``"udp"``.
+            dst_port: Destination port match. Same syntax as ``src_port``.
+                The headline use case: ``dst_port="32400"`` with
+                ``protocol="tcp"`` to allow IoT→Plex without opening the
+                rest of MGMT.
             enabled: ``False`` creates the rule disabled for staging.
             controller: Name of the UniFi controller to target. Defaults to
                 ``"default"``.
@@ -112,6 +122,10 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             payload["src_networkconf_id"] = src_networkconf_id
         if dst_networkconf_id:
             payload["dst_networkconf_id"] = dst_networkconf_id
+        if src_port:
+            payload["src_port"] = src_port
+        if dst_port:
+            payload["dst_port"] = dst_port
         if dry_run:
             return format_json(
                 {
@@ -153,7 +167,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             updates: Partial firewall-rule record. Common keys: ``enabled``,
                 ``action``, ``protocol``, ``rule_index``, ``src_address``,
                 ``dst_address``, ``src_networkconf_id``,
-                ``dst_networkconf_id``, ``name``.
+                ``dst_networkconf_id``, ``src_port``, ``dst_port``, ``name``.
             controller: Name of the UniFi controller to target. Defaults to
                 ``"default"``.
             dry_run: Preview the change without applying it. Returns the

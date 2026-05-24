@@ -175,6 +175,54 @@ class UniFiClient:
     async def list_port_profiles(self) -> list[UniFiRecord]:
         return await self._get("/rest/portconf") or []
 
+    async def list_ap_groups(self) -> list[UniFiRecord]:
+        """List access-point groups configured on the controller.
+
+        UniFi exposes AP groups via the v2 controller API:
+        ``/v2/api/site/<site>/apgroups``. Returns one record per group with
+        ``_id``, ``name``, ``device_macs``, and ``attr_hidden_id`` (the
+        controller marks the built-in "default" group with
+        ``attr_hidden_id == "default"``).
+
+        The v2 endpoint sits at a different prefix than the legacy
+        ``/api/s/<site>/...`` paths the rest of this client uses, so we build
+        the URL manually.
+        """
+        url = f"{self._base}/v2/api/site/{self.site}/apgroups"
+        last_exc: Exception | None = None
+        for attempt in range(2):
+            try:
+                resp = await self._client.request("GET", url)
+            except (httpx.ConnectError, httpx.RemoteProtocolError) as exc:
+                last_exc = exc
+                if attempt == 0:
+                    logger.warning(
+                        "UniFi connection error, retrying once",
+                        extra={"method": "GET", "path": "/v2/.../apgroups", "error": str(exc)},
+                    )
+                    continue
+                raise UniFiError(f"UniFi connection failed: {exc}") from exc
+            except httpx.HTTPError as exc:
+                raise UniFiError(f"UniFi transport error: {exc}") from exc
+
+            if resp.status_code >= 400:
+                raise UniFiError(
+                    f"UniFi GET apgroups returned {resp.status_code}: {resp.text[:300]}"
+                )
+            if not resp.content:
+                return []
+            body = resp.json()
+            # v2 endpoint returns a bare list (not the legacy meta+data envelope).
+            if isinstance(body, list):
+                return body
+            if isinstance(body, dict) and "data" in body:
+                return body["data"] if isinstance(body["data"], list) else []
+            return []
+
+        raise UniFiError(  # pragma: no cover
+            f"UniFi apgroups request exhausted retries: {last_exc}"
+        )
+
     async def list_clients(self) -> list[UniFiRecord]:
         """Return currently active wireless and wired clients on the gateway.
 
@@ -265,8 +313,24 @@ class UniFiClient:
         users = await self._get("/list/user") or []
         return [u for u in users if isinstance(u, dict) and u.get("use_fixedip")]
 
+    async def find_user_by_mac(self, mac: str) -> UniFiRecord | None:
+        """Find the user record for a MAC across known clients (online + offline).
+
+        UniFi keeps a persistent user record per MAC at ``/list/user`` once a
+        client has ever associated. Returns ``None`` if no record exists.
+        """
+        users = await self._get("/list/user") or []
+        target = mac.lower()
+        for u in users:
+            if isinstance(u, dict) and str(u.get("mac", "")).lower() == target:
+                return u
+        return None
+
     async def create_dhcp_lease(self, payload: dict[str, Any]) -> UniFiRecord:
         return self._first_record(await self._post("/rest/user", payload))
+
+    async def update_dhcp_lease(self, user_id: str, payload: dict[str, Any]) -> UniFiRecord:
+        return self._first_record(await self._put(f"/rest/user/{user_id}", payload))
 
     async def delete_dhcp_lease(self, lease_id: str) -> bool:
         await self._delete(f"/rest/user/{lease_id}")

@@ -15,7 +15,14 @@ from typing import TYPE_CHECKING, Any
 from mcp_unifi.backends import Backend
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.modules._audit import audited
-from mcp_unifi.modules.network._common import format_json, make_err, subnet_to_dhcp
+from mcp_unifi.modules.network._common import (
+    format_json,
+    make_err,
+    normalize_ip_subnet,
+    resolve_default_ap_group,
+    subnet_to_dhcp,
+    subnet_to_network_form,
+)
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -109,7 +116,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         if not 2 <= vlan_id <= 4094:
             return err(f"vlan_id {vlan_id} out of range (2-4094)")
 
-        iot_subnet = subnet or settings.iot_subnet_template.format(vlan_id=vlan_id)
+        iot_subnet = normalize_ip_subnet(
+            subnet or settings.iot_subnet_template.format(vlan_id=vlan_id)
+        )
         _, dhcp_start, dhcp_stop = subnet_to_dhcp(
             iot_subnet,
             settings.iot_dhcp_start_offset,
@@ -137,6 +146,8 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             "is_guest": False,
             "hide_ssid": hide_ssid,
             "wlan_band": "both",
+            "ap_group_ids": ["<auto-resolve-default>"],
+            "ap_group_mode": "all",
         }
         fw_payload: dict[str, Any] | None = None
         if isolate:
@@ -147,7 +158,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 "action": "drop",
                 "protocol": "all",
                 "enabled": True,
-                "src_address": iot_subnet,
+                "src_address": subnet_to_network_form(iot_subnet),
                 "dst_address": main_lan_subnet,
             }
 
@@ -224,6 +235,16 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         # Step 2: SSID
         wlan_payload_real = dict(wlan_payload)
         wlan_payload_real["networkconf_id"] = net_id
+        try:
+            wlan_payload_real["ap_group_ids"] = await resolve_default_ap_group(backend)
+        except UniFiError as exc:
+            logger.exception("create_iot_network: AP-group resolve failed")
+            return await _fail("wlan", exc)
+        if not wlan_payload_real["ap_group_ids"]:
+            return await _fail(
+                "wlan",
+                UniFiError("no AP groups found on controller; cannot create WLAN"),
+            )
         try:
             created["wlan"] = await backend.create_wlan(wlan_payload_real)
         except UniFiError as exc:
@@ -532,7 +553,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         if not 2 <= vlan_id <= 4094:
             return err(f"vlan_id {vlan_id} out of range (2-4094)")
 
-        guest_subnet = subnet or settings.iot_subnet_template.format(vlan_id=vlan_id)
+        guest_subnet = normalize_ip_subnet(
+            subnet or settings.iot_subnet_template.format(vlan_id=vlan_id)
+        )
         _, dhcp_start, dhcp_stop = subnet_to_dhcp(
             guest_subnet,
             settings.iot_dhcp_start_offset,
@@ -560,6 +583,8 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             "is_guest": True,
             "hide_ssid": hide_ssid,
             "wlan_band": "both",
+            "ap_group_ids": ["<auto-resolve-default>"],
+            "ap_group_mode": "all",
         }
         if schedule:
             wlan_payload["schedule"] = schedule
@@ -571,7 +596,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             "action": "drop",
             "protocol": "all",
             "enabled": True,
-            "src_address": guest_subnet,
+            "src_address": subnet_to_network_form(guest_subnet),
             "dst_address": main_lan_subnet,
         }
 
@@ -645,6 +670,15 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         # Guest WLAN
         wlan_payload_real = dict(wlan_payload)
         wlan_payload_real["networkconf_id"] = net_id
+        try:
+            wlan_payload_real["ap_group_ids"] = await resolve_default_ap_group(backend)
+        except UniFiError as exc:
+            return await _fail("wlan", exc)
+        if not wlan_payload_real["ap_group_ids"]:
+            return await _fail(
+                "wlan",
+                UniFiError("no AP groups found on controller; cannot create WLAN"),
+            )
         try:
             created["wlan"] = await backend.create_wlan(wlan_payload_real)
         except UniFiError as exc:

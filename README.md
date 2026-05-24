@@ -12,7 +12,7 @@
 
 An [MCP server](https://modelcontextprotocol.io/) built around the assumption that LLM-driven infrastructure calls need guardrails. Every destructive tool accepts `dry_run=True` and returns the predicted change set without writing. Composite tools (`create_iot_network`, `create_guest_network`, `provision_homelab_service`, `provision_camera`) capture pre-state and roll back applied steps on partial failure. Every call — dry-run or real — lands in a JSONL audit log with secrets scrubbed; the included `mcp-unifi-replay` CLI can re-issue a log against a fresh controller.
 
-Beyond the safety substrate: 46 Network tools (devices, VLANs, WLANs, firewall, switch ports, port forwards, observability) and 12 Protect tools (cameras, motion events, smart detections, recording config). Every tool accepts a `controller` parameter so one server instance manages multiple UniFi sites. Speaks both **stdio** (Claude Desktop, `uvx`, `.dxt`) and **Streamable HTTP** (Docker, Helm). Talks to a UCG-Fiber, UDM Pro, or any UniFi OS gateway via the local API key. No Site Manager or cloud account required.
+Beyond the safety substrate: 48 Network tools (devices, VLANs, WLANs, firewall, switch ports, port forwards, DHCP reservations, AP groups, observability) and 12 Protect tools (cameras, motion events, smart detections, recording config). Every tool accepts a `controller` parameter so one server instance manages multiple UniFi sites. Speaks both **stdio** (Claude Desktop, `uvx`, `.dxt`) and **Streamable HTTP** (Docker, Helm). Talks to a UCG-Fiber, UDM Pro, or any UniFi OS gateway via the local API key. No Site Manager or cloud account required.
 
 ## Install
 

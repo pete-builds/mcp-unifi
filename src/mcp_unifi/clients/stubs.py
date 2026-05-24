@@ -148,6 +148,25 @@ def _seed_firewall_rules() -> list[UniFiRecord]:
     ]
 
 
+def _seed_ap_groups() -> list[UniFiRecord]:
+    """Seed the default AP group that ships with every UniFi controller.
+
+    Real controllers always have at least one AP group. The ``attr_hidden_id``
+    field marks the auto-created "default" group; ``create_wlan`` defaults its
+    ``ap_group_ids`` to whichever group carries that marker (falling back to
+    the first group if none is marked).
+    """
+    return [
+        {
+            "_id": _oid(),
+            "name": "Default",
+            "attr_hidden_id": "default",
+            "device_macs": ["f4:e2:c6:00:00:02"],
+            "site_id": "default",
+        },
+    ]
+
+
 def _seed_port_profiles() -> list[UniFiRecord]:
     return [
         {
@@ -400,6 +419,7 @@ class StubState:
         self.wlans: list[UniFiRecord] = _seed_wlans(default_net_id)
         self.firewall_rules: list[UniFiRecord] = _seed_firewall_rules()
         self.port_profiles: list[UniFiRecord] = _seed_port_profiles()
+        self.ap_groups: list[UniFiRecord] = _seed_ap_groups()
         self.clients: list[UniFiRecord] = _seed_clients()
         self.dhcp_leases: list[UniFiRecord] = _seed_dhcp_leases(default_net_id)
         self.port_forwards: list[UniFiRecord] = _seed_port_forwards()
@@ -593,6 +613,10 @@ class StubState:
         self.port_profiles = [p for p in self.port_profiles if p.get("_id") != profile_id]
         return len(self.port_profiles) < before
 
+    # ----- AP groups (read-only) ------------------------------------------
+    def list_ap_groups(self) -> list[UniFiRecord]:
+        return self.ap_groups
+
     # ----- Clients --------------------------------------------------------
     def list_clients(self) -> list[UniFiRecord]:
         return self.clients
@@ -643,11 +667,42 @@ class StubState:
     def list_dhcp_leases(self) -> list[UniFiRecord]:
         return [u for u in self.dhcp_leases if u.get("use_fixedip")]
 
+    def find_user_by_mac(self, mac: str) -> UniFiRecord | None:
+        """Search both existing fixed-IP leases and known clients by MAC.
+
+        Mirrors the real controller's ``/list/user`` superset behavior: any MAC
+        the controller has ever seen has a persistent user record.
+        """
+        target = mac.lower()
+        for u in self.dhcp_leases:
+            if str(u.get("mac", "")).lower() == target:
+                return u
+        for c in self.clients:
+            if str(c.get("mac", "")).lower() == target:
+                return c
+        return None
+
     def create_dhcp_lease(self, payload: dict[str, Any]) -> UniFiRecord:
         self._check_failure("create_dhcp_lease")
         record: UniFiRecord = {"_id": _oid(), "use_fixedip": True, **payload}
         self.dhcp_leases.append(record)
         return record
+
+    def update_dhcp_lease(self, user_id: str, payload: dict[str, Any]) -> UniFiRecord:
+        self._check_failure("update_dhcp_lease")
+        # Existing fixed-IP record? Patch in place.
+        for u in self.dhcp_leases:
+            if u.get("_id") == user_id:
+                u.update(payload)
+                return u
+        # Known client being converted to fixed-IP? Promote it.
+        for c in self.clients:
+            if c.get("_id") == user_id:
+                c.update(payload)
+                if payload.get("use_fixedip"):
+                    self.dhcp_leases.append(c)
+                return c
+        raise KeyError(f"user_id {user_id} not found")
 
     def delete_dhcp_lease(self, lease_id: str) -> bool:
         self._check_failure("delete_dhcp_lease")

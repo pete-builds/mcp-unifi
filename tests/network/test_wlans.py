@@ -117,7 +117,13 @@ async def test_real_list_wlans(real_server: FastMCP) -> None:
 
 @respx.mock
 async def test_real_create_wlan(real_server: FastMCP) -> None:
-    respx.post(f"{BASE}/rest/wlanconf").mock(
+    respx.get("https://gateway.test:443/proxy/network/v2/api/site/default/apgroups").mock(
+        return_value=httpx.Response(
+            200,
+            json=[{"_id": "apg-default", "attr_hidden_id": "default", "name": "Default"}],
+        )
+    )
+    create_route = respx.post(f"{BASE}/rest/wlanconf").mock(
         return_value=httpx.Response(200, json={"data": [{"_id": "w1"}]})
     )
     result = await _call(
@@ -126,6 +132,93 @@ async def test_real_create_wlan(real_server: FastMCP) -> None:
         {"name": "S", "passphrase": "abcdefgh", "network_id": "n1"},
     )
     assert result["_id"] == "w1"
+    # Confirm the controller actually received ap_group_ids + ap_group_mode.
+    sent = json.loads(create_route.calls.last.request.content)
+    assert sent["ap_group_ids"] == ["apg-default"]
+    assert sent["ap_group_mode"] == "all"
+
+
+@respx.mock
+async def test_real_create_wlan_honours_explicit_ap_group_ids(real_server: FastMCP) -> None:
+    """If the caller passes ap_group_ids, the tool must not auto-resolve."""
+    apgroups_route = respx.get(
+        "https://gateway.test:443/proxy/network/v2/api/site/default/apgroups"
+    ).mock(return_value=httpx.Response(200, json=[]))
+    create_route = respx.post(f"{BASE}/rest/wlanconf").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "w1"}]})
+    )
+    result = await _call(
+        real_server,
+        "create_wlan",
+        {
+            "name": "S",
+            "passphrase": "abcdefgh",
+            "network_id": "n1",
+            "ap_group_ids": ["explicit-group-id"],
+        },
+    )
+    assert result["_id"] == "w1"
+    sent = json.loads(create_route.calls.last.request.content)
+    assert sent["ap_group_ids"] == ["explicit-group-id"]
+    assert not apgroups_route.called
+
+
+@respx.mock
+async def test_real_create_wlan_errors_when_no_ap_groups(real_server: FastMCP) -> None:
+    """An empty apgroups response surfaces a clean error, not an opaque 400."""
+    respx.get("https://gateway.test:443/proxy/network/v2/api/site/default/apgroups").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    result = await _call(
+        real_server,
+        "create_wlan",
+        {"name": "S", "passphrase": "abcdefgh", "network_id": "n1"},
+    )
+    assert "error" in result
+    assert "no AP groups" in result["error"]
+
+
+async def test_create_wlan_stub_includes_ap_group(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """Stub create_wlan auto-resolves and populates ap_group_ids."""
+    net_id = stub_state.list_networks()[0]["_id"]
+    result = await _call(
+        stub_server,
+        "create_wlan",
+        {"name": "Test", "passphrase": "abcdefgh", "network_id": net_id},
+    )
+    assert "ap_group_ids" in result
+    assert isinstance(result["ap_group_ids"], list)
+    assert len(result["ap_group_ids"]) == 1
+    assert result["ap_group_mode"] == "all"
+
+
+async def test_list_ap_groups_stub(stub_server: FastMCP) -> None:
+    groups = await _call(stub_server, "list_ap_groups")
+    assert isinstance(groups, list)
+    assert groups[0]["attr_hidden_id"] == "default"
+
+
+@respx.mock
+async def test_real_list_ap_groups(real_server: FastMCP) -> None:
+    respx.get("https://gateway.test:443/proxy/network/v2/api/site/default/apgroups").mock(
+        return_value=httpx.Response(
+            200,
+            json=[{"_id": "apg-default", "attr_hidden_id": "default", "name": "Default"}],
+        )
+    )
+    result = await _call(real_server, "list_ap_groups")
+    assert result[0]["_id"] == "apg-default"
+
+
+@respx.mock
+async def test_real_list_ap_groups_handles_500(real_server: FastMCP) -> None:
+    respx.get("https://gateway.test:443/proxy/network/v2/api/site/default/apgroups").mock(
+        return_value=httpx.Response(500, text="boom")
+    )
+    result = await _call(real_server, "list_ap_groups")
+    assert "error" in result
 
 
 @respx.mock
@@ -171,6 +264,12 @@ async def test_real_delete_wlan_handles_409(real_server: FastMCP) -> None:
 
 @respx.mock
 async def test_create_wlan_real_mode_handles_500(real_server: FastMCP) -> None:
+    respx.get("https://gateway.test:443/proxy/network/v2/api/site/default/apgroups").mock(
+        return_value=httpx.Response(
+            200,
+            json=[{"_id": "apg-default", "attr_hidden_id": "default", "name": "Default"}],
+        )
+    )
     respx.post(f"{BASE}/rest/wlanconf").mock(return_value=httpx.Response(500))
     result = await _call(
         real_server,

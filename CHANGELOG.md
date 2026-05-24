@@ -5,6 +5,74 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-05-23
+
+> **Network segmentation tool-surface release.** Fixes the
+> ``api.err.ApGroupMissing`` failure on real-mode ``create_wlan`` against
+> UCG-Fiber and fills three audit-driven gaps that surfaced while planning
+> the network-segmentation rollout (VLAN per device tier + per-SSID firewall
+> matrix). Behavior of every other tool is unchanged.
+
+### Added
+
+- **``list_ap_groups`` tool.** Read-only. Wraps the v2 controller endpoint
+  ``/v2/api/site/<site>/apgroups`` and returns every AP group with ``_id``,
+  ``name``, ``attr_hidden_id``, ``device_macs``, ``site_id``. Used by
+  ``create_wlan`` to auto-resolve the controller's default AP group.
+- **``update_static_dhcp_lease`` tool.** Convert or update an existing
+  client to a fixed-IP reservation. Use this instead of
+  ``create_static_dhcp_lease`` when the MAC already has a user record on
+  the controller (any client that has ever connected). The controller
+  rejects POST ``/rest/user`` for known MACs with ``api.err.MacUsed``;
+  this tool resolves the existing ``_id`` via ``find_user_by_mac`` and
+  PUTs the update to ``/rest/user/{_id}``.
+- **``ap_group_ids`` and ``ap_group_mode`` parameters on ``create_wlan``.**
+  When ``ap_group_ids`` is empty, the tool calls ``list_ap_groups`` and
+  defaults to the group whose ``attr_hidden_id == "default"`` (falling back
+  to the first group). ``ap_group_mode`` defaults to ``"all"`` so the new
+  SSID broadcasts on every AP in the resolved group(s).
+- **``src_port`` and ``dst_port`` parameters on ``create_firewall_rule``.**
+  Enables port-scoped LAN_IN rules required by the segmentation matrix
+  (e.g. IoT → MGMT:32400 for Chromecast → Plex). Single port, CSV
+  (``"80,443"``), or range (``"3000-3100"``). Requires
+  ``protocol="tcp"`` or ``protocol="udp"``.
+
+### Fixed
+
+- **``create_wlan`` no longer fails with ``api.err.ApGroupMissing``** on
+  UniFi OS controllers. The controller rejected ``POST /rest/wlanconf``
+  when the payload omitted ``ap_group_ids``; the tool now resolves and
+  includes the default group automatically. Composites
+  (``create_iot_network``, ``create_guest_network``) inherit the fix.
+- **``create_vlan`` accepts both subnet forms.** UniFi stores
+  ``ip_subnet`` as the gateway IP with mask (e.g. ``"10.0.50.1/24"``).
+  Callers who pass the network form (``"10.0.50.0/24"``) get auto-promoted
+  to gateway form before the POST, eliminating a class of silent failure.
+  /24 only; other masks pass through unchanged.
+
+### Tests
+
+- New tests for ``list_ap_groups`` (stub + real + 500 path).
+- New tests for ``create_wlan`` auto-resolving and honouring explicit
+  ``ap_group_ids`` (real mode confirms the actual POST body carries
+  ``ap_group_ids`` and ``ap_group_mode``).
+- New tests for ``create_firewall_rule`` with ``dst_port`` set and unset
+  (port fields omitted from the payload when empty).
+- New tests for ``create_vlan`` subnet normalization (network form +
+  gateway form both work).
+- Existing composite real-mode tests updated to mock the apgroups endpoint
+  alongside the legacy WLAN/network POSTs.
+
+### Migration
+
+No env var or transport changes. No breaking changes to existing tool
+signatures; ``ap_group_ids`` and ``ap_group_mode`` on ``create_wlan`` and
+``src_port`` / ``dst_port`` on ``create_firewall_rule`` are additive with
+safe defaults. Existing callers continue to work; the ``api.err.ApGroupMissing``
+failure on real-mode ``create_wlan`` is silently fixed on the first call.
+
+---
+
 ## [0.5.1] - 2026-05-15
 
 ### Fixed

@@ -107,6 +107,84 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
+    @audited("update_static_dhcp_lease")
+    async def update_static_dhcp_lease(
+        mac: str,
+        fixed_ip: str,
+        network_id: str,
+        name: str = "",
+        local_dns_record: str = "",
+        controller: str = "default",
+        dry_run: bool = False,
+    ) -> str:
+        """Convert or update an existing client to a fixed-IP reservation.
+
+        Use this instead of ``create_static_dhcp_lease`` when the MAC already
+        has a user record on the controller (any client that has ever
+        connected). The controller rejects POST ``/rest/user`` for known MACs
+        with ``api.err.MacUsed``; this tool resolves the existing ``_id`` and
+        PUTs an update to ``/rest/user/{_id}`` instead.
+
+        Side effects:
+        - Sets ``use_fixedip=true`` and pins ``fixed_ip`` on the user record.
+        - If ``local_dns_record`` is supplied, also sets
+          ``local_dns_record_enabled=true`` so the name resolves on the LAN
+          (controller version permitting).
+        - Mutates controller state. Use dry_run=True to preview the change
+          without applying.
+        - If no user record exists for ``mac``, the call fails with a clear
+          error. In that case use ``create_static_dhcp_lease`` instead.
+
+        Example: update_static_dhcp_lease(mac="d0:11:e5:03:f6:3a", fixed_ip="192.168.1.50", network_id="6a0...", name="cypher")
+
+        Args:
+            mac: Client MAC address (e.g. ``"d0:11:e5:03:f6:3a"``).
+            fixed_ip: IPv4 address to pin. Must be inside the network's subnet.
+            network_id: ``_id`` of the network/VLAN the IP belongs to.
+            name: Friendly display name / hostname alias (optional).
+            local_dns_record: Local DNS name to resolve to ``fixed_ip``
+                (optional). When set, ``local_dns_record_enabled=true`` is
+                also sent.
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+            dry_run: Preview the change without applying it. Returns the
+                predicted change set.
+        """
+        payload: dict[str, Any] = {
+            "use_fixedip": True,
+            "fixed_ip": fixed_ip,
+            "network_id": network_id,
+        }
+        if name:
+            payload["name"] = name
+        if local_dns_record:
+            payload["local_dns_record"] = local_dns_record
+            payload["local_dns_record_enabled"] = True
+        if dry_run:
+            return format_json(
+                {
+                    "dry_run": True,
+                    "controller": controller,
+                    "would_update": {"mac": mac, "patch": payload},
+                    "summary": f"Would pin {fixed_ip} on {mac}",
+                }
+            )
+        try:
+            backend = registry.get(controller)
+            user = await backend.find_user_by_mac(mac)
+            if not user or not user.get("_id"):
+                return err(
+                    f"No user record found for MAC {mac}. "
+                    "Use create_static_dhcp_lease for unknown MACs."
+                )
+            user_id = str(user["_id"])
+            result = await backend.update_dhcp_lease(user_id, payload)
+            return format_json(result)
+        except UniFiError as exc:
+            logger.exception("update_static_dhcp_lease failed", extra={"mac": mac})
+            return err(str(exc))
+
+    @mcp.tool()
     @audited("delete_static_dhcp_lease")
     async def delete_static_dhcp_lease(
         lease_id: str,

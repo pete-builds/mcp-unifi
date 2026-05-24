@@ -21,6 +21,19 @@ from mcp_unifi.config import Settings
 from mcp_unifi.server import build_server
 from tests.network.conftest import BASE, _call
 
+# v2 AP-groups endpoint sits at /v2/api/site/<site>/apgroups (not under BASE,
+# which targets the legacy /api/s/<site>/... prefix). create_wlan resolves the
+# default group via this endpoint before POSTing /rest/wlanconf, so every
+# real-mode composite that exercises WLAN creation must mock it.
+APGROUPS_URL = "https://gateway.test:443/proxy/network/v2/api/site/default/apgroups"
+_DEFAULT_APGROUPS_BODY = [{"_id": "apg-default", "attr_hidden_id": "default", "name": "Default"}]
+
+
+def _mock_default_apgroups() -> None:
+    """Register a respx mock returning a single default AP group."""
+    respx.get(APGROUPS_URL).mock(return_value=httpx.Response(200, json=_DEFAULT_APGROUPS_BODY))
+
+
 # ---------------------------------------------------------------------------
 # create_iot_network — stub
 # ---------------------------------------------------------------------------
@@ -160,7 +173,10 @@ async def test_create_iot_network_subnet_override(
             "main_lan_subnet": "172.16.0.0/24",
         },
     )
-    assert result["network"]["ip_subnet"] == "172.16.80.0/24"
+    # v0.6.0: ip_subnet normalizes to gateway form so the controller stops
+    # silently rewriting (or refusing) the network-form input.
+    assert result["network"]["ip_subnet"] == "172.16.80.1/24"
+    # Firewall src/dst stay in network form so the rules read naturally.
     assert result["firewall_rule"]["src_address"] == "172.16.80.0/24"
     assert result["firewall_rule"]["dst_address"] == "172.16.0.0/24"
 
@@ -172,6 +188,7 @@ async def test_create_iot_network_subnet_override(
 
 @respx.mock
 async def test_real_iot_network_full_flow(real_server: FastMCP) -> None:
+    _mock_default_apgroups()
     respx.post(f"{BASE}/rest/networkconf").mock(
         return_value=httpx.Response(200, json={"data": [{"_id": "net-id"}]})
     )
@@ -195,6 +212,7 @@ async def test_real_iot_network_full_flow(real_server: FastMCP) -> None:
 async def test_real_iot_network_rolls_back_on_wlan_failure(
     real_server: FastMCP,
 ) -> None:
+    _mock_default_apgroups()
     respx.post(f"{BASE}/rest/networkconf").mock(
         return_value=httpx.Response(200, json={"data": [{"_id": "rb-net"}]})
     )
@@ -217,6 +235,7 @@ async def test_real_iot_network_rolls_back_firewall_and_wlan(
     real_server: FastMCP,
 ) -> None:
     """Firewall rule fails after WLAN: both WLAN and VLAN must be cleaned up."""
+    _mock_default_apgroups()
     respx.post(f"{BASE}/rest/networkconf").mock(
         return_value=httpx.Response(200, json={"data": [{"_id": "rb-net"}]})
     )
@@ -247,6 +266,7 @@ async def test_real_iot_network_rollback_records_delete_failure(
     real_server: FastMCP,
 ) -> None:
     """Rollback should be best-effort: delete failures are logged, not raised."""
+    _mock_default_apgroups()
     respx.post(f"{BASE}/rest/networkconf").mock(
         return_value=httpx.Response(200, json={"data": [{"_id": "stuck-net"}]})
     )
@@ -592,6 +612,7 @@ async def test_real_provision_homelab_service_rolls_back_on_pf_failure(
 
 @respx.mock
 async def test_real_create_guest_network_full_flow(real_server: FastMCP) -> None:
+    _mock_default_apgroups()
     respx.post(f"{BASE}/rest/networkconf").mock(
         return_value=httpx.Response(200, json={"data": [{"_id": "gn"}]})
     )

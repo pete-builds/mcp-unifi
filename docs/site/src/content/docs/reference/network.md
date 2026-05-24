@@ -69,7 +69,8 @@ Every tool returns a JSON string. Errors are returned as `{"error": "...", "stub
 | Tool | Type | dry_run | Description |
 |---|---|---|---|
 | `list_dhcp_leases` | read | — | List static DHCP reservations. |
-| `create_static_dhcp_lease` | write | yes | Reserve a fixed IP for a client. |
+| `create_static_dhcp_lease` | write | yes | Reserve a fixed IP for a new MAC. |
+| `update_static_dhcp_lease` | write | yes | Convert/update an existing client to a fixed IP (use when MAC is already known). |
 | `delete_static_dhcp_lease` | write | yes | Delete a static reservation. |
 
 ## Port Forwards
