@@ -51,12 +51,14 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         name: str,
         ruleset: str,
         action: str,
-        rule_index: int = 2500,
+        rule_index: int = 20000,
         protocol: str = "all",
         src_address: str = "",
         dst_address: str = "",
         src_networkconf_id: str = "",
         dst_networkconf_id: str = "",
+        src_networkconf_type: str = "NETv4",
+        dst_networkconf_type: str = "NETv4",
         src_port: str = "",
         dst_port: str = "",
         enabled: bool = True,
@@ -82,9 +84,12 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 ``"WAN_LOCAL"``, ``"GUEST_IN"``, ``"GUEST_OUT"``,
                 ``"GUEST_LOCAL"``.
             action: ``"accept"``, ``"drop"``, or ``"reject"``.
-            rule_index: Evaluation order. Lower = evaluated first. UniFi
-                user-defined rules typically live in the 2000-3999 range;
-                2500 is a safe default.
+            rule_index: Evaluation order. Lower = evaluated first. On UniFi
+                Network 9.x (Zone-Based Firewall), user-defined LAN_IN rules
+                live at ``20000`` and above; lower bands are reserved by the
+                controller and will fail with
+                ``api.err.FirewallRuleIndexOutOfRange``. ``20000`` is the safe
+                default. (Older controllers used 2000-3999.)
             protocol: ``"all"``, ``"tcp"``, ``"udp"``, ``"icmp"``, etc.
                 Port matches require ``"tcp"`` or ``"udp"``.
             src_address: Source CIDR (e.g. ``"10.50.0.0/24"``). Empty = any.
@@ -93,6 +98,15 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 ``src_address``.
             dst_networkconf_id: Destination network ``_id``. Use this OR
                 ``dst_address``.
+            src_networkconf_type: Discriminator that pairs with
+                ``src_networkconf_id``. UniFi Network 9.x ZBF requires this
+                whenever a rule references a network conf by ``_id`` and
+                returns ``api.err.FirewallRuleNetworkConfTypeRequired``
+                otherwise. Defaults to ``"NETv4"`` (IPv4 network). Only
+                emitted to the controller when ``src_networkconf_id`` is set.
+            dst_networkconf_type: Discriminator that pairs with
+                ``dst_networkconf_id``. Same semantics as
+                ``src_networkconf_type``. Defaults to ``"NETv4"``.
             src_port: Source port match. Single port (``"443"``), CSV
                 (``"80,443"``), or range (``"3000-3100"``). Empty = any.
                 Requires ``protocol`` set to ``"tcp"`` or ``"udp"``.
@@ -120,8 +134,10 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             payload["dst_address"] = dst_address
         if src_networkconf_id:
             payload["src_networkconf_id"] = src_networkconf_id
+            payload["src_networkconf_type"] = src_networkconf_type
         if dst_networkconf_id:
             payload["dst_networkconf_id"] = dst_networkconf_id
+            payload["dst_networkconf_type"] = dst_networkconf_type
         if src_port:
             payload["src_port"] = src_port
         if dst_port:

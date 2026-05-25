@@ -5,6 +5,65 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-05-25
+
+> **Bugfix release for UniFi Network 9.x (Zone-Based Firewall).** Two
+> issues blocked Stage 6 of the home segmentation rollout against a real
+> UCG-Fiber controller on 9.x: ``create_firewall_rule`` was using the
+> pre-9.x rule_index band and was missing the network-conf type
+> discriminator. Both are now fixed. No tool renames, no breaking
+> signature changes.
+
+### Fixed
+
+- **``create_firewall_rule`` now works on UniFi Network 9.x.** Two
+  controller-side validations were tripping the v0.6.0 tool:
+  1. ``api.err.FirewallRuleIndexOutOfRange`` for any ``rule_index`` in
+     the legacy 2000-3999 band. UniFi 9.x ZBF reserves the low bands for
+     controller-managed rules; user rules must sit at ``20000`` and
+     above. The tool's default is now ``rule_index=20000``.
+  2. ``api.err.FirewallRuleNetworkConfTypeRequired`` whenever a rule
+     references a network conf by ``_id``. The controller now requires a
+     paired discriminator field. The tool emits
+     ``src_networkconf_type`` / ``dst_networkconf_type`` (default
+     ``"NETv4"``) alongside ``src_networkconf_id`` / ``dst_networkconf_id``.
+     Address-only rules (CIDR via ``src_address`` / ``dst_address``) are
+     unchanged: the discriminator is omitted when no ``_id`` is set.
+- **Composite tools (``create_iot_network``, ``create_guest_network``,
+  ``provision_homelab_service``) also bumped to the 9.x rule_index
+  band** (``20000`` / ``20400`` baselines), since they hit the same
+  ``OutOfRange`` failure when applied against a 9.x controller.
+
+### Added
+
+- **``src_networkconf_type`` and ``dst_networkconf_type`` parameters on
+  ``create_firewall_rule``.** Both default to ``"NETv4"`` and are only
+  emitted when the matching ``*_networkconf_id`` is set.
+
+### Changed
+
+- **Docstring on ``create_firewall_rule``** rewritten. Replaces the
+  outdated "2000-3999 range, 2500 is a safe default" claim with the
+  9.x ZBF reality (≥20000 for user-defined LAN_IN rules) and documents
+  the new discriminator fields. Other agents (Apoc) read this docstring
+  to learn the tool; accuracy matters here.
+
+### Tests
+
+- New: ``test_create_firewall_rule_default_rule_index_is_zbf_range``
+  pins the default to the ≥20000 band.
+- New: ``test_create_firewall_rule_omits_type_without_networkconf_id``
+  pins the "no discriminator on address-only rules" contract.
+- Updated: ``test_create_firewall_rule_with_networkconf_ids`` now
+  asserts that both discriminators ride along with the network IDs.
+
+### Background
+
+The bugs surfaced during Apoc's Stage 6 rollout (matrix of 9 LAN_IN
+rules across MGMT/TRUSTED/IoT/GUEST VLANs) against Pete's UCG-Fiber on
+UniFi Network 9.x. Handoff brief lives in
+``Mine/Self-Hosted/execution/.apoc-to-forge-handoff.md``.
+
 ## [0.6.0] - 2026-05-23
 
 > **Network segmentation tool-surface release.** Fixes the

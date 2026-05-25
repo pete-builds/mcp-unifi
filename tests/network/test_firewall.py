@@ -174,7 +174,14 @@ async def test_list_firewall_rules_real_mode_handles_500(real_server: FastMCP) -
 
 @respx.mock
 async def test_create_firewall_rule_with_networkconf_ids(real_server: FastMCP) -> None:
-    """Cover the src_networkconf_id / dst_networkconf_id payload branches."""
+    """Cover the src_networkconf_id / dst_networkconf_id payload branches.
+
+    UniFi Network 9.x ZBF rejects rules that reference a network conf by
+    ``_id`` without a matching ``*_networkconf_type`` discriminator
+    (``api.err.FirewallRuleNetworkConfTypeRequired``). The tool must emit
+    ``src_networkconf_type`` / ``dst_networkconf_type`` (defaulting to
+    ``"NETv4"``) alongside the IDs.
+    """
     captured: dict[str, Any] = {}
 
     def capture(request: httpx.Request) -> httpx.Response:
@@ -196,6 +203,66 @@ async def test_create_firewall_rule_with_networkconf_ids(real_server: FastMCP) -
     assert result["_id"] == "fnet"
     assert captured["body"]["src_networkconf_id"] == "src-id"
     assert captured["body"]["dst_networkconf_id"] == "dst-id"
+    # ZBF discriminator must accompany the network_id references.
+    assert captured["body"]["src_networkconf_type"] == "NETv4"
+    assert captured["body"]["dst_networkconf_type"] == "NETv4"
+
+
+@respx.mock
+async def test_create_firewall_rule_omits_type_without_networkconf_id(
+    real_server: FastMCP,
+) -> None:
+    """When no networkconf_id is set, the discriminator must NOT be emitted.
+
+    Address-only rules (``src_address`` / ``dst_address``) don't reference a
+    network conf, so sending a ``*_networkconf_type`` would be meaningless
+    noise that the controller might reject.
+    """
+    captured: dict[str, Any] = {}
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"data": [{"_id": "faddr"}]})
+
+    respx.post(f"{BASE}/rest/firewallrule").mock(side_effect=capture)
+    await _call(
+        real_server,
+        "create_firewall_rule",
+        {
+            "name": "ByAddr",
+            "ruleset": "LAN_IN",
+            "action": "drop",
+            "src_address": "10.0.50.0/24",
+            "dst_address": "192.168.86.0/24",
+        },
+    )
+    assert "src_networkconf_type" not in captured["body"]
+    assert "dst_networkconf_type" not in captured["body"]
+
+
+@respx.mock
+async def test_create_firewall_rule_default_rule_index_is_zbf_range(
+    real_server: FastMCP,
+) -> None:
+    """v0.6.1: default rule_index must land in the UniFi 9.x ZBF user band.
+
+    The pre-9.x default of ``2500`` was rejected on UniFi Network 9.x with
+    ``api.err.FirewallRuleIndexOutOfRange``. ``20000`` is the verified safe
+    floor for user-defined LAN_IN rules on UCG-Fiber running 9.x.
+    """
+    captured: dict[str, Any] = {}
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"data": [{"_id": "fidx"}]})
+
+    respx.post(f"{BASE}/rest/firewallrule").mock(side_effect=capture)
+    await _call(
+        real_server,
+        "create_firewall_rule",
+        {"name": "DefaultIndex", "ruleset": "LAN_IN", "action": "accept"},
+    )
+    assert captured["body"]["rule_index"] >= 20000
 
 
 @respx.mock

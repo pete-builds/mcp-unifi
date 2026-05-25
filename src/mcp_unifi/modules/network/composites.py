@@ -154,7 +154,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             fw_payload = {
                 "name": f"Block {name} -> Main LAN",
                 "ruleset": "LAN_IN",
-                "rule_index": 2000 + vlan_id,
+                "rule_index": 20000 + vlan_id,
                 "action": "drop",
                 "protocol": "all",
                 "enabled": True,
@@ -330,7 +330,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             fw_payload = {
                 "name": f"Allow {name}",
                 "ruleset": "LAN_LOCAL",
-                "rule_index": 2400,
+                "rule_index": 20400,
                 "action": "accept",
                 "protocol": "tcp",
                 "enabled": True,
@@ -592,7 +592,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         fw_payload: dict[str, Any] = {
             "name": f"Block {name} -> Main LAN",
             "ruleset": "LAN_IN",
-            "rule_index": 2000 + vlan_id,
+            "rule_index": 20000 + vlan_id,
             "action": "drop",
             "protocol": "all",
             "enabled": True,
