@@ -1137,9 +1137,9 @@ uncalled-for==0.3.1 \
     --hash=sha256:074cdc92da8356278f93d0ded6f2a66dd883dbecaf9bc89437646ee2289cc200 \
     --hash=sha256:5e412ac6708f04b56bef5867b5dcf6690ebce4eb7316058d9c50787492bb4bca
     # via fastmcp-slim
-uvicorn==0.47.0 \
-    --hash=sha256:2c5715bc12d1892d84752049f400cd1c3cb018514967fdfeb97640443a6a9432 \
-    --hash=sha256:7c9a0ea1a9414106bbab7324609c162d8fa0cdcdcb703060987269d77c7bb533
+uvicorn==0.48.0 \
+    --hash=sha256:48097851328b87ec36117d3d575234519eb58c2b22d79666e9bbc6c49a761dad \
+    --hash=sha256:a5504207195d08c2511bf9125ede5ac4a4b71725d519e758d01dcf0bc2d31c37
     # via
     #   -r requirements.in
     #   fastmcp-slim
