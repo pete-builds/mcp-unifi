@@ -19,6 +19,7 @@ from mcp_unifi.modules.network import (
     backup,
     clients,
     composites,
+    confirm,
     devices,
     dhcp,
     drift,
@@ -57,6 +58,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     composites.register(mcp, settings, registry)
     drift.register(mcp, settings, registry)
     backup.register(mcp, settings, registry)
+    # ``confirm_destructive_action`` is registered last so it shows up after
+    # the destructive tools it pairs with in tool-list output.
+    confirm.register(mcp, settings, registry)
 
 
 __all__ = ["register"]

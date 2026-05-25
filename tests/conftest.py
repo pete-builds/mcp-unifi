@@ -9,6 +9,7 @@ import pytest
 from mcp_unifi import audit
 from mcp_unifi.clients.stubs import StubState
 from mcp_unifi.config import Settings
+from mcp_unifi.modules.network._pending import reset_pending_actions
 
 
 @pytest.fixture(autouse=True)
@@ -24,10 +25,14 @@ def _isolated_audit_log(tmp_path: object, monkeypatch: pytest.MonkeyPatch) -> It
     monkeypatch.setenv(audit.ENV_SINK, "file")
     monkeypatch.setenv(audit.ENV_PATH, str(log_path))
     audit.set_audit_log(None)
+    # Reset the preview-then-confirm pending-actions registry so tokens
+    # minted in one test never leak into another.
+    reset_pending_actions()
     try:
         yield
     finally:
         audit.set_audit_log(None)
+        reset_pending_actions()
 
 
 @pytest.fixture

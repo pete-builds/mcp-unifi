@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.modules._audit import audited
 from mcp_unifi.modules.network._common import format_json, make_err
+from mcp_unifi.modules.network._pending import build_preview_envelope, get_pending_actions
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -191,13 +192,19 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         controller: str = "default",
         dry_run: bool = False,
     ) -> str:
-        """Delete a static DHCP reservation.
+        """Preview deletion of a static DHCP reservation.
+
+        v0.7.0: this tool no longer deletes on its own. It returns a preview
+        envelope with a ``token``; call ``confirm_destructive_action(token)``
+        to commit the delete. Tokens expire after 5 minutes.
 
         Side effects:
-        - Removes the fixed-IP entry. The client returns to dynamic DHCP on
-          its next renewal and may receive a different address.
-        - Mutates controller state. Use dry_run=True to preview the change
-          without applying.
+        - None until ``confirm_destructive_action`` runs against the token.
+        - On confirm: removes the fixed-IP entry. The client returns to
+          dynamic DHCP on its next renewal and may receive a different
+          address.
+        - ``dry_run=True`` returns the legacy ``would_delete`` envelope with
+          no token — purely informational, no commit step possible.
 
         Example: delete_static_dhcp_lease(lease_id="65f...")
 
@@ -205,8 +212,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             lease_id: The ``_id`` from ``list_dhcp_leases``.
             controller: Name of the UniFi controller to target. Defaults to
                 ``"default"``.
-            dry_run: Preview the change without applying it. Returns the
-                predicted change set.
+            dry_run: ``True`` skips token generation and returns the legacy
+                ``{"dry_run": true, ...}`` envelope. ``False`` (default)
+                generates a preview token that must be confirmed.
         """
         if dry_run:
             return format_json(
@@ -219,8 +227,41 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             )
         try:
             backend = registry.get(controller)
-            ok = await backend.delete_dhcp_lease(lease_id)
-            return format_json({"deleted": ok, "lease_id": lease_id})
+            leases = await backend.list_dhcp_leases()
         except UniFiError as exc:
-            logger.exception("delete_static_dhcp_lease failed", extra={"lease_id": lease_id})
+            logger.exception(
+                "delete_static_dhcp_lease preview lookup failed", extra={"lease_id": lease_id}
+            )
             return err(str(exc))
+
+        target = next(
+            (lease for lease in leases if isinstance(lease, dict) and lease.get("_id") == lease_id),
+            None,
+        )
+        if target is None:
+            return err(f"dhcp lease {lease_id} not found")
+
+        resource = {
+            "_id": lease_id,
+            "mac": target.get("mac"),
+            "fixed_ip": target.get("fixed_ip"),
+            "name": target.get("name") or target.get("hostname"),
+        }
+
+        async def _execute() -> str:
+            try:
+                ok = await backend.delete_dhcp_lease(lease_id)
+                return format_json({"deleted": ok, "lease_id": lease_id})
+            except UniFiError as exc:
+                logger.exception(
+                    "delete_static_dhcp_lease failed", extra={"lease_id": lease_id}
+                )
+                return err(str(exc))
+
+        pending = get_pending_actions().put(
+            action="delete_static_dhcp_lease",
+            controller=controller,
+            resource=resource,
+            executor=_execute,
+        )
+        return format_json(build_preview_envelope(pending))

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.modules._audit import audited
 from mcp_unifi.modules.network._common import format_json, make_err
+from mcp_unifi.modules.network._pending import build_preview_envelope, get_pending_actions
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -167,13 +168,18 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         controller: str = "default",
         dry_run: bool = False,
     ) -> str:
-        """Delete a port-forward rule from the controller.
+        """Preview deletion of a port-forward (DNAT) rule.
+
+        v0.7.0: this tool no longer deletes on its own. It returns a preview
+        envelope with a ``token``; call ``confirm_destructive_action(token)``
+        to commit the delete. Tokens expire after 5 minutes.
 
         Side effects:
-        - Removes the NAT rule. The internal service stops being reachable
-          from the WAN immediately.
-        - Mutates controller state. Use dry_run=True to preview the change
-          without applying.
+        - None until ``confirm_destructive_action`` runs against the token.
+        - On confirm: removes the NAT rule. The internal service stops
+          being reachable from the WAN immediately.
+        - ``dry_run=True`` returns the legacy ``would_delete`` envelope with
+          no token — purely informational, no commit step possible.
 
         Example: delete_port_forward(forward_id="65f...")
 
@@ -181,8 +187,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             forward_id: The ``_id`` from ``list_port_forwards``.
             controller: Name of the UniFi controller to target. Defaults to
                 ``"default"``.
-            dry_run: Preview the change without applying it. Returns the
-                predicted change set.
+            dry_run: ``True`` skips token generation and returns the legacy
+                ``{"dry_run": true, ...}`` envelope. ``False`` (default)
+                generates a preview token that must be confirmed.
         """
         if dry_run:
             return format_json(
@@ -195,8 +202,40 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             )
         try:
             backend = registry.get(controller)
-            ok = await backend.delete_port_forward(forward_id)
-            return format_json({"deleted": ok, "forward_id": forward_id})
+            forwards = await backend.list_port_forwards()
         except UniFiError as exc:
-            logger.exception("delete_port_forward failed", extra={"forward_id": forward_id})
+            logger.exception(
+                "delete_port_forward preview lookup failed", extra={"forward_id": forward_id}
+            )
             return err(str(exc))
+
+        target = next(
+            (f for f in forwards if isinstance(f, dict) and f.get("_id") == forward_id), None
+        )
+        if target is None:
+            return err(f"port forward {forward_id} not found")
+
+        resource = {
+            "_id": forward_id,
+            "name": target.get("name"),
+            "fwd": target.get("fwd"),
+            "fwd_port": target.get("fwd_port"),
+            "dst_port": target.get("dst_port"),
+            "proto": target.get("proto"),
+        }
+
+        async def _execute() -> str:
+            try:
+                ok = await backend.delete_port_forward(forward_id)
+                return format_json({"deleted": ok, "forward_id": forward_id})
+            except UniFiError as exc:
+                logger.exception("delete_port_forward failed", extra={"forward_id": forward_id})
+                return err(str(exc))
+
+        pending = get_pending_actions().put(
+            action="delete_port_forward",
+            controller=controller,
+            resource=resource,
+            executor=_execute,
+        )
+        return format_json(build_preview_envelope(pending))

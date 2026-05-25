@@ -68,13 +68,20 @@ async def test_update_port_profile_missing(stub_server: FastMCP) -> None:
 
 async def test_delete_port_profile_stub(stub_server: FastMCP, stub_state: StubState) -> None:
     profile_id = stub_state.list_port_profiles()[0]["_id"]
-    result = await _call(stub_server, "delete_port_profile", {"profile_id": profile_id})
+    # v0.7.0: preview first, then confirm.
+    preview = await _call(stub_server, "delete_port_profile", {"profile_id": profile_id})
+    assert preview["preview"] is True
+    assert preview["resource"]["_id"] == profile_id
+    result = await _call(
+        stub_server, "confirm_destructive_action", {"token": preview["token"]}
+    )
     assert result["deleted"] is True
 
 
 async def test_delete_port_profile_missing(stub_server: FastMCP) -> None:
     result = await _call(stub_server, "delete_port_profile", {"profile_id": "ghost"})
-    assert result["deleted"] is False
+    assert "error" in result
+    assert "not found" in result["error"]
 
 
 # ---------------------------------------------------------------------------
@@ -122,6 +129,13 @@ async def test_real_update_port_profile(real_server: FastMCP) -> None:
 
 @respx.mock
 async def test_real_delete_port_profile(real_server: FastMCP) -> None:
+    respx.get(f"{BASE}/rest/portconf").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "p1", "name": "PoE"}]})
+    )
     respx.delete(f"{BASE}/rest/portconf/p1").mock(return_value=httpx.Response(200))
-    result = await _call(real_server, "delete_port_profile", {"profile_id": "p1"})
+    preview = await _call(real_server, "delete_port_profile", {"profile_id": "p1"})
+    assert preview["preview"] is True
+    result = await _call(
+        real_server, "confirm_destructive_action", {"token": preview["token"]}
+    )
     assert result["deleted"] is True

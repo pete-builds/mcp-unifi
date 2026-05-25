@@ -90,7 +90,14 @@ async def test_update_wlan_missing(stub_server: FastMCP) -> None:
 
 async def test_delete_wlan_stub(stub_server: FastMCP, stub_state: StubState) -> None:
     wlan_id = stub_state.list_wlans()[0]["_id"]
-    result = await _call(stub_server, "delete_wlan", {"wlan_id": wlan_id})
+    # v0.7.0: preview first, then confirm.
+    preview = await _call(stub_server, "delete_wlan", {"wlan_id": wlan_id})
+    assert preview["preview"] is True
+    assert preview["resource"]["_id"] == wlan_id
+    assert stub_state.list_wlans() != []  # preview must not delete
+    result = await _call(
+        stub_server, "confirm_destructive_action", {"token": preview["token"]}
+    )
     assert result["deleted"] is True
     assert result["wlan_id"] == wlan_id
     assert stub_state.list_wlans() == []
@@ -98,7 +105,8 @@ async def test_delete_wlan_stub(stub_server: FastMCP, stub_state: StubState) -> 
 
 async def test_delete_wlan_missing(stub_server: FastMCP) -> None:
     result = await _call(stub_server, "delete_wlan", {"wlan_id": "ghost"})
-    assert result["deleted"] is False
+    assert "error" in result
+    assert "not found" in result["error"]
 
 
 # ---------------------------------------------------------------------------
@@ -236,8 +244,16 @@ async def test_real_update_wlan(real_server: FastMCP) -> None:
 
 @respx.mock
 async def test_real_delete_wlan(real_server: FastMCP) -> None:
+    # v0.7.0: preview first (list lookup), then confirm (actual DELETE).
+    respx.get(f"{BASE}/rest/wlanconf").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "w1", "name": "X"}]})
+    )
     respx.delete(f"{BASE}/rest/wlanconf/w1").mock(return_value=httpx.Response(200))
-    result = await _call(real_server, "delete_wlan", {"wlan_id": "w1"})
+    preview = await _call(real_server, "delete_wlan", {"wlan_id": "w1"})
+    assert preview["preview"] is True
+    result = await _call(
+        real_server, "confirm_destructive_action", {"token": preview["token"]}
+    )
     assert result["deleted"] is True
     assert result["wlan_id"] == "w1"
 
@@ -257,8 +273,16 @@ async def test_real_update_wlan_handles_404(real_server: FastMCP) -> None:
 
 @respx.mock
 async def test_real_delete_wlan_handles_409(real_server: FastMCP) -> None:
+    # v0.7.0: 409 surfaces during confirm.
+    respx.get(f"{BASE}/rest/wlanconf").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "w1", "name": "X"}]})
+    )
     respx.delete(f"{BASE}/rest/wlanconf/w1").mock(return_value=httpx.Response(409, text="in use"))
-    result = await _call(real_server, "delete_wlan", {"wlan_id": "w1"})
+    preview = await _call(real_server, "delete_wlan", {"wlan_id": "w1"})
+    assert preview["preview"] is True
+    result = await _call(
+        real_server, "confirm_destructive_action", {"token": preview["token"]}
+    )
     assert "error" in result
 
 

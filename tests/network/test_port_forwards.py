@@ -46,7 +46,13 @@ async def test_create_update_delete_port_forward_stub(
     )
     assert updated["enabled"] is False
 
-    deleted = await _call(stub_server, "delete_port_forward", {"forward_id": created["_id"]})
+    # v0.7.0: preview first, then confirm.
+    preview = await _call(stub_server, "delete_port_forward", {"forward_id": created["_id"]})
+    assert preview["preview"] is True
+    assert preview["resource"]["_id"] == created["_id"]
+    deleted = await _call(
+        stub_server, "confirm_destructive_action", {"token": preview["token"]}
+    )
     assert deleted["deleted"] is True
 
 
@@ -61,7 +67,8 @@ async def test_update_port_forward_missing(stub_server: FastMCP) -> None:
 
 async def test_delete_port_forward_missing(stub_server: FastMCP) -> None:
     result = await _call(stub_server, "delete_port_forward", {"forward_id": "ghost"})
-    assert result["deleted"] is False
+    assert "error" in result
+    assert "not found" in result["error"]
 
 
 # ---------------------------------------------------------------------------
@@ -95,6 +102,16 @@ async def test_real_port_forward_crud(real_server: FastMCP) -> None:
     )
     assert updated["enabled"] is False
 
+    # v0.7.0 delete_port_forward previews via list_port_forwards first.
+    # The earlier respx.get(...) mock set up at the top of this test already
+    # returns pf1 — pin a second route returning pf2 so the preview finds it.
+    respx.get(f"{BASE}/rest/portforward").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "pf2", "name": "X"}]})
+    )
     respx.delete(f"{BASE}/rest/portforward/pf2").mock(return_value=httpx.Response(200))
-    deleted = await _call(real_server, "delete_port_forward", {"forward_id": "pf2"})
+    preview = await _call(real_server, "delete_port_forward", {"forward_id": "pf2"})
+    assert preview["preview"] is True
+    deleted = await _call(
+        real_server, "confirm_destructive_action", {"token": preview["token"]}
+    )
     assert deleted["deleted"] is True
