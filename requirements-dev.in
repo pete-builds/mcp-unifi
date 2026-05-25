@@ -6,4 +6,4 @@ respx==0.23.1
 ruff==0.15.14
 mypy==2.1.0
 types-PyYAML==6.0.12.20260518
-hypothesis==6.152.7
+hypothesis==6.152.9
