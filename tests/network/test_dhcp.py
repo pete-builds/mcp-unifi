@@ -47,9 +47,7 @@ async def test_delete_static_dhcp_lease_stub(stub_server: FastMCP, stub_state: S
     preview = await _call(stub_server, "delete_static_dhcp_lease", {"lease_id": lease_id})
     assert preview["preview"] is True
     assert preview["resource"]["_id"] == lease_id
-    result = await _call(
-        stub_server, "confirm_destructive_action", {"token": preview["token"]}
-    )
+    result = await _call(stub_server, "confirm_destructive_action", {"token": preview["token"]})
     assert result["deleted"] is True
 
 
@@ -107,9 +105,7 @@ async def test_real_delete_static_dhcp_lease(real_server: FastMCP) -> None:
     respx.delete(f"{BASE}/rest/user/u9").mock(return_value=httpx.Response(200))
     preview = await _call(real_server, "delete_static_dhcp_lease", {"lease_id": "u9"})
     assert preview["preview"] is True
-    result = await _call(
-        real_server, "confirm_destructive_action", {"token": preview["token"]}
-    )
+    result = await _call(real_server, "confirm_destructive_action", {"token": preview["token"]})
     assert result["deleted"] is True
 
 

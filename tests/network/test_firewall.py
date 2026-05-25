@@ -85,9 +85,7 @@ async def test_delete_firewall_rule_stub(stub_server: FastMCP, stub_state: StubS
     assert preview["preview"] is True
     assert preview["resource"]["_id"] == rule_id
     assert stub_state.list_firewall_rules() != []  # preview must not delete
-    result = await _call(
-        stub_server, "confirm_destructive_action", {"token": preview["token"]}
-    )
+    result = await _call(stub_server, "confirm_destructive_action", {"token": preview["token"]})
     assert result["deleted"] is True
     assert result["rule_id"] == rule_id
     assert stub_state.list_firewall_rules() == []
@@ -154,9 +152,7 @@ async def test_real_delete_firewall_rule(real_server: FastMCP) -> None:
     respx.delete(f"{BASE}/rest/firewallrule/r1").mock(return_value=httpx.Response(200))
     preview = await _call(real_server, "delete_firewall_rule", {"rule_id": "r1"})
     assert preview["preview"] is True
-    result = await _call(
-        real_server, "confirm_destructive_action", {"token": preview["token"]}
-    )
+    result = await _call(real_server, "confirm_destructive_action", {"token": preview["token"]})
     assert result["deleted"] is True
     assert result["rule_id"] == "r1"
 
@@ -173,9 +169,7 @@ async def test_real_delete_firewall_rule_handles_404(real_server: FastMCP) -> No
     )
     preview = await _call(real_server, "delete_firewall_rule", {"rule_id": "missing"})
     assert preview["preview"] is True
-    result = await _call(
-        real_server, "confirm_destructive_action", {"token": preview["token"]}
-    )
+    result = await _call(real_server, "confirm_destructive_action", {"token": preview["token"]})
     assert "error" in result
 
 

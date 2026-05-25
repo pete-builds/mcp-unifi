@@ -225,9 +225,7 @@ async def test_multiple_pending_tokens_resolve_independently(
     assert preview_a["token"] in get_pending_actions()
 
     # Now confirm the first.
-    result = await _call(
-        stub_server, "confirm_destructive_action", {"token": preview_a["token"]}
-    )
+    result = await _call(stub_server, "confirm_destructive_action", {"token": preview_a["token"]})
     assert result["deleted"] is True
     assert len(get_pending_actions()) == 0
 
@@ -237,9 +235,7 @@ async def test_multiple_pending_tokens_resolve_independently(
 # ---------------------------------------------------------------------------
 
 
-async def test_reset_drops_all_pending_actions(
-    stub_server: FastMCP, stub_state: StubState
-) -> None:
+async def test_reset_drops_all_pending_actions(stub_server: FastMCP, stub_state: StubState) -> None:
     """``reset_pending_actions()`` is the seam tests rely on for isolation."""
     rule_id = stub_state.list_firewall_rules()[0]["_id"]
     await _call(stub_server, "delete_firewall_rule", {"rule_id": rule_id})

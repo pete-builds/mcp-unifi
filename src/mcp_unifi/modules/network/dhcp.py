@@ -253,9 +253,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 ok = await backend.delete_dhcp_lease(lease_id)
                 return format_json({"deleted": ok, "lease_id": lease_id})
             except UniFiError as exc:
-                logger.exception(
-                    "delete_static_dhcp_lease failed", extra={"lease_id": lease_id}
-                )
+                logger.exception("delete_static_dhcp_lease failed", extra={"lease_id": lease_id})
                 return err(str(exc))
 
         pending = get_pending_actions().put(

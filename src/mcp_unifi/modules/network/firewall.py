@@ -252,7 +252,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             backend = registry.get(controller)
             rules = await backend.list_firewall_rules()
         except UniFiError as exc:
-            logger.exception("delete_firewall_rule preview lookup failed", extra={"rule_id": rule_id})
+            logger.exception(
+                "delete_firewall_rule preview lookup failed", extra={"rule_id": rule_id}
+            )
             return err(str(exc))
 
         target = next((r for r in rules if isinstance(r, dict) and r.get("_id") == rule_id), None)

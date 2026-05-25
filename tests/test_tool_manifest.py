@@ -101,9 +101,7 @@ def test_generator_output_is_deterministic() -> None:
     first_index = generate_tool_manifest._render_index(tools)
     # Re-collect from a fresh build_server to make sure registration is stable.
     tools_again = asyncio.run(generate_tool_manifest._collect_tools())
-    second_pages = {
-        t["name"]: generate_tool_manifest._render_tool_page(t) for t in tools_again
-    }
+    second_pages = {t["name"]: generate_tool_manifest._render_tool_page(t) for t in tools_again}
     second_index = generate_tool_manifest._render_index(tools_again)
 
     assert first_pages == second_pages
@@ -162,9 +160,7 @@ def test_every_registered_tool_has_a_page_on_disk() -> None:
 
 def test_manifest_json_round_trips() -> None:
     """The machine-readable manifest parses cleanly and matches registration."""
-    manifest_path = (
-        REPO_ROOT / "docs" / "site" / "src" / "data" / "tool-manifest.json"
-    )
+    manifest_path = REPO_ROOT / "docs" / "site" / "src" / "data" / "tool-manifest.json"
     assert manifest_path.is_file()
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert payload["version"] == 1

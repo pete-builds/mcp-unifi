@@ -113,9 +113,7 @@ async def test_delete_vlan_stub(stub_server: FastMCP) -> None:
     assert preview["preview"] is True
     assert preview["action"] == "delete_vlan"
     assert preview["resource"]["_id"] == created["_id"]
-    result = await _call(
-        stub_server, "confirm_destructive_action", {"token": preview["token"]}
-    )
+    result = await _call(stub_server, "confirm_destructive_action", {"token": preview["token"]})
     assert result["deleted"] is True
 
 
@@ -177,9 +175,7 @@ async def test_real_delete_vlan(real_server: FastMCP) -> None:
     respx.delete(f"{BASE}/rest/networkconf/n1").mock(return_value=httpx.Response(200))
     preview = await _call(real_server, "delete_vlan", {"network_id": "n1"})
     assert preview["preview"] is True
-    result = await _call(
-        real_server, "confirm_destructive_action", {"token": preview["token"]}
-    )
+    result = await _call(real_server, "confirm_destructive_action", {"token": preview["token"]})
     assert result["deleted"] is True
 
 
@@ -219,9 +215,7 @@ async def test_delete_vlan_real_mode_handles_409(real_server: FastMCP) -> None:
     )
     preview = await _call(real_server, "delete_vlan", {"network_id": "n1"})
     assert preview["preview"] is True
-    result = await _call(
-        real_server, "confirm_destructive_action", {"token": preview["token"]}
-    )
+    result = await _call(real_server, "confirm_destructive_action", {"token": preview["token"]})
     assert "error" in result
 
 

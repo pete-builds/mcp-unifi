@@ -50,9 +50,7 @@ async def test_create_update_delete_port_forward_stub(
     preview = await _call(stub_server, "delete_port_forward", {"forward_id": created["_id"]})
     assert preview["preview"] is True
     assert preview["resource"]["_id"] == created["_id"]
-    deleted = await _call(
-        stub_server, "confirm_destructive_action", {"token": preview["token"]}
-    )
+    deleted = await _call(stub_server, "confirm_destructive_action", {"token": preview["token"]})
     assert deleted["deleted"] is True
 
 
@@ -111,7 +109,5 @@ async def test_real_port_forward_crud(real_server: FastMCP) -> None:
     respx.delete(f"{BASE}/rest/portforward/pf2").mock(return_value=httpx.Response(200))
     preview = await _call(real_server, "delete_port_forward", {"forward_id": "pf2"})
     assert preview["preview"] is True
-    deleted = await _call(
-        real_server, "confirm_destructive_action", {"token": preview["token"]}
-    )
+    deleted = await _call(real_server, "confirm_destructive_action", {"token": preview["token"]})
     assert deleted["deleted"] is True
