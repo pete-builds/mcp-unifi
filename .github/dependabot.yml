@@ -1,53 +1,60 @@
+---
 version: 2
 updates:
-  # Python deps (we hand-regenerate the .lock from .in via uv pip compile)
-  - package-ecosystem: pip
-    directory: /
-    schedule:
-      interval: weekly
-      day: monday
-      time: "09:00"
-      timezone: America/New_York
-    open-pull-requests-limit: 5
-    labels:
-      - dependencies
-      - python
-    commit-message:
-      prefix: deps
-      include: scope
-
-  # Docker base image (Dockerfile FROM digests)
-  - package-ecosystem: docker
-    directory: /
-    schedule:
-      interval: weekly
-      day: monday
-      time: "09:00"
-      timezone: America/New_York
-    open-pull-requests-limit: 3
-    labels:
-      - dependencies
-      - docker
-    commit-message:
-      prefix: deps(docker)
-      include: scope
-
-  # GitHub Actions
-  - package-ecosystem: github-actions
-    directory: /
-    schedule:
-      interval: weekly
-      day: monday
-      time: "09:00"
-      timezone: America/New_York
-    open-pull-requests-limit: 3
-    labels:
-      - dependencies
-      - github-actions
-    commit-message:
-      prefix: ci
-      include: scope
-    groups:
-      github-actions:
-        patterns:
-          - "*"
+- package-ecosystem: pip
+  directory: "/"
+  schedule:
+    interval: weekly
+    day: thursday
+    time: '09:30'
+    timezone: America/New_York
+  open-pull-requests-limit: 2
+  labels:
+  - dependencies
+  - python
+  commit-message:
+    prefix: deps
+    include: scope
+  groups:
+    python-minor-patch:
+      update-types:
+      - minor
+      - patch
+- package-ecosystem: docker
+  directory: "/"
+  schedule:
+    interval: weekly
+    day: thursday
+    time: '09:30'
+    timezone: America/New_York
+  open-pull-requests-limit: 1
+  labels:
+  - dependencies
+  - docker
+  commit-message:
+    prefix: deps(docker)
+    include: scope
+  groups:
+    docker-minor-patch:
+      update-types:
+      - minor
+      - patch
+- package-ecosystem: github-actions
+  directory: "/"
+  schedule:
+    interval: weekly
+    day: thursday
+    time: '09:30'
+    timezone: America/New_York
+  open-pull-requests-limit: 1
+  labels:
+  - dependencies
+  - github-actions
+  commit-message:
+    prefix: ci
+    include: scope
+  groups:
+    actions-minor-patch:
+      update-types:
+      - minor
+      - patch
