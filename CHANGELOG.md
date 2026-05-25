@@ -5,6 +5,96 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-05-25
+
+> **Breaking: preview-then-confirm for destructive Network tools.** All six
+> ``delete_*`` tools in the Network module now return a preview envelope
+> with a single-use token instead of mutating the controller directly. A
+> new ``confirm_destructive_action(token)`` tool runs the queued delete.
+> Tokens expire 5 minutes after issuance. Existing flows that call
+> ``delete_firewall_rule(rule_id="...")`` and expect immediate deletion
+> MUST be updated to follow the preview with a confirm call. Migration
+> below.
+
+### Breaking changes
+
+- **Six ``delete_*`` tools changed contract.** ``delete_firewall_rule``,
+  ``delete_vlan``, ``delete_wlan``, ``delete_port_profile``,
+  ``delete_port_forward``, and ``delete_static_dhcp_lease`` no longer
+  delete on their own. They:
+  1. Resolve the target via the existing list lookup.
+  2. Generate a UUID4 token, store a :class:`PendingAction` in an
+     in-process registry with a 5-minute TTL.
+  3. Return a preview envelope:
+
+     .. code-block:: json
+
+        {
+          "preview": true,
+          "action": "delete_firewall_rule",
+          "controller": "default",
+          "resource": {"_id": "abc", "name": "..."},
+          "token": "<uuid4>",
+          "expires_at": "<iso8601>",
+          "confirm_with": "confirm_destructive_action"
+        }
+
+  Callers commit the change by passing ``token`` back to
+  ``confirm_destructive_action(token=...)``. ``dry_run=True`` still works
+  and still returns the legacy ``{"dry_run": true, "would_delete": ...}``
+  envelope (no token, no commit step possible) for informational use.
+
+- **The "missing record" error envelope changed.** Pre-0.7.0 the six
+  ``delete_*`` tools returned ``{"deleted": false, "<id>_id": "..."}``
+  when the target didn't exist. Post-0.7.0 they return the standard error
+  envelope ``{"error": "... not found", "stub_mode": bool}`` from the
+  preview lookup. Callers branching on ``result["deleted"]`` need to
+  branch on ``result.get("error")`` instead.
+
+### Added
+
+- **``confirm_destructive_action(token: str)`` tool.** Resolves a
+  preview token, runs the queued executor, removes the token from the
+  registry, returns the standard delete-tool result. Unknown, used, or
+  expired tokens return the standard error envelope.
+- **``src/mcp_unifi/modules/network/_pending.py``** holds the
+  :class:`PendingAction` dataclass and :class:`PendingActionsRegistry`.
+  Module-global, lazily swept on every access. ``reset_pending_actions``
+  is the test-isolation seam.
+- **``scripts/generate_tool_manifest.py``** introspects the FastMCP
+  registration and emits one MDX file per tool under
+  ``docs/site/src/content/docs/tools/``. Re-runs are deterministic. A
+  pre-commit hook keeps the docs in sync with the registered surface.
+- **``.pre-commit-config.yaml``** wires up the manifest generator, ruff
+  (lint + format), and mypy strict. Run ``pre-commit install`` once per
+  clone.
+
+### Audit log
+
+- Two events per destructive action now: the preview call (action name +
+  resolved resource ID), and the confirm call
+  (``confirm_destructive_action`` with the token). A future replay tool
+  can stitch the two halves together via the shared token.
+
+### Migration
+
+Old flow:
+
+.. code-block:: python
+
+    delete_firewall_rule(rule_id="abc")
+
+New flow (two calls):
+
+.. code-block:: python
+
+    preview = delete_firewall_rule(rule_id="abc")
+    confirm_destructive_action(token=preview["token"])
+
+For a single-step UX, agents (e.g. Apoc) should chain preview → confirm
+inside their handler. ``dry_run=True`` is unchanged and still returns
+the legacy preview shape with no token.
+
 ## [0.6.1] - 2026-05-25
 
 > **Bugfix release for UniFi Network 9.x (Zone-Based Firewall).** Two
