@@ -111,6 +111,7 @@ jobs:
         with:
           name: coverage-xml
           path: coverage.xml
+          retention-days: 7
 
   build-image:
     name: Build Docker image
@@ -139,6 +140,7 @@ jobs:
         with:
           name: docker-image
           path: /tmp/mcp-unifi.tar
+          retention-days: 7
 
   trivy-scan:
     name: Trivy security scan
