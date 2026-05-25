@@ -111,6 +111,32 @@ All config is read from environment variables (and `.env` when present). The fiv
 
 Full env var reference and the multi-site YAML schema are in the [Configuration docs](https://pete-builds.github.io/mcp-unifi/reference/configuration/).
 
+## Development
+
+Clone, install dev dependencies, and wire up the pre-commit hooks:
+
+```bash
+git clone https://github.com/pete-builds/mcp-unifi.git
+cd mcp-unifi
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]" pre-commit
+pre-commit install
+```
+
+The pre-commit hooks run ruff (lint + format), mypy strict, and the tool
+manifest generator. The manifest hook regenerates
+`docs/site/src/content/docs/tools/` whenever any file under
+`src/mcp_unifi/modules/` changes and fails the commit if the on-disk
+manifest drifts from the registered tool surface. Run the tests with
+`pytest`.
+
+To regenerate the manifest manually:
+
+```bash
+python scripts/generate_tool_manifest.py        # write
+python scripts/generate_tool_manifest.py --check  # CI-style drift check
+```
+
 ## Docs
 
 - [Docs site](https://pete-builds.github.io/mcp-unifi/)

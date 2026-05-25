@@ -1,0 +1,57 @@
+# Pre-commit hooks for mcp-unifi.
+#
+# Install once per clone:
+#
+#     pre-commit install
+#
+# After that, every ``git commit`` runs ruff format/lint, mypy strict, and
+# regenerates the tool manifest under ``docs/site/src/content/docs/tools/``
+# whenever the registered tool surface changes. The manifest hook is the
+# important one for v0.7.0 onward — it makes drift between code and docs
+# impossible.
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.14
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      # Regenerate the per-tool manifest pages whenever any file under
+      # ``src/mcp_unifi/modules/`` changes. The generator is idempotent;
+      # re-running on an unchanged surface is a no-op.
+      #
+      # ``pass_filenames: false`` because the generator never reads the
+      # changed files; it imports the package and introspects FastMCP. The
+      # file glob is just the trigger.
+      - id: generate-tool-manifest
+        name: Regenerate tool manifest (docs/site/src/content/docs/tools/)
+        entry: python scripts/generate_tool_manifest.py
+        language: system
+        pass_filenames: false
+        files: ^src/mcp_unifi/modules/.*\.py$
+        # After regen, drift-check so anything stale is caught before commit.
+        # ``--check`` will fail if any file would differ from what's already
+        # on disk (which would mean someone manually edited a generated file
+        # or the generator changed shape).
+        stages: [pre-commit]
+
+      - id: check-tool-manifest-clean
+        name: Verify tool manifest is in sync (--check)
+        entry: python scripts/generate_tool_manifest.py --check
+        language: system
+        pass_filenames: false
+        # Always run on push so CI catches a manual edit to generated files.
+        files: ^(src/mcp_unifi/modules/.*\.py|docs/site/src/content/docs/tools/.*|docs/site/src/data/tool-manifest\.json|scripts/generate_tool_manifest\.py)$
+
+      # mypy strict — keep the type story tight.
+      - id: mypy-strict
+        name: mypy strict (src/mcp_unifi)
+        entry: python -m mypy src/mcp_unifi
+        language: system
+        pass_filenames: false
+        types_or: [python]
+        files: ^src/mcp_unifi/

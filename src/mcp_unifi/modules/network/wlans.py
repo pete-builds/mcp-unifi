@@ -12,6 +12,7 @@ from mcp_unifi.modules.network._common import (
     make_err,
     resolve_default_ap_group,
 )
+from mcp_unifi.modules.network._pending import build_preview_envelope, get_pending_actions
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -236,15 +237,19 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         controller: str = "default",
         dry_run: bool = False,
     ) -> str:
-        """Delete a WiFi SSID from the controller.
+        """Preview deletion of a WiFi SSID.
+
+        v0.7.0: this tool no longer deletes on its own. It returns a preview
+        envelope with a ``token``; call ``confirm_destructive_action(token)``
+        to commit the delete. Tokens expire after 5 minutes.
 
         Side effects:
-        - Removes the WLAN record. Access points stop broadcasting the SSID
-          within seconds.
-        - Connected wireless clients on this SSID are immediately
-          disconnected.
-        - Mutates controller state. Use dry_run=True to preview the change
-          without applying.
+        - None until ``confirm_destructive_action`` runs against the token.
+        - On confirm: removes the WLAN record. APs stop broadcasting the
+          SSID within seconds. Connected wireless clients on this SSID are
+          immediately disconnected.
+        - ``dry_run=True`` returns the legacy ``would_delete`` envelope with
+          no token — purely informational, no commit step possible.
 
         Example: delete_wlan(wlan_id="65f...")
 
@@ -252,8 +257,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             wlan_id: The ``_id`` from ``list_wlans``.
             controller: Name of the UniFi controller to target. Defaults to
                 ``"default"``.
-            dry_run: Preview the change without applying it. Returns the
-                predicted change set.
+            dry_run: ``True`` skips token generation and returns the legacy
+                ``{"dry_run": true, ...}`` envelope. ``False`` (default)
+                generates a preview token that must be confirmed.
         """
         if dry_run:
             return format_json(
@@ -266,8 +272,34 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             )
         try:
             backend = registry.get(controller)
-            ok = await backend.delete_wlan(wlan_id)
-            return format_json({"deleted": ok, "wlan_id": wlan_id})
+            wlans = await backend.list_wlans()
         except UniFiError as exc:
-            logger.exception("delete_wlan failed", extra={"wlan_id": wlan_id})
+            logger.exception("delete_wlan preview lookup failed", extra={"wlan_id": wlan_id})
             return err(str(exc))
+
+        target = next((w for w in wlans if isinstance(w, dict) and w.get("_id") == wlan_id), None)
+        if target is None:
+            return err(f"wlan {wlan_id} not found")
+
+        resource = {
+            "_id": wlan_id,
+            "name": target.get("name"),
+            "ssid": target.get("ssid") or target.get("name"),
+            "enabled": target.get("enabled"),
+        }
+
+        async def _execute() -> str:
+            try:
+                ok = await backend.delete_wlan(wlan_id)
+                return format_json({"deleted": ok, "wlan_id": wlan_id})
+            except UniFiError as exc:
+                logger.exception("delete_wlan failed", extra={"wlan_id": wlan_id})
+                return err(str(exc))
+
+        pending = get_pending_actions().put(
+            action="delete_wlan",
+            controller=controller,
+            resource=resource,
+            executor=_execute,
+        )
+        return format_json(build_preview_envelope(pending))

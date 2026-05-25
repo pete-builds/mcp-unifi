@@ -46,6 +46,7 @@ export default defineConfig({
             { label: 'Network Tools', link: '/reference/network/' },
             { label: 'Protect Tools', link: '/reference/protect/' },
             { label: 'Configuration', link: '/reference/configuration/' },
+            { label: 'Tool Manifest (auto)', link: '/tools/' },
           ],
         },
         { label: 'Changelog', link: '/changelog/' },

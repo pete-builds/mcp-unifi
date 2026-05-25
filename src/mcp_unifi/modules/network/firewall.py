@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.modules._audit import audited
 from mcp_unifi.modules.network._common import format_json, make_err
+from mcp_unifi.modules.network._pending import build_preview_envelope, get_pending_actions
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -215,13 +216,18 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         controller: str = "default",
         dry_run: bool = False,
     ) -> str:
-        """Delete a firewall rule from the controller.
+        """Preview deletion of a firewall rule.
+
+        v0.7.0: this tool no longer deletes on its own. It returns a preview
+        envelope with a ``token``; call ``confirm_destructive_action(token)``
+        to commit the delete. Tokens expire after 5 minutes.
 
         Side effects:
-        - Removes the rule. Traffic that previously matched it falls through
-          to the next rule (or the implicit default).
-        - Mutates controller state. Use dry_run=True to preview the change
-          without applying.
+        - None until ``confirm_destructive_action`` runs against the token.
+        - On confirm: removes the rule. Traffic that previously matched it
+          falls through to the next rule (or the implicit default).
+        - ``dry_run=True`` returns the legacy ``would_delete`` envelope with
+          no token — purely informational, no commit step possible.
 
         Example: delete_firewall_rule(rule_id="65f...")
 
@@ -229,8 +235,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             rule_id: The ``_id`` from ``list_firewall_rules``.
             controller: Name of the UniFi controller to target. Defaults to
                 ``"default"``.
-            dry_run: Preview the change without applying it. Returns the
-                predicted change set.
+            dry_run: ``True`` skips token generation and returns the legacy
+                ``{"dry_run": true, ...}`` envelope. ``False`` (default)
+                generates a preview token that must be confirmed.
         """
         if dry_run:
             return format_json(
@@ -243,8 +250,37 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             )
         try:
             backend = registry.get(controller)
-            ok = await backend.delete_firewall_rule(rule_id)
-            return format_json({"deleted": ok, "rule_id": rule_id})
+            rules = await backend.list_firewall_rules()
         except UniFiError as exc:
-            logger.exception("delete_firewall_rule failed", extra={"rule_id": rule_id})
+            logger.exception(
+                "delete_firewall_rule preview lookup failed", extra={"rule_id": rule_id}
+            )
             return err(str(exc))
+
+        target = next((r for r in rules if isinstance(r, dict) and r.get("_id") == rule_id), None)
+        if target is None:
+            return err(f"firewall rule {rule_id} not found")
+
+        resource = {
+            "_id": rule_id,
+            "name": target.get("name"),
+            "ruleset": target.get("ruleset"),
+            "action": target.get("action"),
+            "enabled": target.get("enabled"),
+        }
+
+        async def _execute() -> str:
+            try:
+                ok = await backend.delete_firewall_rule(rule_id)
+                return format_json({"deleted": ok, "rule_id": rule_id})
+            except UniFiError as exc:
+                logger.exception("delete_firewall_rule failed", extra={"rule_id": rule_id})
+                return err(str(exc))
+
+        pending = get_pending_actions().put(
+            action="delete_firewall_rule",
+            controller=controller,
+            resource=resource,
+            executor=_execute,
+        )
+        return format_json(build_preview_envelope(pending))

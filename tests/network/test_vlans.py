@@ -108,13 +108,20 @@ async def test_delete_vlan_stub(stub_server: FastMCP) -> None:
         "create_vlan",
         {"name": "Doomed", "vlan_id": 70, "subnet": "10.0.70.0/24"},
     )
-    result = await _call(stub_server, "delete_vlan", {"network_id": created["_id"]})
+    # v0.7.0: delete_vlan returns a preview envelope; commit via confirm.
+    preview = await _call(stub_server, "delete_vlan", {"network_id": created["_id"]})
+    assert preview["preview"] is True
+    assert preview["action"] == "delete_vlan"
+    assert preview["resource"]["_id"] == created["_id"]
+    result = await _call(stub_server, "confirm_destructive_action", {"token": preview["token"]})
     assert result["deleted"] is True
 
 
 async def test_delete_vlan_missing(stub_server: FastMCP) -> None:
     result = await _call(stub_server, "delete_vlan", {"network_id": "ghost"})
-    assert result["deleted"] is False
+    # No preview is minted when the lookup fails.
+    assert "error" in result
+    assert "not found" in result["error"]
 
 
 # ---------------------------------------------------------------------------
@@ -160,8 +167,15 @@ async def test_real_update_vlan(real_server: FastMCP) -> None:
 
 @respx.mock
 async def test_real_delete_vlan(real_server: FastMCP) -> None:
+    # v0.7.0: delete previews via list_networks first, then commits via
+    # confirm_destructive_action which hits the actual DELETE endpoint.
+    respx.get(f"{BASE}/rest/networkconf").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "n1", "name": "X"}]})
+    )
     respx.delete(f"{BASE}/rest/networkconf/n1").mock(return_value=httpx.Response(200))
-    result = await _call(real_server, "delete_vlan", {"network_id": "n1"})
+    preview = await _call(real_server, "delete_vlan", {"network_id": "n1"})
+    assert preview["preview"] is True
+    result = await _call(real_server, "confirm_destructive_action", {"token": preview["token"]})
     assert result["deleted"] is True
 
 
@@ -192,10 +206,16 @@ async def test_update_vlan_real_mode_handles_404(real_server: FastMCP) -> None:
 
 @respx.mock
 async def test_delete_vlan_real_mode_handles_409(real_server: FastMCP) -> None:
+    # v0.7.0: 409 surfaces during confirm. Preview needs a list lookup first.
+    respx.get(f"{BASE}/rest/networkconf").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "n1", "name": "X"}]})
+    )
     respx.delete(f"{BASE}/rest/networkconf/n1").mock(
         return_value=httpx.Response(409, text="referenced by SSID")
     )
-    result = await _call(real_server, "delete_vlan", {"network_id": "n1"})
+    preview = await _call(real_server, "delete_vlan", {"network_id": "n1"})
+    assert preview["preview"] is True
+    result = await _call(real_server, "confirm_destructive_action", {"token": preview["token"]})
     assert "error" in result
 
 
