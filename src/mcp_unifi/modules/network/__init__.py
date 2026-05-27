@@ -24,9 +24,12 @@ from mcp_unifi.modules.network import (
     dhcp,
     drift,
     firewall,
+    honeypot,
     observability,
     port_forwards,
     port_profiles,
+    teleport,
+    threat_management,
     vlans,
     wlans,
 )
@@ -55,6 +58,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     dhcp.register(mcp, settings, registry)
     port_forwards.register(mcp, settings, registry)
     observability.register(mcp, settings, registry)
+    threat_management.register(mcp, settings, registry)
+    honeypot.register(mcp, settings, registry)
+    teleport.register(mcp, settings, registry)
     composites.register(mcp, settings, registry)
     drift.register(mcp, settings, registry)
     backup.register(mcp, settings, registry)

@@ -103,6 +103,11 @@ DESTRUCTIVE_TOOLS: frozenset[str] = frozenset(
         "set_camera_privacy_mode",
         "set_motion_sensitivity",
         "provision_camera",
+        # Phase 4 destructive (UCG-Fiber security/VPN settings)
+        "set_threat_management",
+        "create_honeypot",
+        "delete_honeypot",
+        "set_teleport_enabled",
     }
 )
 

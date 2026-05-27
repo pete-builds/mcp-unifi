@@ -56,7 +56,7 @@ When `MCP_UNIFI_CONTROLLERS_FILE` is set, the legacy `UNIFI_HOST` / `UNIFI_API_K
 
 ## New: enable Protect
 
-The Protect module is opt-in. To load its 12 tools alongside the 46 Network tools, set `MCP_UNIFI_MODULES_ENABLED=network,protect`:
+The Protect module is opt-in. To load its 11 tools alongside the 57 Network tools, set `MCP_UNIFI_MODULES_ENABLED=network,protect`:
 
 ```bash
 docker run --rm -p 3714:3714 \

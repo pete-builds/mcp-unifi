@@ -1,10 +1,10 @@
 ---
 draft: false
 title: Network Tools
-description: Full reference for the 46 Network module tools.
+description: Full reference for the 57 Network module tools.
 ---
 
-The Network module is loaded by default (`MCP_UNIFI_MODULES_ENABLED=network`). It exposes 46 tools covering devices, networks/VLANs, WLANs, firewall rules, switch port profiles, per-client commands, static DHCP leases, port forwards, observability, plus composites with rollback and config drift / backup utilities.
+The Network module is loaded by default (`MCP_UNIFI_MODULES_ENABLED=network`). It exposes 57 tools covering devices, networks/VLANs, WLANs, firewall rules, switch port profiles, per-client commands, static DHCP leases, port forwards, observability, plus composites with rollback and config drift / backup utilities.
 
 Every tool accepts an optional `controller: str = "default"` parameter that names which UniFi controller to target. Every destructive tool also accepts `dry_run: bool = False`; setting it to `True` returns the predicted change set without writing to the controller.
 

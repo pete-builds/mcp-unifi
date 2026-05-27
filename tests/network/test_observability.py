@@ -190,11 +190,53 @@ async def test_real_trigger_speedtest(real_server: FastMCP) -> None:
 
 @respx.mock
 async def test_real_get_speedtest_results(real_server: FastMCP) -> None:
-    respx.get(f"{BASE}/stat/report/archive.speedtest?_limit=3").mock(
-        return_value=httpx.Response(200, json={"data": [{"_id": "s1"}, {"_id": "s2"}]})
-    )
+    """Verified against UCG-Fiber fw 5.1.12.33296: the legacy
+    ``GET /stat/report/archive.speedtest?_limit=...`` form returns sparse
+    records that only carry ``_id``/``oid``/``o``. The real call uses
+    ``POST`` with an ``attrs`` projection and the controller returns
+    ``xput_upload`` (not the older ``xput_up``); the client normalises
+    it to ``xput_up`` so callers see the documented field name.
+    """
+    import json as _json
+
+    captured: dict = {}
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = _json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "_id": "s1",
+                        "time": 1779800888000,
+                        "xput_upload": 950.0,
+                        "xput_download": 2100.0,
+                        "latency": 12,
+                        "server": {"city": "New York", "provider": "GSL"},
+                    },
+                    {
+                        "_id": "s2",
+                        "time": 1779804597000,
+                        "xput_upload": 920.0,
+                        "xput_download": 2090.0,
+                        "latency": 11,
+                    },
+                ]
+            },
+        )
+
+    respx.post(f"{BASE}/stat/report/archive.speedtest").mock(side_effect=capture)
     result = await _call(real_server, "get_speedtest_results", {"limit": 3})
     assert len(result) == 2
+    # The client must project the attrs list onto the POST body.
+    assert "xput_upload" in captured["body"]["attrs"]
+    assert captured["body"]["limit"] == 3
+    # And it must surface both the canonical and back-compat field names so
+    # existing callers (and the documented contract) keep working.
+    assert result[0]["xput_upload"] == 950.0
+    assert result[0]["xput_up"] == 950.0
+    assert result[0]["xput_download"] == 2100.0
 
 
 @respx.mock

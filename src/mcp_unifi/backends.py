@@ -107,6 +107,10 @@ class Backend(Protocol):
     async def trigger_speedtest(self) -> UniFiRecord: ...
     async def get_speedtest_results(self, limit: int) -> list[UniFiRecord]: ...
 
+    # ----- Site settings (Threat Mgmt, Honeypot, Teleport) ---------------
+    async def get_setting(self, key: str) -> UniFiRecord: ...
+    async def set_setting(self, key: str, patch: dict[str, Any]) -> UniFiRecord: ...
+
 
 class StubBackend:
     """In-memory backend wrapping a single :class:`StubState` instance.
@@ -269,6 +273,13 @@ class StubBackend:
 
     async def get_speedtest_results(self, limit: int) -> list[UniFiRecord]:
         return self.state.get_speedtest_results(limit)
+
+    # ----- Site settings --------------------------------------------------
+    async def get_setting(self, key: str) -> UniFiRecord:
+        return self.state.get_setting(key)
+
+    async def set_setting(self, key: str, patch: dict[str, Any]) -> UniFiRecord:
+        return self.state.set_setting(key, patch)
 
 
 class RealBackend:
@@ -451,6 +462,13 @@ class RealBackend:
 
     async def get_speedtest_results(self, limit: int) -> list[UniFiRecord]:
         return await self.client.get_speedtest_results(limit)
+
+    # ----- Site settings --------------------------------------------------
+    async def get_setting(self, key: str) -> UniFiRecord:
+        return await self.client.get_setting(key)
+
+    async def set_setting(self, key: str, patch: dict[str, Any]) -> UniFiRecord:
+        return await self.client.set_setting(key, patch)
 
 
 @runtime_checkable

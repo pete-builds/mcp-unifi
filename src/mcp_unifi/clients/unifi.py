@@ -371,10 +371,73 @@ class UniFiClient:
         return self._first_record(await self._post("/cmd/devmgr", {"cmd": "speedtest"}))
 
     async def get_speedtest_results(self, limit: int) -> list[UniFiRecord]:
-        # Legacy controller endpoint — returns an array of past speed-test runs.
-        return await self._get(f"/stat/report/archive.speedtest?_limit={limit}") or []
+        """Return recent WAN speed-test runs.
+
+        Verified against UCG-Fiber fw 5.1.12.33296 (UniFi Network 9.x): the
+        legacy ``GET /stat/report/archive.speedtest?_limit=...`` form returns
+        sparse records that only carry ``_id``, ``oid``, and ``o`` — the
+        metric fields are not projected. The current contract is a
+        ``POST`` to the same path with an ``attrs`` projection list. The
+        controller returns ``xput_upload`` (not the older ``xput_up``); we
+        normalise it to ``xput_up`` so callers see the documented field name
+        regardless of the controller version.
+        """
+        attrs = ["time", "xput_upload", "xput_download", "latency", "server"]
+        payload: dict[str, Any] = {"attrs": attrs, "limit": limit}
+        records = await self._post("/stat/report/archive.speedtest", payload) or []
+        if not isinstance(records, list):
+            return []
+        normalised: list[UniFiRecord] = []
+        for rec in records:
+            if not isinstance(rec, dict):
+                continue
+            entry = dict(rec)
+            if "xput_upload" in entry and "xput_up" not in entry:
+                entry["xput_up"] = entry["xput_upload"]
+            normalised.append(entry)
+        return normalised
 
     async def list_top_talkers(self, limit: int) -> list[UniFiRecord]:
         # DPI by-station report; aggregated bytes per client.
         results = await self._get("/stat/sitedpi") or []
         return results[:limit] if isinstance(results, list) else []
+
+    # ------------------------------------------------------------------
+    # Site settings (Threat Management, Honeypot, Teleport)
+    # ------------------------------------------------------------------
+
+    async def get_setting(self, key: str) -> UniFiRecord:
+        """Return the single setting record for the given key.
+
+        UniFi exposes per-key settings at two paths; both return the same
+        envelope. We use ``/rest/setting/<key>`` because it matches the rest
+        of this client. Returns ``{}`` when the controller has no record for
+        the key (some keys are only materialised after the first write).
+
+        Verified against UCG-Fiber fw 5.1.12.33296: keys include ``ips``
+        (Threat Management + Honeypot) and ``teleport``.
+        """
+        record = await self._get(f"/rest/setting/{key}")
+        if isinstance(record, list) and record:
+            first = record[0]
+            return first if isinstance(first, dict) else {}
+        if isinstance(record, dict):
+            return record
+        return {}
+
+    async def set_setting(self, key: str, patch: dict[str, Any]) -> UniFiRecord:
+        """Partial-update a per-key setting record.
+
+        UniFi accepts ``POST /set/setting/<key>`` with a partial JSON body;
+        the controller merges the patch onto the existing record and returns
+        the resulting setting. This is the same pattern the web UI uses and
+        is more forgiving than ``PUT /rest/setting/<key>/<_id>`` (which
+        sometimes drops untouched fields on older firmware).
+        """
+        record = await self._post(f"/set/setting/{key}", patch)
+        if isinstance(record, list) and record:
+            first = record[0]
+            return first if isinstance(first, dict) else {}
+        if isinstance(record, dict):
+            return record
+        return {}

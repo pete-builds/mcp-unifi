@@ -15,7 +15,7 @@ Every destructive tool accepts `dry_run=True` to preview the change set without 
 
 ## Prerequisites
 
-- A UniFi OS gateway (UCG-Fiber, UDM Pro, UDM SE, or any gateway running UniFi OS) reachable on your network. The server talks to the legacy controller API at `/proxy/network/api/s/<site>/...`.
+- A UniFi OS gateway running UniFi Network 9.x or newer (UDM, UDM Pro, UDM SE, UCG-Fiber, UCG-Ultra, UDR, UDW, UniFi OS Server) reachable on your network. The server talks to the legacy controller API at `/proxy/network/api/s/<site>/...`. Verified against UCG-Fiber fw 5.1.12.33296.
 - A **local API key**: log into the gateway UI, go to **Settings → Control Plane → Integrations**, click **Create API Key**, give it a name, copy the key. The key never leaves your network.
 - For Protect tools: a UniFi Protect application running on the same gateway.
 

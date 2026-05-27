@@ -1,5 +1,5 @@
 {
-  "tool_count": 61,
+  "tool_count": 68,
   "tools": [
     {
       "description": "Compare current controller state to a declared YAML spec.\n\nRead-only \u2014 never mutates the controller. Returns a structured diff\nshowing fields that drifted, resources missing from the controller, and\nresources present on the controller that the spec did not declare.\n\nSide effects:\n- None (read-only). Lists networks, WLANs, and firewall rules.\n\nSpec format (YAML, all sections optional):\n\n    networks:\n      - name: \"IoT\"\n        vlan: 50\n        subnet: \"10.50.0.0/24\"\n    wlans:\n      - name: \"Cameras-IoT\"\n        network: \"IoT\"        # references a network by name\n        security: \"wpapsk\"\n    firewall_rules:\n      - name: \"Block IoT to LAN\"\n        action: \"drop\"\n        src: \"10.50.0.0/24\"\n        dst: \"192.168.86.0/24\"\n\nResources are matched by ``name`` (case-insensitive). Sections you omit\nare not audited; sections you include audit BOTH directions (missing\nand extra). To audit a section as \"exactly these resources\", include it\nexplicitly. To audit as \"at least these resources\", omit the section\nand use ``audit_open_ports`` or other read-only tools instead.\n\nReturns ``{\"in_sync\": bool, \"controller\": str, \"summary\": str,\n\"drifts\": [...]}``. Each drift is ``{\"resource_type\", \"name\",\n\"field\", \"expected\", \"actual\"}``. The synthetic field ``_resource``\nflags presence/absence of an entire resource (``expected=null`` =\nextra; ``actual=null`` = missing).\n\nExample: audit_network_drift(spec_yaml=\"networks:\\n  - name: iot\\n    vlan: 50\\n\")",
@@ -250,6 +250,38 @@
         "type": "object"
       },
       "name": "create_guest_network"
+    },
+    {
+      "description": "Add a honeypot trap to a network.\n\nSide effects:\n- Reads the current ``ips`` setting, appends a new entry\n  ``{\"network_id\": ..., \"ip_address\": ..., \"version\": \"v4\"}``,\n  and writes the updated list back via ``POST /set/setting/ips``.\n- Sets ``honeypot_enabled=true`` on the controller (the toggle\n  tracks list non-emptiness).\n- Mutates controller state. Use dry_run=True to preview.\n\nRefuses to write if the (network_id, ip) pair is already a\nhoneypot or if ``ip`` is not a valid LAN IPv4 address.\n\nExample: create_honeypot(network_id=\"65f...\", ip=\"10.0.50.2\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it.",
+            "type": "boolean"
+          },
+          "ip": {
+            "description": "Unallocated IPv4 address inside the target network.",
+            "type": "string"
+          },
+          "network_id": {
+            "description": "The ``_id`` from ``list_networks`` for the VLAN the\nhoneypot should live on.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "network_id",
+          "ip"
+        ],
+        "type": "object"
+      },
+      "name": "create_honeypot"
     },
     {
       "description": "Provision an isolated IoT network end-to-end: VLAN + SSID + drop rule.\n\nSide effects:\n- Step 1: creates a VLAN-tagged network at the given ``subnet`` (or\n  ``10.0.<vlan_id>.0/24`` by default).\n- Step 2: creates a WPA2 WiFi SSID bound to the new network. Access\n  points start broadcasting within seconds.\n- Step 3 (when ``isolate=True``): creates a LAN_IN drop rule blocking\n  the IoT subnet from reaching ``main_lan_subnet``.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n- Rollback: if any sub-step fails, all prior sub-steps are reverted\n  (firewall_rule \u2192 wlan \u2192 network) and the response includes\n  ``rolled_back`` and ``partial`` keys.\n\nExample: create_iot_network(name=\"iot\", vlan_id=50, passphrase=\"hunter2hunter2\", main_lan_subnet=\"192.168.1.0/24\")",
@@ -636,6 +668,33 @@
       "name": "delete_firewall_rule"
     },
     {
+      "description": "Preview deletion of a honeypot entry.\n\nv0.7.0 destructive pattern: this tool does not delete on its own.\nIt returns a preview envelope with a ``token``; call\n``confirm_destructive_action(token)`` to commit. Tokens expire\nafter 5 minutes.\n\nSide effects:\n- None until ``confirm_destructive_action`` runs against the token.\n- On confirm: rewrites the ``ips`` setting's ``honeypot`` list with\n  the entry removed and sets ``honeypot_enabled`` based on whether\n  the resulting list is empty.\n- ``dry_run=True`` returns the legacy ``would_delete`` envelope\n  with no token (informational only).\n\nExample: delete_honeypot(id=\"65f...:10.0.50.2\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "``True`` skips token generation and returns the legacy\n``{\"dry_run\": true, ...}`` envelope. ``False`` (default)\ngenerates a preview token that must be confirmed.",
+            "type": "boolean"
+          },
+          "id": {
+            "description": "The synthesised honeypot id from ``list_honeypots`` in\n``{network_id}:{ip}`` form.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "delete_honeypot"
+    },
+    {
       "description": "Preview deletion of a port-forward (DNAT) rule.\n\nv0.7.0: this tool no longer deletes on its own. It returns a preview\nenvelope with a ``token``; call ``confirm_destructive_action(token)``\nto commit the delete. Tokens expire after 5 minutes.\n\nSide effects:\n- None until ``confirm_destructive_action`` runs against the token.\n- On confirm: removes the NAT rule. The internal service stops\n  being reachable from the WAN immediately.\n- ``dry_run=True`` returns the legacy ``would_delete`` envelope with\n  no token \u2014 purely informational, no commit step possible.\n\nExample: delete_port_forward(forward_id=\"65f...\")",
       "input_schema": {
         "additionalProperties": false,
@@ -872,6 +931,36 @@
       "name": "get_speedtest_results"
     },
     {
+      "description": "Return Teleport VPN state and any wireguard-server networks.\n\nSide effects: None (read-only).\n\nReturns ``{\"enabled\": bool, \"vpn_networks\": [...],\n\"clients_via_local_api\": false, \"notes\": [...]}``. The ``enabled``\nflag is the global Teleport listener toggle; ``vpn_networks``\nlists the underlying wireguard-server network records (Teleport\nrides on these for tunnel termination); ``clients_via_local_api``\nis a hard ``false`` on UniFi Network 9.x \u2014 the client roster and\ninvitation lifecycle are only reachable via the Ubiquiti mobile\napp pairing flow, not the local API.\n\nExample: get_teleport_config(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "get_teleport_config"
+    },
+    {
+      "description": "Return current Threat Management (IDS/IPS) configuration.\n\nSide effects: None (read-only).\n\nReads the controller's ``ips`` setting record and projects it to the\noperator view: ``enabled`` (true when mode is ``ids`` or ``ips``),\n``mode`` (one of ``off`` / ``ids`` / ``ips``),\n``enabled_signature_categories`` (the IDS/IPS Emerging Threats rule\ngroups that are turned on), ``enabled_networks`` (network IDs the\nengine inspects), plus the adjacent booleans for endpoint scanning,\nad blocking, DNS filtering, and honeypot.\n\nExample: get_threat_management(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "get_threat_management"
+    },
+    {
       "description": "Report current WAN status: link, ISP, public IP, throughput, latency.\n\nSide effects: None (read-only).\n\nConvenience wrapper around ``get_site_health`` that returns just the\nWAN subsystem record. Returns ``{\"subsystem\": \"wan\", \"status\":\n\"unknown\"}`` if the controller does not report WAN.\n\nExample: get_wan_status(controller=\"default\")",
       "input_schema": {
         "additionalProperties": false,
@@ -1035,6 +1124,21 @@
         "type": "object"
       },
       "name": "list_firewall_rules"
+    },
+    {
+      "description": "List configured honeypots and the global honeypot toggle.\n\nSide effects: None (read-only).\n\nReturns ``{\"enabled\": bool, \"honeypots\": [...]}`` where each entry\ncarries ``id`` (synthesised ``network_id:ip``), ``network_id``,\n``network_name`` (looked up from ``list_networks``), ``ip``, and\n``version`` (always ``v4`` on UniFi 9.x).\n\nExample: list_honeypots(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_honeypots"
     },
     {
       "description": "List motion events in the last ``hours_back`` hours.\n\nSide effects: None (read-only).\n\nFilters Protect's event stream to entries with ``type == \"motion\"``\nwithin the requested window. ``camera_id`` narrows the result set to\none camera; an empty string returns motion across every bonded camera.\n\nExample: list_motion_events(camera_id=\"65f...\", limit=20, hours_back=6)",
@@ -1611,6 +1715,80 @@
         "type": "object"
       },
       "name": "set_port_state"
+    },
+    {
+      "description": "Toggle the Teleport VPN listener.\n\nSide effects:\n- Patches the ``teleport`` setting record's ``enabled`` field.\n  When ``False``, the controller tears down the listener and\n  disconnects any active sessions. Registered clients (via the\n  mobile app) remain registered and reconnect once the listener\n  is re-enabled.\n- Mutates controller state. Use dry_run=True to preview.\n\nExample: set_teleport_enabled(enabled=True)",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it.",
+            "type": "boolean"
+          },
+          "enabled": {
+            "description": "``True`` activates the listener; ``False`` disables it.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "type": "object"
+      },
+      "name": "set_teleport_enabled"
+    },
+    {
+      "description": "Update Threat Management (IDS/IPS) configuration.\n\nSide effects:\n- Patches the controller's ``ips`` setting record. When\n  ``enabled=False`` the mode is forced to ``off``; the controller\n  then disables packet inspection on every network. When\n  ``enabled=True``, ``mode`` selects detection-only (``ids``) or\n  inline blocking (``ips``).\n- Untouched fields (signature categories, network bindings, ad\n  blocking, DNS filtering) are preserved by the controller's merge\n  semantics. Supplying ``signature_categories`` replaces the active\n  list wholesale; ``None`` leaves it unchanged.\n- Mutates controller state. Use dry_run=True to preview the change.\n\nExample: set_threat_management(enabled=True, mode=\"ips\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it. Returns the\npredicted patch envelope.",
+            "type": "boolean"
+          },
+          "enabled": {
+            "description": "``True`` activates inspection; ``False`` sets ``mode=off``\nand overrides any ``mode`` argument.",
+            "type": "boolean"
+          },
+          "mode": {
+            "default": "ids",
+            "description": "When ``enabled=True``, one of ``\"ids\"`` (detection-only,\ndefault) or ``\"ips\"`` (inline blocking). Ignored when\n``enabled=False``.",
+            "type": "string"
+          },
+          "signature_categories": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional replacement list of UniFi\nsignature-category strings (e.g. ``[\"emerging-malware\",\n\"tor\", \"dshield\"]``). Pass ``None`` to leave the active\ncategories untouched."
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "type": "object"
+      },
+      "name": "set_threat_management"
     },
     {
       "description": "Kick off a UniFi speed test on the WAN link.\n\nSide effects: None on the controller's persistent state. Issues a\none-shot WAN measurement that consumes WAN bandwidth for ~30-60\nseconds while the test runs server-side. Use\n``get_speedtest_results`` to read the result once it finishes.\n\nExample: trigger_speedtest(controller=\"default\")",

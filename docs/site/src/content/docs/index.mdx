@@ -19,7 +19,7 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 
 `mcp-unifi` is a [Model Context Protocol](https://modelcontextprotocol.io/) server for self-hosted UniFi gateways, built around the assumption that LLM-driven infrastructure calls need guardrails. Every destructive tool ships with a `dry_run` preview that returns the predicted change set without writing. Every call — preview or real — lands in a JSONL audit log with secrets scrubbed. Composite tools (e.g. "create an IoT VLAN with isolation rule") capture pre-state and roll back applied steps if any sub-step fails.
 
-Beyond the safety substrate: **46 Network tools** (devices, VLANs, WLANs, firewall, switch ports, port forwards, observability) plus **12 opt-in Protect tools** (cameras, motion events, smart detections, recording config). One container runs both modules, and one process manages multiple UniFi sites in parallel via a `controller` parameter. Works against a UCG-Fiber, UDM Pro, or any UniFi OS gateway using a local API key — no Site Manager or cloud account required.
+Beyond the safety substrate: **57 Network tools** (devices, VLANs, WLANs, firewall, switch ports, port forwards, DHCP reservations, AP groups, observability, Threat Management / IDS-IPS, Honeypot, Teleport VPN) plus **11 opt-in Protect tools** (cameras, motion events, smart detections, recording config). One container runs both modules, and one process manages multiple UniFi sites in parallel via a `controller` parameter. Works on any UniFi OS gateway running UniFi Network 9.x or newer (UDM, UDM Pro, UDM SE, UCG-Fiber, UCG-Ultra, UDR, UDW, UniFi OS Server) using a local API key. No Site Manager or cloud account required.
 
 ## Install in 30 seconds
 
@@ -82,7 +82,7 @@ Beyond the safety substrate: **46 Network tools** (devices, VLANs, WLANs, firewa
   </Card>
 
   <Card title="Network + Protect" icon="puzzle">
-    46 Network tools plus 12 opt-in Protect tools. Network on by default; Protect via `MCP_UNIFI_MODULES_ENABLED=network,protect`.
+    57 Network tools plus 11 opt-in Protect tools. Network on by default; Protect via `MCP_UNIFI_MODULES_ENABLED=network,protect`.
   </Card>
 
   <Card title="Supply-chain hardened" icon="rocket">

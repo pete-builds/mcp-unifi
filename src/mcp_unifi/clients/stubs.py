@@ -385,13 +385,55 @@ def _seed_health() -> list[UniFiRecord]:
     ]
 
 
+def _seed_settings(default_network_id: str) -> dict[str, UniFiRecord]:
+    """Seed per-key controller settings.
+
+    Mirrors the shape returned by ``/rest/setting/<key>`` on a UCG-Fiber fw
+    5.1.12.33296 controller. Only the keys touched by the Threat Management,
+    Honeypot, and Teleport tools are seeded for now; ``get_setting`` returns
+    ``{}`` for any other key (matching the controller's behavior for
+    not-yet-materialised setting records).
+    """
+    return {
+        "ips": {
+            "_id": _oid(),
+            "key": "ips",
+            "site_id": "default",
+            "ips_mode": "off",
+            "enabled_categories": [],
+            "enabled_networks": [default_network_id],
+            "honeypot": [],
+            "honeypot_enabled": False,
+            "endpoint_scanning": False,
+            "ad_blocking_enabled": False,
+            "dns_filtering": False,
+            "memory_optimized": True,
+            "advanced_filtering_preference": "manual",
+        },
+        "teleport": {
+            "_id": _oid(),
+            "key": "teleport",
+            "site_id": "default",
+            "enabled": False,
+        },
+    }
+
+
 def _seed_speedtest_results() -> list[UniFiRecord]:
+    """Seed past speed-test runs.
+
+    Carries both the canonical ``xput_upload`` (matches the live controller
+    field) and the back-compat alias ``xput_up`` (matches the documented
+    return shape callers already expect). The :class:`UniFiClient` performs
+    the same projection on real responses.
+    """
     now = _ts()
     return [
         {
             "_id": _oid(),
-            "time": now - 86400,
+            "time": (now - 86400) * 1000,
             "xput_up": 1820.5,
+            "xput_upload": 1820.5,
             "xput_download": 1985.2,
             "latency": 8,
             "server": {"city": "New York, NY", "provider": "Ubiquiti"},
@@ -427,6 +469,7 @@ class StubState:
         self.alarms: list[UniFiRecord] = _seed_alarms()
         self.health: list[UniFiRecord] = _seed_health()
         self.speedtest_results: list[UniFiRecord] = _seed_speedtest_results()
+        self.settings: dict[str, UniFiRecord] = _seed_settings(default_net_id)
         self.audit_log: list[UniFiRecord] = []  # records of block/unblock/reconnect/etc.
         # Failure-injection queue: maps method name to a FIFO deque of
         # exceptions to raise on subsequent calls. Used by property tests
@@ -751,11 +794,14 @@ class StubState:
         return {"subsystem": "wan", "status": "unknown"}
 
     def trigger_speedtest(self) -> UniFiRecord:
-        # Append a fresh result to the front of the list.
+        # Append a fresh result to the front of the list. Carries both
+        # ``xput_upload`` (live controller field name) and ``xput_up``
+        # (documented return shape) so callers don't have to branch.
         result = {
             "_id": _oid(),
-            "time": _ts(),
+            "time": _ts() * 1000,
             "xput_up": 1820.5,
+            "xput_upload": 1820.5,
             "xput_download": 1985.2,
             "latency": 8,
             "server": {"city": "New York, NY", "provider": "Ubiquiti"},
@@ -772,6 +818,29 @@ class StubState:
 
     def get_speedtest_results(self, limit: int) -> list[UniFiRecord]:
         return self.speedtest_results[:limit]
+
+    # ----- Site settings (Threat Management, Honeypot, Teleport) ----------
+    def get_setting(self, key: str) -> UniFiRecord:
+        """Return the per-key setting record, or ``{}`` if unseeded."""
+        record = self.settings.get(key)
+        if record is None:
+            return {}
+        # Return a defensive copy so callers can't mutate seed state directly.
+        return dict(record)
+
+    def set_setting(self, key: str, patch: dict[str, Any]) -> UniFiRecord:
+        """Merge ``patch`` onto the per-key setting record.
+
+        Mirrors the real controller's ``POST /set/setting/<key>`` semantics:
+        unknown keys auto-materialise; existing keys merge field-by-field.
+        """
+        self._check_failure("set_setting")
+        existing = self.settings.get(key)
+        if existing is None:
+            existing = {"_id": _oid(), "key": key, "site_id": "default"}
+        existing.update(patch)
+        self.settings[key] = existing
+        return dict(existing)
 
 
 def make_stub_state() -> StubState:

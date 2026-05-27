@@ -5,6 +5,62 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-05-26
+
+> **UCG-Fiber security/VPN coverage.** Seven new Network tools for
+> Threat Management (IDS/IPS), Honeypot, and Teleport VPN, plus a fix
+> for the long-standing sparse-record bug in ``get_speedtest_results``.
+
+### Added
+
+- **Threat Management (IDS/IPS).** Two tools that wrap the controller's
+  ``ips`` setting record.
+  - ``get_threat_management`` — current state: enabled flag, mode
+    (``off`` / ``ids`` / ``ips``), active signature categories, enabled
+    networks, plus adjacent feature flags (endpoint scanning, ad
+    blocking, DNS filtering, honeypot).
+  - ``set_threat_management(enabled, mode, signature_categories, ...)``
+    — partial-update via ``POST /set/setting/ips``. ``enabled=False``
+    forces ``mode=off``; supplying ``signature_categories`` replaces
+    the active list wholesale.
+- **Honeypot.** Three tools backed by the ``honeypot`` list inside the
+  ``ips`` setting (honeypots are not a dedicated REST collection on
+  UniFi Network 9.x).
+  - ``list_honeypots`` — current entries + global enabled flag, with
+    network-name lookup for friendly output.
+  - ``create_honeypot(network_id, ip)`` — validates the IPv4, refuses
+    duplicates, appends to the list, flips ``honeypot_enabled=true``.
+  - ``delete_honeypot(id)`` — preview-then-confirm (matches the v0.7.0
+    destructive contract); rewrites the list with the entry removed.
+- **Teleport VPN.** Two tools that wrap the local controller's
+  ``teleport`` setting. The client roster and invitation lifecycle
+  are not exposed via the local Network API on UCG-Fiber fw
+  5.1.12.33296 — Apoc should treat those operations as UI-only.
+  - ``get_teleport_config`` — current state plus a list of underlying
+    wireguard-server networks and a ``clients_via_local_api=false``
+    indicator so callers don't ask for a roster here.
+  - ``set_teleport_enabled(enabled)`` — toggle the listener.
+
+### Fixed
+
+- **``get_speedtest_results`` returned sparse records.** On UCG-Fiber
+  fw 5.1.12.33296 the legacy ``GET
+  /stat/report/archive.speedtest?_limit=...`` returns records that
+  only carry ``_id`` / ``oid`` / ``o`` — the metric fields are not
+  projected. The client now issues a ``POST`` with an ``attrs``
+  projection list. The controller returns ``xput_upload`` rather than
+  the older ``xput_up``; the client normalises both fields onto the
+  result so existing callers see the documented shape regardless of
+  the controller version.
+
+### Internal
+
+- New per-key setting access on the client + backend:
+  ``UniFiClient.get_setting(key)`` and ``UniFiClient.set_setting(key,
+  patch)`` wrap ``GET /rest/setting/<key>`` and ``POST
+  /set/setting/<key>``. Stub state gains an in-memory ``settings``
+  dict seeded with realistic ``ips`` and ``teleport`` records.
+
 ## [0.7.0] - 2026-05-25
 
 > **Breaking: preview-then-confirm for destructive Network tools.** All six
