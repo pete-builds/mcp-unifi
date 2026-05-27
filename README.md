@@ -111,6 +111,30 @@ All config is read from environment variables (and `.env` when present). The fiv
 
 Full env var reference and the multi-site YAML schema are in the [Configuration docs](https://pete-builds.github.io/mcp-unifi/reference/configuration/).
 
+## How this is built
+
+The engineering scaffolding around the 68 tools, in case you want to know what's holding it up:
+
+**Test discipline.** 537 tests covering unit, integration, and property-based (Hypothesis). HTTP is mocked with respx so tests don't hit a real controller. Coverage gated at 80% branch coverage in CI; current floor is 89%.
+
+**Code quality gates.** Ruff (pycodestyle, pyflakes, isort, flake8-bugbear, pyupgrade, simplify, flake8-bandit security ruleset, comprehensions) plus mypy strict (no implicit Any, unreachable code flagged, unused ignores flagged). Pre-commit hooks run lint, format, types, and regenerate the tool manifest with a drift check, so bad code never reaches CI.
+
+**CI pipeline (5 gated jobs).** Every PR runs lockfile-drift check → lint + type check → tests + coverage → multi-arch Docker build → Trivy filesystem and image scan (HIGH/CRITICAL fails the build). Each gates the next.
+
+**Release pipeline.** A `git tag vX.Y.Z` push triggers a multi-arch (linux/amd64 + linux/arm64) Docker build, cosign keyless signing via sigstore OIDC, SLSA build provenance attestation, CycloneDX SBOM via Syft attached to the GitHub release, a .dxt bundle for Claude Desktop one-click install, GHCR push with `vX.Y.Z` / `X.Y` / `latest` tags, and an auto-bump of the example `docker-compose.yml` on main.
+
+**Dependency hygiene.** Hash-pinned via `pip install --require-hashes`. A custom CI step verifies every pinned dep in `requirements.in` matches `requirements.lock` so no one can bump one without the other. Dependabot auto-merges safe patches. The base image is digest-pinned, not tag-pinned.
+
+**Container hardening.** Runs as non-root UID 1000, no shell, no home directory. Read-only root filesystem enforced via Docker / Helm. `/tmp` is a 16MiB tmpfs. `no-new-privileges` set. All Linux capabilities dropped. Dedicated `/health` endpoint keeps the streamable-HTTP transport from logging 406 noise on every Docker healthcheck.
+
+**Security posture.** Bearer-token authentication on the HTTP transport, secure by default (refuses to start without tokens). Audit log records each authenticated `client_id` per call with secret scrubbing on `api_key`, `passphrase`, `password`, `secret`, `token` substring matches. API keys wrapped in pydantic `SecretStr`. `SECURITY.md` with a private disclosure path.
+
+**Distribution surface.** GHCR (signed multi-arch), Smithery (registered), MCP Registry (listed), Helm chart (Secret/Deployment/Service/Ingress/NetworkPolicy templates), .dxt bundle, uvx / pipx.
+
+**Documentation discipline.** Astro Starlight site auto-deploys to GitHub Pages. The per-tool reference pages are generated from FastMCP introspection by `scripts/generate_tool_manifest.py`, and the pre-commit hook regenerates and drift-checks them so code and docs can't diverge. CHANGELOG follows Keep a Changelog format.
+
+**Version discipline.** `pyproject.toml`, the git tag, the CHANGELOG entry, the Docker image tag, the docker-compose example, and the Helm chart `appVersion` all stay aligned because the release workflow enforces it. There is never a moment where the docs and the code disagree about what version this is.
+
 ## Development
 
 Clone, install dev dependencies, and wire up the pre-commit hooks:
