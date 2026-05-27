@@ -108,6 +108,11 @@ class AuditEvent:
     success: bool
     latency_ms: float
     error: str | None = None
+    #: The authenticated client_id that issued this call, when HTTP transport
+    #: auth is enabled (v0.9.0+). ``None`` on stdio or when auth is disabled.
+    #: Replay tools tolerate older logs missing this field via the dataclass
+    #: default, so schema stays at "1".
+    client_id: str | None = None
     # Schema version. Bump when the envelope shape changes so replay can
     # reject incompatible logs cleanly.
     schema: str = field(default="1")
@@ -248,6 +253,7 @@ class AuditLog:
         success: bool,
         latency_ms: float,
         error: str | None = None,
+        client_id: str | None = None,
     ) -> AuditEvent:
         """Record a single tool invocation.
 
@@ -268,6 +274,7 @@ class AuditLog:
             success=success,
             latency_ms=round(latency_ms, 3),
             error=error,
+            client_id=client_id,
         )
         async with self._lock:
             try:

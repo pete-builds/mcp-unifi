@@ -35,17 +35,21 @@ def real_protect_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[Settings]
         "UNIFI_PORT",
         "UNIFI_SITE",
         "UNIFI_VERIFY_SSL",
+        "MCP_TRANSPORT",
         "MCP_HOST",
         "MCP_PORT",
         "LOG_LEVEL",
         "LOG_FORMAT",
         "MCP_UNIFI_CONTROLLERS_FILE",
+        "MCP_UNIFI_AUTH_TOKENS",
+        "MCP_UNIFI_AUTH_REQUIRED",
     ):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("MCP_UNIFI_MODULES_ENABLED", "protect")
     yield Settings(
         stub_mode=False,
         log_format="text",
+        auth_required=False,
         controllers=[
             ControllerConfig(
                 name="default",

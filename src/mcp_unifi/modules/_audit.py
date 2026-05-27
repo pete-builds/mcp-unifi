@@ -36,6 +36,22 @@ P = ParamSpec("P")
 R = TypeVar("R")
 
 
+def _current_client_id() -> str | None:
+    """Return the authenticated client_id for the current request, or None.
+
+    Falls back to None on stdio, in tests without an MCP context, or when
+    auth is disabled. Never raises — audit must work even if the FastMCP
+    dependency surface changes shape across versions.
+    """
+    try:
+        from fastmcp.server.dependencies import get_access_token
+
+        token = get_access_token()
+    except Exception:
+        return None
+    return token.client_id if token is not None else None
+
+
 def _coerce_result(value: Any) -> Any:
     """Best-effort decode of a tool's return value into a structured object.
 
@@ -77,6 +93,7 @@ def audited(
                 audit_args["_positional"] = list(args)
 
             controller = str(kwargs.get("controller", "default"))
+            client_id = _current_client_id()
             log = audit.get_audit_log()
 
             start = time.perf_counter()
@@ -92,6 +109,7 @@ def audited(
                     success=False,
                     latency_ms=latency_ms,
                     error=str(exc),
+                    client_id=client_id,
                 )
                 raise
 
@@ -103,6 +121,7 @@ def audited(
                 result=_coerce_result(result),
                 success=True,
                 latency_ms=latency_ms,
+                client_id=client_id,
             )
             return result
 

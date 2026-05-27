@@ -106,7 +106,7 @@ def all_tools() -> list[dict[str, Any]]:
     prior = os.environ.get("MCP_UNIFI_MODULES_ENABLED")
     os.environ["MCP_UNIFI_MODULES_ENABLED"] = "network,protect"
     try:
-        settings = Settings(stub_mode=True, log_format="text")
+        settings = Settings(stub_mode=True, log_format="text", mcp_transport="stdio")
         server = build_server(settings)
     finally:
         if prior is None:

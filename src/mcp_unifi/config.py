@@ -130,6 +130,60 @@ class Settings(BaseSettings):
     )
 
     # ------------------------------------------------------------------
+    # HTTP transport authentication (v0.9.0+)
+    # ------------------------------------------------------------------
+    auth_tokens: str = Field(
+        default="",
+        description=(
+            "Bearer tokens for HTTP transport. Comma-separated. Each entry "
+            "is either a bare token (assigned synthetic client_id 'client-N') "
+            "or a 'client_id:token' pair for named clients. Ignored on stdio."
+        ),
+    )
+    auth_required: bool = Field(
+        default=True,
+        description=(
+            "If True (default), HTTP transport refuses to start without "
+            "auth_tokens. Set False to opt out (NOT RECOMMENDED for any "
+            "deployment beyond a single-host trusted boundary). Ignored on stdio."
+        ),
+    )
+
+    @property
+    def auth_token_map(self) -> dict[str, dict[str, Any]]:
+        """Parse ``auth_tokens`` into the dict shape FastMCP's StaticTokenVerifier expects.
+
+        Returns ``{token: {"client_id": str, "scopes": []}}``. Empty if no
+        tokens configured. Each entry in the CSV is either a bare token
+        (assigned ``client-0``, ``client-1``, ...) or a ``name:token`` pair
+        (then ``client_id`` is the name). Used by ``build_server`` to wire
+        the auth provider; also surfaced for tests.
+        """
+        raw = self.auth_tokens.strip()
+        if not raw:
+            return {}
+        out: dict[str, dict[str, Any]] = {}
+        for idx, item in enumerate(raw.split(",")):
+            item = item.strip()
+            if not item:
+                continue
+            if ":" in item:
+                client_id, _, token = item.partition(":")
+                client_id = client_id.strip()
+                token = token.strip()
+            else:
+                client_id, token = f"client-{idx}", item
+            if not token:
+                raise ValueError(f"MCP_UNIFI_AUTH_TOKENS entry {idx} is missing a token value")
+            if token in out:
+                raise ValueError(
+                    f"MCP_UNIFI_AUTH_TOKENS entry {idx} reuses a token already "
+                    f"assigned to client_id={out[token]['client_id']!r}"
+                )
+            out[token] = {"client_id": client_id, "scopes": []}
+        return out
+
+    # ------------------------------------------------------------------
     # Validation
     # ------------------------------------------------------------------
 
@@ -234,6 +288,8 @@ class Settings(BaseSettings):
             "mcp_port": self.mcp_port,
             "log_level": self.log_level,
             "log_format": self.log_format,
+            "auth_required": self.auth_required,
+            "auth_client_ids": sorted(meta["client_id"] for meta in self.auth_token_map.values()),
         }
 
 
