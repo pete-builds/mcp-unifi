@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -60,6 +60,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
+        populate_by_name=True,
     )
 
     # ------------------------------------------------------------------
@@ -134,18 +135,22 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     auth_tokens: str = Field(
         default="",
+        validation_alias=AliasChoices("MCP_UNIFI_AUTH_TOKENS", "auth_tokens"),
         description=(
             "Bearer tokens for HTTP transport. Comma-separated. Each entry "
             "is either a bare token (assigned synthetic client_id 'client-N') "
-            "or a 'client_id:token' pair for named clients. Ignored on stdio."
+            "or a 'client_id:token' pair for named clients. Ignored on stdio. "
+            "Env var: MCP_UNIFI_AUTH_TOKENS."
         ),
     )
     auth_required: bool = Field(
         default=True,
+        validation_alias=AliasChoices("MCP_UNIFI_AUTH_REQUIRED", "auth_required"),
         description=(
             "If True (default), HTTP transport refuses to start without "
             "auth_tokens. Set False to opt out (NOT RECOMMENDED for any "
-            "deployment beyond a single-host trusted boundary). Ignored on stdio."
+            "deployment beyond a single-host trusted boundary). Ignored on stdio. "
+            "Env var: MCP_UNIFI_AUTH_REQUIRED."
         ),
     )
 
