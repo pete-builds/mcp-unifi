@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-05-27
+
+### Fixed
+
+- **Auth env vars now work as documented.** v0.9.0 documented
+  ``MCP_UNIFI_AUTH_TOKENS`` and ``MCP_UNIFI_AUTH_REQUIRED`` everywhere
+  (README, guide, .env.example, Helm chart, error messages) but the
+  underlying pydantic-settings fields had no prefix alias, so only the
+  bare ``AUTH_TOKENS`` / ``AUTH_REQUIRED`` names worked. Added
+  ``validation_alias`` to both fields. Both naming schemes now resolve
+  to the same field; new deployments should use the documented
+  ``MCP_UNIFI_AUTH_TOKENS``.
+
 ## [0.9.0] - 2026-05-27
 
 > **Bearer-token authentication on HTTP transport, secure by default.**
