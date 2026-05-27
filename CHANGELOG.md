@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-05-27
+
+> **Bearer-token authentication on HTTP transport, secure by default.**
+> Anyone running v0.8.0 over streamable-http MUST either configure
+> ``MCP_UNIFI_AUTH_TOKENS`` or explicitly opt out with
+> ``MCP_UNIFI_AUTH_REQUIRED=false`` before upgrading. Stdio is unaffected.
+
+### Added
+
+- **HTTP transport authentication.** Streamable-HTTP requests are now
+  authenticated via the ``Authorization: Bearer <token>`` header. Tokens
+  are configured via the ``MCP_UNIFI_AUTH_TOKENS`` env var as a CSV of
+  either bare tokens (auto-assigned client_id ``client-0``,
+  ``client-1``, ...) or ``name:token`` pairs (named clients show up in
+  the audit log by name). Backed by FastMCP's ``StaticTokenVerifier``.
+- **Per-call authenticated client_id in the audit log.** Every entry now
+  carries a ``client_id`` field. Set to the authenticated client's id on
+  HTTP transport, ``null`` on stdio or when auth is disabled. Old logs
+  without the field continue to parse via the dataclass default — no
+  schema bump.
+
+### Changed
+
+- **BREAKING (HTTP transport only).** ``build_server`` raises at startup
+  if ``mcp_transport=streamable-http`` and ``auth_required=true`` (the
+  default) and no tokens are configured. Migration: generate a token
+  with ``openssl rand -hex 32``, set ``MCP_UNIFI_AUTH_TOKENS=<token>``,
+  update each client config to send the ``Authorization`` header. Stdio
+  transport is unaffected — the parent process owns the security
+  boundary, so layering bearer auth there would be theatre.
+- New env vars: ``MCP_UNIFI_AUTH_TOKENS`` (default empty),
+  ``MCP_UNIFI_AUTH_REQUIRED`` (default ``true``). The latter is an
+  escape hatch for single-host trusted-boundary deployments; flipping
+  it logs a loud WARNING at boot.
+
+### Internal
+
+- ``Settings.auth_token_map`` parses the CSV into the dict shape FastMCP
+  expects, rejecting duplicate tokens and empty values at config-load
+  time rather than first-request time.
+- ``@audited`` decorator pulls ``client_id`` from
+  ``fastmcp.server.dependencies.get_access_token()`` per call. Falls
+  back to ``None`` outside an HTTP request scope (stdio, direct
+  ``server.call_tool`` invocations, tests).
+
 ## [0.8.0] - 2026-05-26
 
 > **UCG-Fiber security/VPN coverage.** Seven new Network tools for

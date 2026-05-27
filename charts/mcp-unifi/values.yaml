@@ -27,6 +27,20 @@ existingSecret: ""
 
 modulesEnabled: "network"
 
+# HTTP transport authentication (v0.9.0+).
+# `tokens` is a comma-separated list of bearer tokens. Each entry is either a
+# bare token (auto-assigned client_id `client-N`) or a `name:token` pair.
+# Generate one with: `openssl rand -hex 32`.
+#
+# Secure by default: with `required: true` (the default), the pod fails to
+# start if `tokens` is empty AND no `existingSecret` carries
+# MCP_UNIFI_AUTH_TOKENS. Set `required: false` only on a trusted, isolated
+# segment — every connected client gets admin-equivalent access to the
+# controller.
+auth:
+  tokens: ""
+  required: true
+
 service:
   type: ClusterIP
   port: 3714

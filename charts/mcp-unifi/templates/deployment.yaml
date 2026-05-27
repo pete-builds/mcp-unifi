@@ -53,12 +53,22 @@ spec:
               value: {{ .Values.unifi.verifySSL | quote }}
             - name: MCP_UNIFI_MODULES_ENABLED
               value: {{ .Values.modulesEnabled | quote }}
+            - name: MCP_UNIFI_AUTH_REQUIRED
+              value: {{ .Values.auth.required | quote }}
             {{- if or .Values.existingSecret .Values.unifi.apiKey }}
             - name: UNIFI_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ include "mcp-unifi.secretName" . }}
                   key: UNIFI_API_KEY
+            {{- end }}
+            {{- if or .Values.existingSecret .Values.auth.tokens }}
+            - name: MCP_UNIFI_AUTH_TOKENS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-unifi.secretName" . }}
+                  key: MCP_UNIFI_AUTH_TOKENS
+                  optional: {{ ternary "true" "false" (not .Values.auth.tokens) }}
             {{- end }}
           {{- with .Values.livenessProbe }}
           livenessProbe:

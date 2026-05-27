@@ -55,13 +55,18 @@ def stub_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[Settings]:
         "IOT_SUBNET_TEMPLATE",
         "IOT_DHCP_START_OFFSET",
         "IOT_DHCP_STOP_OFFSET",
+        "MCP_TRANSPORT",
         "MCP_HOST",
         "MCP_PORT",
         "LOG_LEVEL",
         "LOG_FORMAT",
+        "MCP_UNIFI_AUTH_TOKENS",
+        "MCP_UNIFI_AUTH_REQUIRED",
     ):
         monkeypatch.delenv(var, raising=False)
-    yield Settings(stub_mode=True, log_format="text")
+    # auth_required defaults to True in v0.9.0+; tests that don't exercise
+    # auth want a server that boots cleanly without tokens.
+    yield Settings(stub_mode=True, log_format="text", auth_required=False)
 
 
 @pytest.fixture
@@ -77,10 +82,13 @@ def real_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[Settings]:
         "IOT_SUBNET_TEMPLATE",
         "IOT_DHCP_START_OFFSET",
         "IOT_DHCP_STOP_OFFSET",
+        "MCP_TRANSPORT",
         "MCP_HOST",
         "MCP_PORT",
         "LOG_LEVEL",
         "LOG_FORMAT",
+        "MCP_UNIFI_AUTH_TOKENS",
+        "MCP_UNIFI_AUTH_REQUIRED",
     ):
         monkeypatch.delenv(var, raising=False)
     yield Settings(
@@ -90,4 +98,5 @@ def real_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[Settings]:
         unifi_site="default",
         unifi_api_key="test-api-key-1234",
         log_format="text",
+        auth_required=False,
     )

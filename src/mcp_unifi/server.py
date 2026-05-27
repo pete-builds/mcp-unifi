@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 
 from fastmcp import FastMCP
+from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse
 
@@ -93,7 +94,8 @@ def build_server(
         protect_real_overrides=protect_real_overrides,
     )
 
-    mcp = FastMCP("UniFi")
+    auth_provider = _build_auth_provider(settings)
+    mcp = FastMCP("UniFi", auth=auth_provider)
 
     @mcp.custom_route("/health", methods=["GET"])
     async def health(_request: Request) -> PlainTextResponse:
@@ -106,6 +108,40 @@ def build_server(
 
     register_modules(mcp, settings, registry)
     return mcp
+
+
+def _build_auth_provider(settings: Settings) -> StaticTokenVerifier | None:
+    """Construct the FastMCP auth provider for the active transport.
+
+    Returns ``None`` on stdio (parent process owns the security boundary, so
+    layering bearer-token auth on top is theatre). On HTTP transport: if
+    tokens are configured, wraps them in :class:`StaticTokenVerifier`. If no
+    tokens and ``auth_required=True`` (the default), raises so the server
+    refuses to start unauthenticated. The escape hatch is
+    ``MCP_UNIFI_AUTH_REQUIRED=false`` for the single-host trusted-boundary case.
+    """
+    if settings.mcp_transport == "stdio":
+        return None
+    tokens = settings.auth_token_map
+    if not tokens:
+        if settings.auth_required:
+            raise ValueError(
+                "HTTP transport requires MCP_UNIFI_AUTH_TOKENS. Generate a "
+                "token with `openssl rand -hex 32` and set the env var. To "
+                "opt out (NOT RECOMMENDED beyond a single-host trusted "
+                "boundary), set MCP_UNIFI_AUTH_REQUIRED=false."
+            )
+        logger.warning(
+            "HTTP transport running WITHOUT authentication "
+            "(MCP_UNIFI_AUTH_REQUIRED=false). Every connected client has "
+            "admin-equivalent access to the UniFi controller."
+        )
+        return None
+    logger.info(
+        "HTTP transport authentication enabled",
+        extra={"client_ids": sorted(meta["client_id"] for meta in tokens.values())},
+    )
+    return StaticTokenVerifier(tokens=tokens)
 
 
 def main() -> None:

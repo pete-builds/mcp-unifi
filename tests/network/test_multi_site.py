@@ -113,6 +113,8 @@ async def test_legacy_single_controller_env_still_works(
         "UNIFI_SITE",
         "UNIFI_VERIFY_SSL",
         "MCP_UNIFI_CONTROLLERS_FILE",
+        "MCP_UNIFI_AUTH_TOKENS",
+        "MCP_UNIFI_AUTH_REQUIRED",
     ):
         monkeypatch.delenv(var, raising=False)
 
@@ -120,7 +122,7 @@ async def test_legacy_single_controller_env_still_works(
     monkeypatch.setenv("UNIFI_API_KEY", "legacy-key-from-env")
     monkeypatch.setenv("STUB_MODE", "true")
 
-    settings = Settings(log_format="text")
+    settings = Settings(log_format="text", auth_required=False)
     assert len(settings.controllers) == 1
     assert settings.controllers[0].name == "default"
     assert settings.controllers[0].host == "legacy.example.com"

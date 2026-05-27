@@ -23,8 +23,12 @@ supported version is whatever is tagged latest on the
 ## Threat model
 
 mcp-unifi is designed to run on a trusted LAN and talk to a single self-hosted
-UniFi gateway. The server itself does **not** authenticate incoming MCP
-connections; access control is the responsibility of the host network.
+UniFi gateway. As of v0.9.0, the HTTP transport authenticates every request
+with a bearer token (`Authorization: Bearer <token>`); the server refuses to
+start without tokens by default. Stdio transport stays unauthenticated by
+design — the parent process owns the security boundary. Even with bearer
+auth on, treat the network as defence in depth: run on a trusted segment,
+behind a Tailscale ACL, etc.
 
 The container:
 
