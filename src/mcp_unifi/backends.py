@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 
+from mcp_unifi.clients.access import AccessClient
+from mcp_unifi.clients.access_stubs import AccessStubState
 from mcp_unifi.clients.protect import ProtectClient
 from mcp_unifi.clients.protect_stubs import ProtectStubState
 from mcp_unifi.clients.stubs import StubState
@@ -576,7 +578,186 @@ class ProtectRealBackend:
         return await self.client.list_recordings(camera_id, start_ms, end_ms)
 
 
+@runtime_checkable
+class AccessBackend(Protocol):
+    """Async surface every Access tool calls into.
+
+    Implementations: :class:`AccessStubBackend` (in-memory) and
+    :class:`AccessRealBackend` (HTTP via :class:`AccessClient`). v0.10 ships
+    read-only methods only — the write surface is gated by a future Option B
+    decision (see ``docs/v0.10-access-module.md``).
+    """
+
+    # ----- Doors ----------------------------------------------------------
+    async def list_doors(self) -> list[UniFiRecord]: ...
+    async def get_door(self, door_id: str) -> UniFiRecord | None: ...
+    async def list_door_groups(self) -> list[UniFiRecord]: ...
+
+    # ----- Policies -------------------------------------------------------
+    async def list_access_policies(self) -> list[UniFiRecord]: ...
+    async def get_access_policy(self, policy_id: str) -> UniFiRecord | None: ...
+
+    # ----- Credentials ----------------------------------------------------
+    async def list_credentials(self) -> list[UniFiRecord]: ...
+    async def get_credential(self, credential_id: str) -> UniFiRecord | None: ...
+
+    # ----- Visitors -------------------------------------------------------
+    async def list_visitors(self) -> list[UniFiRecord]: ...
+    async def get_visitor(self, visitor_id: str) -> UniFiRecord | None: ...
+
+    # ----- Events ---------------------------------------------------------
+    async def list_events(
+        self,
+        start_ms: int,
+        end_ms: int,
+        limit: int,
+        result: str = "",
+        door_id: str = "",
+    ) -> list[UniFiRecord]: ...
+
+    # ----- Devices --------------------------------------------------------
+    async def list_devices(self) -> list[UniFiRecord]: ...
+    async def get_device(self, device_id: str) -> UniFiRecord | None: ...
+
+    # ----- System ---------------------------------------------------------
+    async def get_system_info(self) -> UniFiRecord: ...
+    async def list_users(self) -> list[UniFiRecord]: ...
+
+
+class AccessStubBackend:
+    """In-memory backend wrapping a single :class:`AccessStubState` instance.
+
+    Per-controller state isolation matches :class:`StubBackend` and
+    :class:`ProtectStubBackend`. Methods are ``async def`` to satisfy
+    :class:`AccessBackend`; under the hood they delegate synchronously to the
+    state machine.
+    """
+
+    def __init__(self, state: AccessStubState) -> None:
+        self.state = state
+
+    async def list_doors(self) -> list[UniFiRecord]:
+        return self.state.list_doors()
+
+    async def get_door(self, door_id: str) -> UniFiRecord | None:
+        return self.state.get_door(door_id)
+
+    async def list_door_groups(self) -> list[UniFiRecord]:
+        return self.state.list_door_groups()
+
+    async def list_access_policies(self) -> list[UniFiRecord]:
+        return self.state.list_access_policies()
+
+    async def get_access_policy(self, policy_id: str) -> UniFiRecord | None:
+        return self.state.get_access_policy(policy_id)
+
+    async def list_credentials(self) -> list[UniFiRecord]:
+        return self.state.list_credentials()
+
+    async def get_credential(self, credential_id: str) -> UniFiRecord | None:
+        return self.state.get_credential(credential_id)
+
+    async def list_visitors(self) -> list[UniFiRecord]:
+        return self.state.list_visitors()
+
+    async def get_visitor(self, visitor_id: str) -> UniFiRecord | None:
+        return self.state.get_visitor(visitor_id)
+
+    async def list_events(
+        self,
+        start_ms: int,
+        end_ms: int,
+        limit: int,
+        result: str = "",
+        door_id: str = "",
+    ) -> list[UniFiRecord]:
+        return self.state.list_events(start_ms, end_ms, limit, result=result, door_id=door_id)
+
+    async def list_devices(self) -> list[UniFiRecord]:
+        return self.state.list_devices()
+
+    async def get_device(self, device_id: str) -> UniFiRecord | None:
+        return self.state.get_device(device_id)
+
+    async def get_system_info(self) -> UniFiRecord:
+        return self.state.get_system_info()
+
+    async def list_users(self) -> list[UniFiRecord]:
+        return self.state.list_users()
+
+
+class AccessRealBackend:
+    """Async backend wrapping an :class:`AccessClient` for real HTTP calls.
+
+    The Access API surfaces ``GET /resource/{id}`` for every singular lookup;
+    we coerce empty-object responses to ``None`` so tool error envelopes show
+    a clean "not found" message instead of an empty record.
+    """
+
+    def __init__(self, client: AccessClient) -> None:
+        self.client = client
+
+    async def list_doors(self) -> list[UniFiRecord]:
+        return await self.client.list_doors()
+
+    async def get_door(self, door_id: str) -> UniFiRecord | None:
+        record = await self.client.get_door(door_id)
+        return record if record else None
+
+    async def list_door_groups(self) -> list[UniFiRecord]:
+        return await self.client.list_door_groups()
+
+    async def list_access_policies(self) -> list[UniFiRecord]:
+        return await self.client.list_access_policies()
+
+    async def get_access_policy(self, policy_id: str) -> UniFiRecord | None:
+        record = await self.client.get_access_policy(policy_id)
+        return record if record else None
+
+    async def list_credentials(self) -> list[UniFiRecord]:
+        return await self.client.list_credentials()
+
+    async def get_credential(self, credential_id: str) -> UniFiRecord | None:
+        record = await self.client.get_credential(credential_id)
+        return record if record else None
+
+    async def list_visitors(self) -> list[UniFiRecord]:
+        return await self.client.list_visitors()
+
+    async def get_visitor(self, visitor_id: str) -> UniFiRecord | None:
+        record = await self.client.get_visitor(visitor_id)
+        return record if record else None
+
+    async def list_events(
+        self,
+        start_ms: int,
+        end_ms: int,
+        limit: int,
+        result: str = "",
+        door_id: str = "",
+    ) -> list[UniFiRecord]:
+        return await self.client.list_events(
+            start_ms, end_ms, limit, result=result, door_id=door_id
+        )
+
+    async def list_devices(self) -> list[UniFiRecord]:
+        return await self.client.list_devices()
+
+    async def get_device(self, device_id: str) -> UniFiRecord | None:
+        record = await self.client.get_device(device_id)
+        return record if record else None
+
+    async def get_system_info(self) -> UniFiRecord:
+        return await self.client.get_system_info()
+
+    async def list_users(self) -> list[UniFiRecord]:
+        return await self.client.list_users()
+
+
 __all__ = [
+    "AccessBackend",
+    "AccessRealBackend",
+    "AccessStubBackend",
     "Backend",
     "ProtectBackend",
     "ProtectRealBackend",

@@ -18,6 +18,9 @@ import os
 from typing import TYPE_CHECKING
 
 from mcp_unifi.backends import (
+    AccessBackend,
+    AccessRealBackend,
+    AccessStubBackend,
     Backend,
     ProtectBackend,
     ProtectRealBackend,
@@ -25,6 +28,8 @@ from mcp_unifi.backends import (
     RealBackend,
     StubBackend,
 )
+from mcp_unifi.clients.access import AccessClient
+from mcp_unifi.clients.access_stubs import make_access_stub_state
 from mcp_unifi.clients.protect import ProtectClient
 from mcp_unifi.clients.protect_stubs import make_protect_stub_state
 from mcp_unifi.clients.stubs import make_stub_state
@@ -42,7 +47,7 @@ DEFAULT_MODULES = ("network",)
 
 #: All modules the dispatcher knows how to import. Keep this in sync with the
 #: ``src/mcp_unifi/modules/<name>/__init__.py`` packages on disk.
-KNOWN_MODULES = frozenset({"network", "protect"})
+KNOWN_MODULES = frozenset({"network", "protect", "access"})
 
 
 class UnknownControllerError(KeyError):
@@ -64,6 +69,19 @@ class ProtectNotAvailableError(RuntimeError):
     """
 
 
+class AccessNotAvailableError(RuntimeError):
+    """Raised when an Access tool runs on a registry built without Access backends.
+
+    The Access module is opt-in (``MCP_UNIFI_MODULES_ENABLED`` must include
+    ``"access"``) and additionally requires Access-specific config: either
+    ``UNIFI_ACCESS_HOST`` + ``UNIFI_ACCESS_API_KEY`` or per-controller
+    ``access_*`` fields in the YAML controllers file. If the module is
+    enabled but no controller has Access config, :class:`AccessStubBackend`
+    is still wired in stub mode, but real mode raises this on first call so
+    the operator sees a clean message.
+    """
+
+
 class ControllerRegistry:
     """Map of controller name → :class:`Backend`.
 
@@ -77,12 +95,16 @@ class ControllerRegistry:
         backends: dict[str, Backend],
         *,
         protect_backends: dict[str, ProtectBackend] | None = None,
+        access_backends: dict[str, AccessBackend] | None = None,
     ) -> None:
         if not backends:
             raise ValueError("ControllerRegistry requires at least one backend.")
         self._backends = dict(backends)
         self._protect_backends: dict[str, ProtectBackend] = (
             dict(protect_backends) if protect_backends else {}
+        )
+        self._access_backends: dict[str, AccessBackend] = (
+            dict(access_backends) if access_backends else {}
         )
 
     def get(self, name: str) -> Backend:
@@ -118,6 +140,31 @@ class ControllerRegistry:
                 f"Unknown controller '{name}'. Available (Protect): {available}."
             ) from exc
 
+    def get_access(self, name: str) -> AccessBackend:
+        """Return the Access backend registered for ``name``.
+
+        Raises:
+            AccessNotAvailableError: this registry was built without Access
+                backends (the Access module wasn't enabled, or the controller
+                has no ``access_*`` config in real mode).
+            UnknownControllerError: the controller name is unknown to the
+                registry's Access backends.
+        """
+        if not self._access_backends:
+            raise AccessNotAvailableError(
+                "Access backends are not configured on this registry. "
+                "Enable the 'access' module via MCP_UNIFI_MODULES_ENABLED and "
+                "set UNIFI_ACCESS_HOST + UNIFI_ACCESS_API_KEY (or per-controller "
+                "access_* fields in the controllers YAML)."
+            )
+        try:
+            return self._access_backends[name]
+        except KeyError as exc:
+            available = ", ".join(sorted(self._access_backends)) or "(none)"
+            raise UnknownControllerError(
+                f"Unknown controller '{name}'. Available (Access): {available}."
+            ) from exc
+
     def names(self) -> list[str]:
         return sorted(self._backends)
 
@@ -135,6 +182,8 @@ def build_registry(
     real_overrides: dict[str, Backend] | None = None,
     protect_stub_overrides: dict[str, ProtectBackend] | None = None,
     protect_real_overrides: dict[str, ProtectBackend] | None = None,
+    access_stub_overrides: dict[str, AccessBackend] | None = None,
+    access_real_overrides: dict[str, AccessBackend] | None = None,
 ) -> ControllerRegistry:
     """Construct a :class:`ControllerRegistry` from settings.
 
@@ -160,12 +209,21 @@ def build_registry(
             specific :class:`ProtectStubState`.
         protect_real_overrides: Optional ``{name: ProtectBackend}`` map for
             real-mode Protect tests (respx-mocked :class:`ProtectClient`).
+        access_stub_overrides: Optional ``{name: AccessBackend}`` map that
+            wins over the Access stub defaults. Used by tests to inject a
+            specific :class:`AccessStubState`.
+        access_real_overrides: Optional ``{name: AccessBackend}`` map for
+            real-mode Access tests (respx-mocked :class:`AccessClient`).
     """
     backends: dict[str, Backend] = {}
     protect_backends: dict[str, ProtectBackend] = {}
+    access_backends: dict[str, AccessBackend] = {}
     overrides = (stub_overrides if settings.stub_mode else real_overrides) or {}
     protect_overrides = (
         protect_stub_overrides if settings.stub_mode else protect_real_overrides
+    ) or {}
+    access_overrides = (
+        access_stub_overrides if settings.stub_mode else access_real_overrides
     ) or {}
 
     for ctrl in settings.controllers:
@@ -196,7 +254,28 @@ def build_registry(
             )
             protect_backends[ctrl.name] = ProtectRealBackend(protect_client)
 
-    return ControllerRegistry(backends, protect_backends=protect_backends)
+        # Access is configured per-controller and may legitimately be absent
+        # in real mode if the operator has no Access hub. Stub mode always
+        # gets a backend so the dispatcher can register Access tools without
+        # branching on hardware presence.
+        if ctrl.name in access_overrides:
+            access_backends[ctrl.name] = access_overrides[ctrl.name]
+        elif settings.stub_mode:
+            access_backends[ctrl.name] = AccessStubBackend(make_access_stub_state())
+        elif ctrl.access_host and ctrl.access_api_key:
+            access_client = AccessClient(
+                host=ctrl.access_host,
+                api_key=ctrl.access_api_key.get_secret_value(),
+                port=ctrl.access_port,
+                verify_ssl=ctrl.verify_ssl,
+            )
+            access_backends[ctrl.name] = AccessRealBackend(access_client)
+
+    return ControllerRegistry(
+        backends,
+        protect_backends=protect_backends,
+        access_backends=access_backends,
+    )
 
 
 def _enabled_modules() -> tuple[str, ...]:
@@ -237,6 +316,7 @@ def register_modules(
 __all__ = [
     "DEFAULT_MODULES",
     "KNOWN_MODULES",
+    "AccessNotAvailableError",
     "ControllerRegistry",
     "ProtectNotAvailableError",
     "UnknownControllerError",
