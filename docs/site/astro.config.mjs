@@ -7,7 +7,7 @@ export default defineConfig({
   integrations: [
     starlight({
       title: 'mcp-unifi',
-      description: 'Self-hosted UniFi MCP server. Multi-site config, dry-run previews, JSONL audit log. Network + Protect.',
+      description: 'Self-hosted UniFi MCP server. Multi-site config, dry-run previews, JSONL audit log. Network + Protect + Access.',
       social: [
         { icon: 'github', label: 'GitHub', href: 'https://github.com/pete-builds/mcp-unifi' }
       ],
@@ -26,6 +26,7 @@ export default defineConfig({
           label: 'Guides',
           items: [
             { label: 'Multi-Site Setup', link: '/guides/multi-site/' },
+            { label: 'Access Setup', link: '/guides/access-setup/' },
             { label: 'Dry-Run & Audit Log', link: '/guides/dry-run-audit/' },
             { label: 'Security Model', link: '/guides/security/' },
             { label: 'Migrate from v0.x', link: '/guides/migration/' },
@@ -45,6 +46,7 @@ export default defineConfig({
           items: [
             { label: 'Network Tools', link: '/reference/network/' },
             { label: 'Protect Tools', link: '/reference/protect/' },
+            { label: 'Access Tools', link: '/reference/access/' },
             { label: 'Configuration', link: '/reference/configuration/' },
             { label: 'Tool Manifest (auto)', link: '/tools/' },
           ],

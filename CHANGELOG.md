@@ -5,6 +5,68 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-05-27
+
+> **UniFi Access module: 18 read-only tools for doors, credentials,
+> visitor passes, badge-scan events, and hub / reader hardware.**
+> Brings the project to 86 total tools (57 Network + 11 Protect + 18
+> Access). Access is opt-in, like Protect: set
+> ``MCP_UNIFI_MODULES_ENABLED=network,protect,access`` to load all three.
+
+### Added
+
+- **UniFi Access module (opt-in).** New ``access`` module name for
+  ``MCP_UNIFI_MODULES_ENABLED``. Ships 18 read-only tools across six
+  surface areas:
+  - Doors: ``list_doors``, ``get_door``, ``list_door_groups``
+  - Policies: ``list_access_policies``, ``get_access_policy``
+  - Credentials: ``list_credentials``, ``get_credential``,
+    ``audit_expiring_credentials`` (composite read, surfaces
+    credentials expiring in the next N days with computed
+    ``days_until_expiry``).
+  - Visitors: ``list_visitors``, ``get_visitor``
+  - Events: ``list_access_events``, ``get_recent_access_events``,
+    ``summarize_access_activity`` (composite, rolls up grants / denies
+    by door and user), ``list_failed_access_attempts``
+  - Devices: ``list_access_devices``, ``get_access_device``
+  - System: ``get_access_system_info``, ``list_access_users``
+- **New env vars** ``UNIFI_ACCESS_HOST``, ``UNIFI_ACCESS_API_KEY``,
+  ``UNIFI_ACCESS_PORT`` (default ``12445``). The Access API key is
+  **separate** from the Network key. Per-controller equivalents
+  (``access_host``, ``access_api_key``, ``access_port``) are available
+  in the YAML controllers file.
+- **Stub mode coverage.** A fresh ``AccessStubState`` seeds 2 doors,
+  1 door group, 1 access policy, 3 credentials (NFC / PIN / mobile),
+  1 active visitor pass, 50 synthetic events spread across the last
+  24 hours, 3 users, 1 hub, and 2 readers. Cross-references between
+  users, credentials, doors, and devices are wired so the
+  ``list_access_users`` ``credential_ids`` field actually points at
+  real credentials.
+- **Docs.** New ``reference/access`` page (full tool reference) and
+  new ``guides/access-setup`` (dual-auth nuance, env-var wiring,
+  common audit patterns).
+
+### Changed
+
+- **README hero.** Now reads ``Network + Protect + Access`` and the
+  tool-count summary updated to ``57 + 11 + 18`` (86 total). Test
+  count bumped from 537 → 619.
+
+### Notes
+
+- **Read-only by design.** UniFi Access mutations (door unlock,
+  credential issuance, visitor pass create, policy update, device
+  reboot) require a local username / password session, not the API
+  key. v0.10 sticks with Option A (API-key reads only) so the
+  v0.9.x API-key-first security posture stays intact. Write tools are
+  deferred to a future v0.11+ gated by a separate explicit decision
+  to introduce session-token auth alongside the API key.
+- **Stub-mode-only development substrate.** Pete has no UniFi Access
+  hardware. ``AccessClient`` is exercised end-to-end via
+  ``respx``-mocked HTTP tests in ``tests/access/test_real_mode.py``.
+  Hardware-validated real-mode integration lands in v0.10.x via a
+  community tester or a future hardware acquisition.
+
 ## [0.9.1] - 2026-05-27
 
 ### Fixed

@@ -25,7 +25,7 @@ startCommand:
       modulesEnabled:
         type: string
         title: Modules Enabled
-        description: "Comma-separated list of modules: network, protect"
+        description: "Comma-separated list of modules: network, protect, access (read-only in v0.10)"
         default: "network"
   commandFunction: |-
     (config) => ({

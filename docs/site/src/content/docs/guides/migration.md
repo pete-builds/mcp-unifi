@@ -54,20 +54,22 @@ docker run --rm -p 3714:3714 \
 
 When `MCP_UNIFI_CONTROLLERS_FILE` is set, the legacy `UNIFI_HOST` / `UNIFI_API_KEY` env vars are ignored. See the [Multi-Site Setup guide](/mcp-unifi/guides/multi-site/) for the full schema.
 
-## New: enable Protect
+## New: enable Protect and Access
 
-The Protect module is opt-in. To load its 11 tools alongside the 57 Network tools, set `MCP_UNIFI_MODULES_ENABLED=network,protect`:
+Both modules are opt-in. To load Protect's 11 tools and Access's 18 tools alongside the 57 Network tools, set `MCP_UNIFI_MODULES_ENABLED=network,protect,access`:
 
 ```bash
 docker run --rm -p 3714:3714 \
   -e STUB_MODE=false \
   -e UNIFI_HOST=192.168.1.1 \
   -e UNIFI_API_KEY=<your-local-api-key> \
-  -e MCP_UNIFI_MODULES_ENABLED=network,protect \
+  -e UNIFI_ACCESS_HOST=192.168.1.20 \
+  -e UNIFI_ACCESS_API_KEY=<your-access-api-key> \
+  -e MCP_UNIFI_MODULES_ENABLED=network,protect,access \
   ghcr.io/pete-builds/mcp-unifi:latest
 ```
 
-If you only want Protect tools (no Network), set `MCP_UNIFI_MODULES_ENABLED=protect`.
+`UNIFI_ACCESS_*` is only required when the `access` module is enabled in real mode. Subset the module list freely: `network,protect`, `protect`, `access`, etc. Access is read-only in v0.10; see the [Access Setup guide](/mcp-unifi/guides/access-setup/) for the dual-auth deferral and config details.
 
 ## New: audit log
 

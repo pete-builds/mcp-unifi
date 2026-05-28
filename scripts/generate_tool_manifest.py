@@ -1,12 +1,12 @@
 """Generate per-tool reference docs for the Astro docs site.
 
-This script introspects the live FastMCP registration (stub mode, both
-Network and Protect modules enabled) and writes one markdown file per
-registered tool under ``docs/site/src/content/docs/tools/``. It also writes
-a manifest index at ``docs/site/src/content/docs/tools/index.md`` and a
-single machine-readable ``manifest.json`` next to the generator output so
-external consumers (LLM tool selection, third-party tooling) can read the
-full surface without parsing markdown.
+This script introspects the live FastMCP registration (stub mode, with
+Network, Protect, and Access modules enabled) and writes one markdown
+file per registered tool under ``docs/site/src/content/docs/tools/``. It
+also writes a manifest index at ``docs/site/src/content/docs/tools/index.md``
+and a single machine-readable ``manifest.json`` next to the generator
+output so external consumers (LLM tool selection, third-party tooling)
+can read the full surface without parsing markdown.
 
 Design notes
 ------------
@@ -42,9 +42,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
-# Stub mode = deterministic registration. Both modules enabled = full surface.
+# Stub mode = deterministic registration. All modules enabled = full surface.
 os.environ.setdefault("STUB_MODE", "true")
-os.environ.setdefault("MCP_UNIFI_MODULES_ENABLED", "network,protect")
+os.environ.setdefault("MCP_UNIFI_MODULES_ENABLED", "network,protect,access")
 
 # Imports must come *after* env var setup so the modules see the right state
 # at registration time.

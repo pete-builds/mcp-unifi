@@ -1,6 +1,31 @@
 {
-  "tool_count": 68,
+  "tool_count": 86,
   "tools": [
+    {
+      "description": "Return credentials expiring within ``days_ahead`` days.\n\nSide effects: None (read-only).\n\nIterates ``list_credentials`` client-side and filters to those whose\n``expires_at`` falls inside the window ``[now, now + days_ahead]``.\nCredentials with no ``expires_at`` (typical for mobile credentials)\nare excluded. Each entry includes ``days_until_expiry`` so the LLM\ncan sort and summarise without re-doing the math.\n\nExample: audit_expiring_credentials(days_ahead=14)",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target.",
+            "type": "string"
+          },
+          "credential_type": {
+            "default": "",
+            "description": "Optional ``\"nfc\"``, ``\"pin\"``, or ``\"mobile\"``\nfilter. Empty (default) returns every type.",
+            "type": "string"
+          },
+          "days_ahead": {
+            "default": 30,
+            "description": "Look-ahead window in days. Defaults to 30.",
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "name": "audit_expiring_credentials"
+    },
     {
       "description": "Compare current controller state to a declared YAML spec.\n\nRead-only \u2014 never mutates the controller. Returns a structured diff\nshowing fields that drifted, resources missing from the controller, and\nresources present on the controller that the spec did not declare.\n\nSide effects:\n- None (read-only). Lists networks, WLANs, and firewall rules.\n\nSpec format (YAML, all sections optional):\n\n    networks:\n      - name: \"IoT\"\n        vlan: 50\n        subnet: \"10.50.0.0/24\"\n    wlans:\n      - name: \"Cameras-IoT\"\n        network: \"IoT\"        # references a network by name\n        security: \"wpapsk\"\n    firewall_rules:\n      - name: \"Block IoT to LAN\"\n        action: \"drop\"\n        src: \"10.50.0.0/24\"\n        dst: \"192.168.86.0/24\"\n\nResources are matched by ``name`` (case-insensitive). Sections you omit\nare not audited; sections you include audit BOTH directions (missing\nand extra). To audit a section as \"exactly these resources\", include it\nexplicitly. To audit as \"at least these resources\", omit the section\nand use ``audit_open_ports`` or other read-only tools instead.\n\nReturns ``{\"in_sync\": bool, \"controller\": str, \"summary\": str,\n\"drifts\": [...]}``. Each drift is ``{\"resource_type\", \"name\",\n\"field\", \"expected\", \"actual\"}``. The synthetic field ``_resource``\nflags presence/absence of an entire resource (``expected=null`` =\nextra; ``actual=null`` = missing).\n\nExample: audit_network_drift(spec_yaml=\"networks:\\n  - name: iot\\n    vlan: 50\\n\")",
       "input_schema": {
@@ -830,6 +855,65 @@
       "name": "delete_wlan"
     },
     {
+      "description": "Fetch one Access device's full record by ID.\n\nSide effects: None (read-only).\n\nSame shape as one entry from ``list_access_devices``. Useful for\nchecking firmware version, online status, or hub assignment on a\nspecific reader.\n\nExample: get_access_device(device_id=\"dev...\", controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target.",
+            "type": "string"
+          },
+          "device_id": {
+            "description": "Device ``id`` from ``list_access_devices``.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_id"
+        ],
+        "type": "object"
+      },
+      "name": "get_access_device"
+    },
+    {
+      "description": "Fetch one access policy's full record by ID.\n\nSide effects: None (read-only).\n\nSame shape as one entry from ``list_access_policies``. Useful when\nauditing why a specific user can or cannot badge into a specific door\nat a specific time.\n\nExample: get_access_policy(policy_id=\"pol...\", controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target.",
+            "type": "string"
+          },
+          "policy_id": {
+            "description": "Access policy ``id`` from ``list_access_policies``.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "policy_id"
+        ],
+        "type": "object"
+      },
+      "name": "get_access_policy"
+    },
+    {
+      "description": "Return controller version, license tier, and capacity.\n\nSide effects: None (read-only).\n\nReturns ``version``, ``release_channel``, ``license`` (with\n``doors_used``, ``doors_max``, ``users_used``, ``users_max``),\n``controller_id``, ``uptime_seconds``. Useful for surfacing licence\nceilings before suggesting enrolling more doors / users.\n\nExample: get_access_system_info(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "get_access_system_info"
+    },
+    {
       "description": "Fetch a single camera's full record by ID.\n\nSide effects: None (read-only).\n\nReturns the full camera record (same shape as one entry from\n``list_cameras``) including current recording mode, motion sensitivity,\nprivacy-mask state, and the most recent ``lastMotion`` timestamp.\n\nExample: get_camera(camera_id=\"65f...\", controller=\"default\")",
       "input_schema": {
         "additionalProperties": false,
@@ -852,6 +936,50 @@
       "name": "get_camera"
     },
     {
+      "description": "Fetch one credential's full record by ID.\n\nSide effects: None (read-only).\n\nSame shape as one entry from ``list_credentials`` plus any\ntype-specific fields (``card_id`` for NFC, ``pin_length`` for PIN,\n``device_label`` for mobile).\n\nExample: get_credential(credential_id=\"cred...\", controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target.",
+            "type": "string"
+          },
+          "credential_id": {
+            "description": "Credential ``id`` from ``list_credentials``.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "credential_id"
+        ],
+        "type": "object"
+      },
+      "name": "get_credential"
+    },
+    {
+      "description": "Fetch one door's full record by ID.\n\nSide effects: None (read-only).\n\nReturns the same fields as one entry in ``list_doors`` plus the live\nlock and position status. Useful for confirming a door is online\nbefore reading recent events against it.\n\nExample: get_door(door_id=\"abc...\", controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target.",
+            "type": "string"
+          },
+          "door_id": {
+            "description": "Access door ``id`` from ``list_doors``.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "door_id"
+        ],
+        "type": "object"
+      },
+      "name": "get_door"
+    },
+    {
       "description": "Fetch the JPEG thumbnail for a Protect event, base64-encoded.\n\nSide effects: None (read-only).\n\nSame response shape as ``get_snapshot``, but keyed on the event\ninstead of the camera. Useful for previewing a motion or\nsmart-detection trigger without pulling the full clip.\n\nExample: get_event_thumbnail(event_id=\"evt123\", controller=\"default\")",
       "input_schema": {
         "additionalProperties": false,
@@ -872,6 +1000,26 @@
         "type": "object"
       },
       "name": "get_event_thumbnail"
+    },
+    {
+      "description": "Return the most recent N events across every door.\n\nSide effects: None (read-only).\n\nConvenience wrapper around ``list_access_events`` with a 24-hour\nwindow and no filters. Useful for \"what just happened\" triage.\n\nExample: get_recent_access_events(limit=10)",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target.",
+            "type": "string"
+          },
+          "limit": {
+            "default": 20,
+            "description": "Maximum events returned. Defaults to 20.",
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "name": "get_recent_access_events"
     },
     {
       "description": "Report per-subsystem health (wan, lan, wlan, www, vpn).\n\nSide effects: None (read-only).\n\nReturns one record per subsystem with ``subsystem``, ``status``, and\nsubsystem-specific metrics (e.g. WAN throughput, LAN client counts).\n\nExample: get_site_health(controller=\"default\")",
@@ -961,6 +1109,28 @@
       "name": "get_threat_management"
     },
     {
+      "description": "Fetch one visitor pass's full record by ID.\n\nSide effects: None (read-only).\n\nSame shape as one entry from ``list_visitors`` plus any per-pass\npurpose / notes.\n\nExample: get_visitor(visitor_id=\"vis...\", controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target.",
+            "type": "string"
+          },
+          "visitor_id": {
+            "description": "Visitor ``id`` from ``list_visitors``.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "visitor_id"
+        ],
+        "type": "object"
+      },
+      "name": "get_visitor"
+    },
+    {
       "description": "Report current WAN status: link, ISP, public IP, throughput, latency.\n\nSide effects: None (read-only).\n\nConvenience wrapper around ``get_site_health`` that returns just the\nWAN subsystem record. Returns ``{\"subsystem\": \"wan\", \"status\":\n\"unknown\"}`` if the controller does not report WAN.\n\nExample: get_wan_status(controller=\"default\")",
       "input_schema": {
         "additionalProperties": false,
@@ -974,6 +1144,86 @@
         "type": "object"
       },
       "name": "get_wan_status"
+    },
+    {
+      "description": "List hubs, readers, relays, and intercoms bonded to the controller.\n\nSide effects: None (read-only).\n\nReturns one record per device with ``id``, ``type`` (``hub`` or\n``reader``), ``model``, ``name``, ``mac``, ``ip``, ``online``,\n``firmware_version``, and (for readers) the ``door_id`` and\n``hub_id`` they belong to.\n\nExample: list_access_devices(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_access_devices"
+    },
+    {
+      "description": "List badge-scan / door events with filters.\n\nSide effects: None (read-only).\n\nReturns events whose timestamp falls inside the last ``hours_back``\nhours. ``result`` filters to ``\"granted\"`` or ``\"denied\"``; empty\nreturns both. ``door_id`` narrows to one door.\n\nExample: list_access_events(hours_back=6, result=\"denied\", limit=20)",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target.",
+            "type": "string"
+          },
+          "door_id": {
+            "default": "",
+            "description": "Optional door ``id`` filter. Empty returns events\nacross every door.",
+            "type": "string"
+          },
+          "hours_back": {
+            "default": 24,
+            "description": "Look-back window in hours. Defaults to 24.",
+            "type": "integer"
+          },
+          "limit": {
+            "default": 100,
+            "description": "Maximum events returned. Defaults to 100.",
+            "type": "integer"
+          },
+          "result": {
+            "default": "",
+            "description": "Optional ``\"granted\"`` or ``\"denied\"`` filter. Empty\n(default) returns both.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_access_events"
+    },
+    {
+      "description": "List every access policy on the controller.\n\nSide effects: None (read-only).\n\nEach policy ties a schedule (e.g. business hours), one or more door\ngroups, and a set of users / credential types. Returns ``id``,\n``name``, ``type``, ``schedule``, ``door_group_ids``, ``user_ids``,\n``credential_types``, ``active``.\n\nExample: list_access_policies(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_access_policies"
+    },
+    {
+      "description": "List every user enrolled in the Access system.\n\nSide effects: None (read-only).\n\nReturns one record per user with ``id``, ``first_name``, ``last_name``,\n``full_name``, ``email``, ``status``, ``employee_number``, and\n``credential_ids`` (cross-reference with ``list_credentials``).\n\nExample: list_access_users(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_access_users"
     },
     {
       "description": "List controller alarms, active or archived.\n\nSide effects: None (read-only).\n\nReturns the most recent ``limit`` alarm records.\n\nExample: list_alarms(limit=20, archived=False)",
@@ -1046,6 +1296,21 @@
       "name": "list_clients"
     },
     {
+      "description": "List every credential enrolled in the Access controller.\n\nSide effects: None (read-only).\n\nReturns one record per credential with ``id``, ``type`` (``nfc``,\n``pin``, or ``mobile``), ``label``, ``user_id``, ``status``,\n``issued_at`` (ms), and ``expires_at`` (ms or null for non-expiring\nmobile credentials).\n\nExample: list_credentials(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_credentials"
+    },
+    {
       "description": "List every UniFi device adopted by this controller.\n\nSide effects: None (read-only).\n\nReturns one record per device (gateway, AP, switch) with ``_id``,\n``mac``, ``type``, ``model``, ``name``, ``ip``, ``version``,\n``state``, ``uptime``, ``num_sta``, and ``satisfaction``.\n\nExample: list_devices(controller=\"default\")",
       "input_schema": {
         "additionalProperties": false,
@@ -1076,6 +1341,21 @@
       "name": "list_dhcp_leases"
     },
     {
+      "description": "List every door group defined on the controller.\n\nSide effects: None (read-only).\n\nDoor groups bundle doors for access-policy assignment. Returns\n``id``, ``name``, ``door_ids``, and ``description``.\n\nExample: list_door_groups(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_door_groups"
+    },
+    {
       "description": "List doorbell cameras (those with ``isDoorbell=True``).\n\nSide effects: None (read-only).\n\nReturns the subset of cameras that are doorbells. Useful as a\npre-step before configuring chime / message tools (future Phase 3.x\nwork). Each entry includes the camera's ``id``, ``name``, and\n``isConnected``.\n\nExample: list_doorbell_messages(controller=\"default\")",
       "input_schema": {
         "additionalProperties": false,
@@ -1089,6 +1369,21 @@
         "type": "object"
       },
       "name": "list_doorbell_messages"
+    },
+    {
+      "description": "List every door bonded to the Access controller.\n\nSide effects: None (read-only).\n\nReturns one record per door with ``id``, ``name``, ``location``,\n``hub_id``, ``locked``, ``online``, ``door_position_status``,\n``lock_status``, and ``last_activity`` (epoch ms).\n\nExample: list_doors(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_doors"
     },
     {
       "description": "List recent controller events (connections, disconnections, etc.).\n\nSide effects: None (read-only).\n\nReturns the most recent ``limit`` event records, newest first.\n\nExample: list_events(limit=100)",
@@ -1109,6 +1404,36 @@
         "type": "object"
       },
       "name": "list_events"
+    },
+    {
+      "description": "Return only ``result == \"denied\"`` events within the window.\n\nSide effects: None (read-only).\n\nConvenience wrapper around ``list_access_events`` for security audits.\nEach entry includes ``reason`` (e.g. ``\"expired\"``, ``\"off-hours\"``,\n``\"unknown_pin\"``) so the LLM can summarise the cause distribution.\n\nExample: list_failed_access_attempts(hours_back=12, door_id=\"abc...\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target.",
+            "type": "string"
+          },
+          "door_id": {
+            "default": "",
+            "description": "Optional door ``id`` filter. Empty returns denials\nacross every door.",
+            "type": "string"
+          },
+          "hours_back": {
+            "default": 24,
+            "description": "Look-back window in hours. Defaults to 24.",
+            "type": "integer"
+          },
+          "limit": {
+            "default": 100,
+            "description": "Maximum events returned. Defaults to 100.",
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_failed_access_attempts"
     },
     {
       "description": "List every firewall rule on the controller.\n\nSide effects: None (read-only).\n\nReturns one record per rule with ``_id``, ``name``, ``ruleset``,\n``rule_index``, ``action``, ``enabled``, ``protocol``, and\n``src_*``/``dst_*`` fields.\n\nExample: list_firewall_rules(controller=\"default\")",
@@ -1296,6 +1621,21 @@
         "type": "object"
       },
       "name": "list_top_talkers"
+    },
+    {
+      "description": "List every visitor pass on the controller (active and expired).\n\nSide effects: None (read-only).\n\nReturns one record per visitor with ``id``, ``first_name``,\n``last_name``, ``full_name``, ``email``, ``host_user_id``,\n``valid_from`` (ms), ``valid_until`` (ms), ``status``, and\n``pass_code``.\n\nExample: list_visitors(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_visitors"
     },
     {
       "description": "List every WiFi SSID configured on the controller.\n\nSide effects: None (read-only).\n\nReturns one record per WLAN with ``_id``, ``name``, ``enabled``,\n``security``, ``wpa_mode``, ``networkconf_id``, ``is_guest``,\n``hide_ssid``, and ``wlan_band``.\n\nExample: list_wlans(controller=\"default\")",
@@ -1789,6 +2129,26 @@
         "type": "object"
       },
       "name": "set_threat_management"
+    },
+    {
+      "description": "Aggregate badge events by door, user, and outcome.\n\nSide effects: None (read-only).\n\nPulls events over the last ``hours_back`` hours (cap 500 to keep the\nsummary tractable) and rolls them up into counts so the LLM can\nanswer \"who used which door how often\" without re-aggregating\nclient-side. Returns ``total``, ``granted``, ``denied``, plus\n``by_door`` and ``by_user`` maps.\n\nExample: summarize_access_activity(hours_back=24)",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target.",
+            "type": "string"
+          },
+          "hours_back": {
+            "default": 24,
+            "description": "Look-back window in hours. Defaults to 24.",
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "name": "summarize_access_activity"
     },
     {
       "description": "Kick off a UniFi speed test on the WAN link.\n\nSide effects: None on the controller's persistent state. Issues a\none-shot WAN measurement that consumes WAN bandwidth for ~30-60\nseconds while the test runs server-side. Use\n``get_speedtest_results`` to read the result once it finishes.\n\nExample: trigger_speedtest(controller=\"default\")",

@@ -38,6 +38,12 @@ class ControllerConfig(BaseModel):
 
     Multiple ``ControllerConfig`` instances live in ``Settings.controllers`` and
     are addressed by ``name`` from tool calls (e.g. ``controller="home"``).
+
+    The ``access_*`` fields are optional and only consulted when the Access
+    module is enabled. They describe the UniFi Access hub, which often runs
+    on a separate IP / port (default ``12445``) with its own API key. If the
+    hub is reachable on the same host as the gateway, set ``access_host`` to
+    the same value and ``access_api_key`` to the Access-specific key.
     """
 
     name: str = Field(description="Stable identifier used by tools (e.g. 'default', 'home').")
@@ -46,6 +52,16 @@ class ControllerConfig(BaseModel):
     port: int = Field(default=443, ge=1, le=65535)
     site: str = Field(default="default")
     verify_ssl: bool = Field(default=False)
+
+    access_host: str = Field(
+        default="",
+        description="UniFi Access hub host. Empty disables the Access backend for this controller.",
+    )
+    access_api_key: SecretStr | None = Field(
+        default=None,
+        description="UniFi Access API key (separate from the Network API key).",
+    )
+    access_port: int = Field(default=12445, ge=1, le=65535)
 
 
 class Settings(BaseSettings):
@@ -100,6 +116,23 @@ class Settings(BaseSettings):
     unifi_site: str = Field(default="default")
     unifi_api_key: str = Field(default="")
     unifi_verify_ssl: bool = Field(default=False)
+
+    # ------------------------------------------------------------------
+    # Legacy single-controller UniFi Access connection (v0.10+).
+    # Promoted onto the ``default`` controller's ``access_*`` fields by
+    # ``_assemble_controllers`` when set. Set ``unifi_access_host`` and
+    # ``unifi_access_api_key`` to enable the Access backend without
+    # writing a controllers YAML file.
+    # ------------------------------------------------------------------
+    unifi_access_host: str = Field(
+        default="",
+        description="UniFi Access hub host. Empty disables Access for the legacy controller.",
+    )
+    unifi_access_api_key: str = Field(
+        default="",
+        description="UniFi Access API key (legacy). Promoted onto ControllerConfig.access_api_key.",
+    )
+    unifi_access_port: int = Field(default=12445, ge=1, le=65535)
 
     # ------------------------------------------------------------------
     # IoT defaults (used by create_iot_network)
@@ -229,6 +262,13 @@ class Settings(BaseSettings):
                         port=self.unifi_port,
                         site=self.unifi_site,
                         verify_ssl=self.unifi_verify_ssl,
+                        access_host=self.unifi_access_host,
+                        access_api_key=(
+                            SecretStr(self.unifi_access_api_key)
+                            if self.unifi_access_api_key
+                            else None
+                        ),
+                        access_port=self.unifi_access_port,
                     )
                 ]
                 logger.info("single-controller env detected, promoted to controllers=[default]")
@@ -241,6 +281,9 @@ class Settings(BaseSettings):
                         port=self.unifi_port,
                         site=self.unifi_site,
                         verify_ssl=self.unifi_verify_ssl,
+                        access_host=self.unifi_access_host or "stub",
+                        access_api_key=SecretStr(self.unifi_access_api_key or "stub"),
+                        access_port=self.unifi_access_port,
                     )
                 ]
             else:
@@ -282,6 +325,11 @@ class Settings(BaseSettings):
                     "site": c.site,
                     "verify_ssl": c.verify_ssl,
                     "api_key_set": bool(c.api_key.get_secret_value()),
+                    "access_host": c.access_host,
+                    "access_port": c.access_port,
+                    "access_api_key_set": bool(
+                        c.access_api_key and c.access_api_key.get_secret_value()
+                    ),
                 }
                 for c in self.controllers
             ],

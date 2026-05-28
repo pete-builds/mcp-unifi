@@ -29,6 +29,9 @@ from starlette.requests import Request
 from starlette.responses import PlainTextResponse
 
 from mcp_unifi.backends import (
+    AccessBackend,
+    AccessRealBackend,
+    AccessStubBackend,
     Backend,
     ProtectBackend,
     ProtectRealBackend,
@@ -36,6 +39,8 @@ from mcp_unifi.backends import (
     RealBackend,
     StubBackend,
 )
+from mcp_unifi.clients.access import AccessClient
+from mcp_unifi.clients.access_stubs import AccessStubState
 from mcp_unifi.clients.protect import ProtectClient
 from mcp_unifi.clients.protect_stubs import ProtectStubState
 from mcp_unifi.clients.stubs import StubState
@@ -54,6 +59,8 @@ def build_server(
     unifi: UniFiClient | None = None,
     protect_stub: ProtectStubState | None = None,
     protect: ProtectClient | None = None,
+    access_stub: AccessStubState | None = None,
+    access: AccessClient | None = None,
 ) -> FastMCP:
     """Construct a FastMCP instance with all modules registered.
 
@@ -72,6 +79,12 @@ def build_server(
         protect: Optional :class:`ProtectClient` injected as the ``"default"``
             controller's Protect backend. Mirrors ``unifi`` for the Protect
             module.
+        access_stub: Optional :class:`AccessStubState` injected as the
+            ``"default"`` controller's Access backend. Mirrors ``protect_stub``
+            for the Access module.
+        access: Optional :class:`AccessClient` injected as the ``"default"``
+            controller's Access backend. Mirrors ``protect`` for the Access
+            module.
     """
     stub_overrides: dict[str, Backend] | None = (
         {"default": StubBackend(stub)} if stub is not None else None
@@ -85,6 +98,12 @@ def build_server(
     protect_real_overrides: dict[str, ProtectBackend] | None = (
         {"default": ProtectRealBackend(protect)} if protect is not None else None
     )
+    access_stub_overrides: dict[str, AccessBackend] | None = (
+        {"default": AccessStubBackend(access_stub)} if access_stub is not None else None
+    )
+    access_real_overrides: dict[str, AccessBackend] | None = (
+        {"default": AccessRealBackend(access)} if access is not None else None
+    )
 
     registry = build_registry(
         settings,
@@ -92,6 +111,8 @@ def build_server(
         real_overrides=real_overrides,
         protect_stub_overrides=protect_stub_overrides,
         protect_real_overrides=protect_real_overrides,
+        access_stub_overrides=access_stub_overrides,
+        access_real_overrides=access_real_overrides,
     )
 
     auth_provider = _build_auth_provider(settings)

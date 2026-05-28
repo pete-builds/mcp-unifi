@@ -2,17 +2,17 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.pete-builds/unifi",
   "title": "UniFi Gateway",
-  "description": "Safe-by-default UniFi MCP: Network + Protect, multi-site, dry-run, audit log.",
+  "description": "Safe-by-default UniFi MCP: Network + Protect + Access, multi-site, dry-run, audit log.",
   "repository": {
     "url": "https://github.com/pete-builds/mcp-unifi",
     "source": "github"
   },
-  "version": "0.5.1",
+  "version": "0.10.0",
   "websiteUrl": "https://pete-builds.github.io/mcp-unifi/",
   "packages": [
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/pete-builds/mcp-unifi:0.5.1",
+      "identifier": "ghcr.io/pete-builds/mcp-unifi:0.10.0",
       "transport": {
         "type": "streamable-http",
         "url": "http://localhost:3714/mcp"
@@ -63,9 +63,29 @@
         },
         {
           "name": "MCP_UNIFI_MODULES_ENABLED",
-          "description": "Comma-separated list of modules to load. Known values: 'network', 'protect'. Defaults to 'network'. Set to 'network,protect' to enable UniFi Protect tools alongside Network tools.",
+          "description": "Comma-separated list of modules to load. Known values: 'network', 'protect', 'access'. Defaults to 'network'. Set to 'network,protect,access' to enable Protect and Access tools alongside Network. Access is read-only in v0.10.",
           "isRequired": false,
           "default": "network",
+          "format": "string"
+        },
+        {
+          "name": "UNIFI_ACCESS_HOST",
+          "description": "UniFi Access hub IP or hostname. Required when the access module is enabled and STUB_MODE=false. Often the same host as UNIFI_HOST.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "UNIFI_ACCESS_API_KEY",
+          "description": "UniFi Access API key. Separate from the Network API key; generated on the Access controller's developer settings. Required when the access module is enabled and STUB_MODE=false.",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "UNIFI_ACCESS_PORT",
+          "description": "HTTPS port for the Access hub. Defaults to 12445 (the direct Access app port).",
+          "isRequired": false,
+          "default": "12445",
           "format": "string"
         },
         {
