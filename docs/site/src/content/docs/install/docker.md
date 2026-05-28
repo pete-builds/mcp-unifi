@@ -70,7 +70,7 @@ curl -sS -X POST http://localhost:3714/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
-You should see 57 Network tools listed (or 68 if Protect is enabled).
+You should see 57 Network tools listed. With `MCP_UNIFI_MODULES_ENABLED=network,protect` that climbs to 68; with `network,protect,access` to 86.
 
 ## Switch to real mode
 
