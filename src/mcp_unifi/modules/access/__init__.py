@@ -268,9 +268,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         if days_ahead < 0:
             return err(f"days_ahead {days_ahead} must be >= 0")
         if credential_type and credential_type not in CREDENTIAL_TYPES:
-            return err(
-                f"credential_type {credential_type!r} not in {sorted(CREDENTIAL_TYPES)}"
-            )
+            return err(f"credential_type {credential_type!r} not in {sorted(CREDENTIAL_TYPES)}")
         try:
             backend = registry.get_access(controller)
             credentials = await backend.list_credentials()
@@ -289,9 +287,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 continue
             if now_ms <= expires_at <= horizon_ms:
                 annotated = dict(cred)
-                annotated["days_until_expiry"] = max(
-                    0, (expires_at - now_ms) // (86_400 * 1000)
-                )
+                annotated["days_until_expiry"] = max(0, (expires_at - now_ms) // (86_400 * 1000))
                 expiring.append(annotated)
         expiring.sort(key=lambda c: c.get("expires_at", 0))
         return format_json(

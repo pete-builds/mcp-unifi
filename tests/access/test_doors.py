@@ -25,9 +25,7 @@ async def test_list_doors_includes_lock_state(access_registry: FastMCP) -> None:
         assert door["hub_id"]  # back-filled in __init__
 
 
-async def test_get_door_by_id(
-    access_registry: FastMCP, stub_access_state: AccessStubState
-) -> None:
+async def test_get_door_by_id(access_registry: FastMCP, stub_access_state: AccessStubState) -> None:
     door_id = stub_access_state.doors[0]["id"]
     door = await _call(access_registry, "get_door", {"door_id": door_id})
     assert door["id"] == door_id

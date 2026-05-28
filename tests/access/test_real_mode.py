@@ -343,9 +343,7 @@ async def test_real_list_door_groups_500(real_access_server: FastMCP) -> None:
 
 @respx.mock
 async def test_real_list_access_policies_500(real_access_server: FastMCP) -> None:
-    respx.get(f"{ACCESS_BASE}/access_policies").mock(
-        return_value=httpx.Response(500, text="boom")
-    )
+    respx.get(f"{ACCESS_BASE}/access_policies").mock(return_value=httpx.Response(500, text="boom"))
     result = await _call(real_access_server, "list_access_policies")
     assert "error" in result
 
@@ -368,9 +366,7 @@ async def test_real_list_credentials_500(real_access_server: FastMCP) -> None:
 
 @respx.mock
 async def test_real_get_credential_500(real_access_server: FastMCP) -> None:
-    respx.get(f"{ACCESS_BASE}/credentials/c1").mock(
-        return_value=httpx.Response(500, text="boom")
-    )
+    respx.get(f"{ACCESS_BASE}/credentials/c1").mock(return_value=httpx.Response(500, text="boom"))
     result = await _call(real_access_server, "get_credential", {"credential_id": "c1"})
     assert "error" in result
 

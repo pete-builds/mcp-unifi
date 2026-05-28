@@ -29,9 +29,7 @@ async def test_list_access_events_result_filter(access_registry: FastMCP) -> Non
     granted = await _call(
         access_registry, "list_access_events", {"result": "granted", "limit": 100}
     )
-    denied = await _call(
-        access_registry, "list_access_events", {"result": "denied", "limit": 100}
-    )
+    denied = await _call(access_registry, "list_access_events", {"result": "denied", "limit": 100})
     assert all(e["result"] == "granted" for e in granted)
     assert all(e["result"] == "denied" for e in denied)
     assert len(granted) + len(denied) == 50
@@ -51,9 +49,7 @@ async def test_list_access_events_door_filter(
 
 
 async def test_list_access_events_invalid_result(access_registry: FastMCP) -> None:
-    result = await _call(
-        access_registry, "list_access_events", {"result": "maybe"}
-    )
+    result = await _call(access_registry, "list_access_events", {"result": "maybe"})
     assert "error" in result
     assert "result" in result["error"]
 

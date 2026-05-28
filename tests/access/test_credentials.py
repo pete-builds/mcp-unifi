@@ -48,9 +48,7 @@ async def test_audit_expiring_credentials_wider_window(
     access_registry: FastMCP,
 ) -> None:
     """100-day window catches both the 5-day NFC and the 90-day PIN."""
-    result = await _call(
-        access_registry, "audit_expiring_credentials", {"days_ahead": 100}
-    )
+    result = await _call(access_registry, "audit_expiring_credentials", {"days_ahead": 100})
     assert result["count"] == 2
     types = {c["type"] for c in result["credentials"]}
     assert types == {"nfc", "pin"}
@@ -73,9 +71,7 @@ async def test_audit_expiring_credentials_excludes_non_expiring(
     access_registry: FastMCP,
 ) -> None:
     """Mobile credentials with ``expires_at = None`` never appear in the result."""
-    result = await _call(
-        access_registry, "audit_expiring_credentials", {"days_ahead": 365 * 10}
-    )
+    result = await _call(access_registry, "audit_expiring_credentials", {"days_ahead": 365 * 10})
     for cred in result["credentials"]:
         assert cred["type"] != "mobile"
 
@@ -91,8 +87,6 @@ async def test_audit_expiring_credentials_invalid_type(access_registry: FastMCP)
 
 
 async def test_audit_expiring_credentials_negative_days(access_registry: FastMCP) -> None:
-    result = await _call(
-        access_registry, "audit_expiring_credentials", {"days_ahead": -1}
-    )
+    result = await _call(access_registry, "audit_expiring_credentials", {"days_ahead": -1})
     assert "error" in result
     assert "days_ahead" in result["error"]
