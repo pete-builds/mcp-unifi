@@ -1,9 +1,11 @@
 """Health check used by the Docker HEALTHCHECK directive.
 
 Hits the dedicated ``/health`` endpoint exposed by ``build_server``. The
-endpoint returns 200 with body ``"ok"`` and is intentionally separate from
-``/mcp`` so the streamable-http MCP transport doesn't log noise on every
-healthcheck interval.
+endpoint returns 200 with a small JSON body (``{"status": "ok", "version":
+...}``) and is intentionally separate from ``/mcp`` so the streamable-http MCP
+transport doesn't log noise on every healthcheck interval. This check gates on
+the 200 status code only, never the body, so the response shape can evolve
+without breaking the Docker HEALTHCHECK.
 """
 
 from __future__ import annotations

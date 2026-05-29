@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **`/health` now returns a JSON `{"status": "ok", "version": ...}` body**
+  instead of a bare `ok` string, so deploy checks can read the running
+  version in one line (`curl .../health | jq .version`). The version is
+  resolved from the installed package metadata
+  (`importlib.metadata.version`), falling back to the in-tree
+  `__version__` for source/editable runs. The Docker `HEALTHCHECK` gates
+  on the HTTP 200 status code, not the body, so this change does not
+  affect container health reporting.
+
 ## [0.10.0] - 2026-05-27
 
 > **UniFi Access module: 18 read-only tools for doors, credentials,
