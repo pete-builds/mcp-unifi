@@ -36,6 +36,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from mcp_unifi.clients.unifi import UniFiError
+from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
 from mcp_unifi.modules.network._common import format_json, make_err
 
@@ -95,7 +96,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 ``"default"``.
         """
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             record = await backend.get_setting("teleport")
             networks_raw = await backend.list_networks()
         except UniFiError as exc:
@@ -155,7 +156,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             )
 
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             record = await backend.set_setting("teleport", patch)
         except UniFiError as exc:
             logger.exception("set_teleport_enabled failed")

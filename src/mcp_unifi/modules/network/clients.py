@@ -9,6 +9,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from mcp_unifi.clients.unifi import UniFiError
+from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
 from mcp_unifi.modules.network._common import format_json, make_err
 
@@ -42,7 +43,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 ``"default"``.
         """
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             return format_json(await backend.list_clients())
         except UniFiError as exc:
             logger.exception("list_clients failed")
@@ -83,7 +84,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 }
             )
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             blocked = await backend.block_client(mac)
             if blocked is None:
                 return err(f"client {mac} not found")
@@ -126,7 +127,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 }
             )
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             unblocked = await backend.unblock_client(mac)
             if unblocked is None:
                 return err(f"client {mac} not found")
@@ -171,7 +172,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 }
             )
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             ok = await backend.reconnect_client(mac)
             return format_json({"reconnected": ok, "mac": mac})
         except UniFiError as exc:

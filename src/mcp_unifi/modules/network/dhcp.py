@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from mcp_unifi.clients.unifi import UniFiError
+from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
 from mcp_unifi.modules.network._common import format_json, make_err
 from mcp_unifi.modules.network._pending import build_preview_envelope, get_pending_actions
@@ -40,7 +41,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 ``"default"``.
         """
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             return format_json(await backend.list_dhcp_leases())
         except UniFiError as exc:
             logger.exception("list_dhcp_leases failed")
@@ -101,7 +102,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 }
             )
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             return format_json(await backend.create_dhcp_lease(payload))
         except UniFiError as exc:
             logger.exception("create_static_dhcp_lease failed", extra={"mac": mac})
@@ -171,7 +172,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 }
             )
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             user = await backend.find_user_by_mac(mac)
             if not user or not user.get("_id"):
                 return err(
@@ -226,7 +227,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 }
             )
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             leases = await backend.list_dhcp_leases()
         except UniFiError as exc:
             logger.exception(

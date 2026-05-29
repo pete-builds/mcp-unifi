@@ -82,6 +82,7 @@ from typing import TYPE_CHECKING, Any
 
 from mcp_unifi.backends import Backend
 from mcp_unifi.clients.unifi import UniFiError
+from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
 from mcp_unifi.modules.network._common import format_json, make_err
 
@@ -380,9 +381,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 ``"default"``.
         """
         try:
-            backend = registry.get(controller)
-        except KeyError as exc:
-            return err(str(exc).strip("'"))
+            backend = resolve_backend(registry, controller)
+        except UniFiError as exc:
+            return err(str(exc))
 
         try:
             resources = await _snapshot(backend)
@@ -511,9 +512,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             )
 
         try:
-            backend = registry.get(controller)
-        except KeyError as exc:
-            return err(str(exc).strip("'"))
+            backend = resolve_backend(registry, controller)
+        except UniFiError as exc:
+            return err(str(exc))
 
         # Snapshot the live controller (with _id preserved for delete dispatch).
         try:

@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from mcp_unifi.clients.unifi import UniFiError
+from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
 from mcp_unifi.modules.network._common import format_json, make_err
 
@@ -38,7 +39,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 ``"default"``.
         """
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             return format_json(await backend.get_site_health())
         except UniFiError as exc:
             logger.exception("get_site_health failed")
@@ -62,7 +63,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 ``"default"``.
         """
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             return format_json(await backend.get_wan_status())
         except UniFiError as exc:
             logger.exception("get_wan_status failed")
@@ -87,7 +88,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         if not 1 <= limit <= 1000:
             return err("limit must be between 1 and 1000")
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             return format_json(await backend.list_events(limit))
         except UniFiError as exc:
             logger.exception("list_events failed")
@@ -118,7 +119,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         if not 1 <= limit <= 1000:
             return err("limit must be between 1 and 1000")
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             return format_json(await backend.list_alarms(limit, archived))
         except UniFiError as exc:
             logger.exception("list_alarms failed")
@@ -141,7 +142,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 ``"default"``.
         """
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             return format_json(await backend.trigger_speedtest())
         except UniFiError as exc:
             logger.exception("trigger_speedtest failed")
@@ -167,7 +168,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         if not 1 <= limit <= 1000:
             return err("limit must be between 1 and 1000")
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             return format_json(await backend.get_speedtest_results(limit))
         except UniFiError as exc:
             logger.exception("get_speedtest_results failed")
@@ -194,7 +195,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         if not 1 <= limit <= 1000:
             return err("limit must be between 1 and 1000")
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             return format_json(await backend.top_talkers(limit))
         except UniFiError as exc:
             logger.exception("list_top_talkers failed")
