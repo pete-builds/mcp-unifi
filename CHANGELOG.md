@@ -18,6 +18,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on the HTTP 200 status code, not the body, so this change does not
   affect container health reporting.
 
+## [0.10.1] - 2026-05-28
+
+> **Fix-only release.** Routes controller-resolution errors through the
+> standard ``err()`` envelope so they no longer escape as raw framework
+> errors. No new tools.
+
+### Fixed
+
+- **Controller-resolution errors now return the ``err()`` envelope.**
+  The dispatcher-layer resolution errors (``AccessNotAvailableError``,
+  ``ProtectNotAvailableError``, ``UnknownControllerError``) are siblings
+  of ``UniFiError``, not subclasses, so they slipped past each tool's
+  ``except UniFiError`` guard and surfaced as raw framework errors. Most
+  visible on the new Access module: enabling ``access`` without
+  ``access_*`` config in real mode registered the tools but left the
+  registry with no Access backend, so the first call raised an
+  unhandled ``AccessNotAvailableError``.
+- Added ``resolve_backend(registry, controller, kind)``, which
+  translates the three resolution errors to ``UniFiError`` at the single
+  seam every tool already guards. Migrated all Access, Network, and
+  Protect tools to it; ``backup.py`` and ``drift.py`` now catch
+  ``UniFiError`` instead of the raw resolution ``KeyError``.
+
+### Changed
+
+- An unknown / typo'd controller name on a Network or Protect tool now
+  returns the ``err()`` envelope instead of raising. The
+  no-silent-fallback guarantee is unchanged; ``test_multi_site`` was
+  updated to pin the new contract.
+
 ## [0.10.0] - 2026-05-27
 
 > **UniFi Access module: 18 read-only tools for doors, credentials,
