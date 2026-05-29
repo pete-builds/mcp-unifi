@@ -71,17 +71,20 @@ async def test_create_vlan_does_not_leak_across_controllers(
     assert len(office_nets) == 1
 
 
-async def test_unknown_controller_raises_clear_error(
+async def test_unknown_controller_returns_clear_error(
     multi_site_server: FastMCP,
 ) -> None:
     """Calling a tool with an unconfigured controller name surfaces a clear error.
 
     Behavior must NOT silently fall back to ``"default"`` — that would let a
-    typo silently target the wrong site.
+    typo silently target the wrong site. As of the ``resolve_backend()`` helper,
+    the dispatcher's ``UnknownControllerError`` is normalised to a ``UniFiError``
+    and returned through the tool's standard ``err()`` envelope rather than
+    raised, so the caller sees a structured error instead of a transport-level
+    exception.
     """
-    with pytest.raises(Exception) as excinfo:
-        await _call(multi_site_server, "list_devices", {"controller": "ghost"})
-    msg = str(excinfo.value)
+    result = await _call(multi_site_server, "list_devices", {"controller": "ghost"})
+    msg = result["error"]
     assert "ghost" in msg
     assert "home" in msg and "office" in msg  # available controllers listed
 

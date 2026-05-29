@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from mcp_unifi.backends import Backend
 from mcp_unifi.clients.unifi import UniFiError
+from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
 from mcp_unifi.modules.network._common import (
     format_json,
@@ -186,7 +187,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 }
             )
 
-        backend = registry.get(controller)
+        backend = resolve_backend(registry, controller)
         created: dict[str, Any] = {
             "network": None,
             "wlan": None,
@@ -373,7 +374,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 }
             )
 
-        backend = registry.get(controller)
+        backend = resolve_backend(registry, controller)
         created: dict[str, Any] = {
             "lease": None,
             "firewall_rule": None,
@@ -488,7 +489,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 }
             )
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             blocked = await backend.block_client(mac)
             if blocked is None:
                 return err(f"client {mac} not found")
@@ -622,7 +623,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 }
             )
 
-        backend = registry.get(controller)
+        backend = resolve_backend(registry, controller)
         created: dict[str, Any] = {
             "network": None,
             "wlan": None,
@@ -723,7 +724,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 ``"default"``.
         """
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             fw_rules = await backend.list_firewall_rules()
             port_forwards = await backend.list_port_forwards()
 

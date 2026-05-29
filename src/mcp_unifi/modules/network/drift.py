@@ -57,6 +57,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from mcp_unifi.clients.unifi import UniFiError
+from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
 from mcp_unifi.modules.network._common import format_json, make_err
 
@@ -463,9 +464,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             )
 
         try:
-            backend = registry.get(controller)
-        except KeyError as exc:
-            return err(str(exc).strip("'"))
+            backend = resolve_backend(registry, controller)
+        except UniFiError as exc:
+            return err(str(exc))
 
         drifts: list[dict[str, Any]] = []
         # Always pull networks because WLANs reference them.

@@ -24,6 +24,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from mcp_unifi.clients.unifi import UniFiError
+from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
 from mcp_unifi.modules.network._common import format_json, make_err
 from mcp_unifi.modules.network._pending import build_preview_envelope, get_pending_actions
@@ -105,7 +106,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 ``"default"``.
         """
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             record = await backend.get_setting("ips")
             networks = await _network_lookup(backend)
         except UniFiError as exc:
@@ -156,7 +157,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(validation_err)
 
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             networks = await _network_lookup(backend)
         except UniFiError as exc:
             logger.exception("create_honeypot lookup failed")
@@ -245,7 +246,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             )
 
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             record = await backend.get_setting("ips")
         except UniFiError as exc:
             logger.exception("delete_honeypot lookup failed")

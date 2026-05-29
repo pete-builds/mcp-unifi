@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from mcp_unifi.clients.unifi import UniFiError
+from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
 from mcp_unifi.modules.network._common import (
     format_json,
@@ -44,7 +45,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 ``"default"``.
         """
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             return format_json(await backend.list_wlans())
         except UniFiError as exc:
             logger.exception("list_wlans failed")
@@ -72,7 +73,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 ``"default"``.
         """
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             return format_json(await backend.list_ap_groups())
         except UniFiError as exc:
             logger.exception("list_ap_groups failed")
@@ -135,7 +136,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 predicted change set.
         """
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
         except UniFiError as exc:
             logger.exception("create_wlan failed", extra={"wlan_name": name})
             return err(str(exc))
@@ -221,7 +222,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 }
             )
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             updated = await backend.update_wlan(wlan_id, updates)
             if updated is None:
                 return err(f"wlan {wlan_id} not found")
@@ -271,7 +272,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 }
             )
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             wlans = await backend.list_wlans()
         except UniFiError as exc:
             logger.exception("delete_wlan preview lookup failed", extra={"wlan_id": wlan_id})

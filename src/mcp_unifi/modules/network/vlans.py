@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from mcp_unifi.clients.unifi import UniFiError
+from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
 from mcp_unifi.modules.network._common import (
     format_json,
@@ -45,7 +46,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 ``"default"``.
         """
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             return format_json(await backend.list_networks())
         except UniFiError as exc:
             logger.exception("list_networks failed")
@@ -127,7 +128,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 }
             )
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             return format_json(await backend.create_network(payload))
         except UniFiError as exc:
             logger.exception("create_vlan failed", extra={"vlan_name": name})
@@ -174,7 +175,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 }
             )
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             updated = await backend.update_network(network_id, updates)
             if updated is None:
                 return err(f"network {network_id} not found")
@@ -225,7 +226,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 }
             )
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             networks = await backend.list_networks()
         except UniFiError as exc:
             logger.exception("delete_vlan preview lookup failed", extra={"network_id": network_id})

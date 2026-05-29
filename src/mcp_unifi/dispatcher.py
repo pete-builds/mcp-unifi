@@ -15,7 +15,8 @@ from __future__ import annotations
 import importlib
 import logging
 import os
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Literal, overload
 
 from mcp_unifi.backends import (
     AccessBackend,
@@ -33,7 +34,7 @@ from mcp_unifi.clients.access_stubs import make_access_stub_state
 from mcp_unifi.clients.protect import ProtectClient
 from mcp_unifi.clients.protect_stubs import make_protect_stub_state
 from mcp_unifi.clients.stubs import make_stub_state
-from mcp_unifi.clients.unifi import UniFiClient
+from mcp_unifi.clients.unifi import UniFiClient, UniFiError
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -278,6 +279,59 @@ def build_registry(
     )
 
 
+@overload
+def resolve_backend(
+    registry: ControllerRegistry, controller: str, kind: Literal["network"] = ...
+) -> Backend: ...
+@overload
+def resolve_backend(
+    registry: ControllerRegistry, controller: str, kind: Literal["protect"]
+) -> ProtectBackend: ...
+@overload
+def resolve_backend(
+    registry: ControllerRegistry, controller: str, kind: Literal["access"]
+) -> AccessBackend: ...
+def resolve_backend(
+    registry: ControllerRegistry,
+    controller: str,
+    kind: Literal["network", "protect", "access"] = "network",
+) -> Backend | ProtectBackend | AccessBackend:
+    """Resolve a controller backend for a tool, mapping resolution failures to UniFiError.
+
+    Every tool body wraps its work in ``except UniFiError`` and returns a
+    formatted ``err(...)`` envelope. The registry getters, however, raise
+    dispatcher-layer errors that are *siblings* of :class:`UniFiError` (all
+    subclass :class:`RuntimeError`, none subclass the others), so they would
+    otherwise escape the tool's handler and surface as a raw framework error:
+
+    * :class:`AccessNotAvailableError` / :class:`ProtectNotAvailableError` when
+      the module is enabled but the registry holds no backend for it (e.g. the
+      ``access`` module is on but no controller has ``access_*`` config in real
+      mode).
+    * :class:`UnknownControllerError` when ``controller`` names a controller the
+      registry doesn't know (a typo'd or stale ``controller`` argument).
+
+    Translating them to :class:`UniFiError` here lets every current and future
+    tool handle a missing module or unknown controller through the
+    ``except UniFiError`` path it already has, with no per-tool change. Callers
+    that want the typed errors (tests, non-tool code) keep using the registry
+    getters directly.
+    """
+    getters: dict[str, Callable[[str], Backend | ProtectBackend | AccessBackend]] = {
+        "network": registry.get,
+        "protect": registry.get_protect,
+        "access": registry.get_access,
+    }
+    try:
+        return getters[kind](controller)
+    except (
+        ProtectNotAvailableError,
+        AccessNotAvailableError,
+        UnknownControllerError,
+    ) as exc:
+        raise UniFiError(str(exc)) from exc
+
+
 def _enabled_modules() -> tuple[str, ...]:
     raw = os.environ.get("MCP_UNIFI_MODULES_ENABLED", "").strip()
     if not raw:
@@ -323,4 +377,5 @@ __all__ = [
     "UnknownModuleError",
     "build_registry",
     "register_modules",
+    "resolve_backend",
 ]

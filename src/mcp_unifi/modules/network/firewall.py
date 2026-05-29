@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from mcp_unifi.clients.unifi import UniFiError
+from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
 from mcp_unifi.modules.network._common import format_json, make_err
 from mcp_unifi.modules.network._pending import build_preview_envelope, get_pending_actions
@@ -40,7 +41,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 ``"default"``.
         """
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             return format_json(await backend.list_firewall_rules())
         except UniFiError as exc:
             logger.exception("list_firewall_rules failed")
@@ -153,7 +154,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 }
             )
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             return format_json(await backend.create_firewall_rule(payload))
         except UniFiError as exc:
             logger.exception("create_firewall_rule failed", extra={"rule_name": name})
@@ -200,7 +201,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 }
             )
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             updated = await backend.update_firewall_rule(rule_id, updates)
             if updated is None:
                 return err(f"firewall rule {rule_id} not found")
@@ -249,7 +250,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 }
             )
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             rules = await backend.list_firewall_rules()
         except UniFiError as exc:
             logger.exception(

@@ -22,6 +22,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from mcp_unifi.clients.unifi import UniFiError
+from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
 from mcp_unifi.modules.network._common import format_json, make_err
 
@@ -75,7 +76,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 ``"default"``.
         """
         try:
-            backend = registry.get_access(controller)
+            backend = resolve_backend(registry, controller, "access")
             return format_json(await backend.list_doors())
         except UniFiError as exc:
             logger.exception("list_doors failed")
@@ -99,7 +100,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             controller: Name of the UniFi controller to target.
         """
         try:
-            backend = registry.get_access(controller)
+            backend = resolve_backend(registry, controller, "access")
             door = await backend.get_door(door_id)
             if door is None:
                 return err(f"door {door_id} not found")
@@ -124,7 +125,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             controller: Name of the UniFi controller to target.
         """
         try:
-            backend = registry.get_access(controller)
+            backend = resolve_backend(registry, controller, "access")
             return format_json(await backend.list_door_groups())
         except UniFiError as exc:
             logger.exception("list_door_groups failed")
@@ -152,7 +153,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             controller: Name of the UniFi controller to target.
         """
         try:
-            backend = registry.get_access(controller)
+            backend = resolve_backend(registry, controller, "access")
             return format_json(await backend.list_access_policies())
         except UniFiError as exc:
             logger.exception("list_access_policies failed")
@@ -176,7 +177,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             controller: Name of the UniFi controller to target.
         """
         try:
-            backend = registry.get_access(controller)
+            backend = resolve_backend(registry, controller, "access")
             policy = await backend.get_access_policy(policy_id)
             if policy is None:
                 return err(f"access policy {policy_id} not found")
@@ -207,7 +208,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             controller: Name of the UniFi controller to target.
         """
         try:
-            backend = registry.get_access(controller)
+            backend = resolve_backend(registry, controller, "access")
             return format_json(await backend.list_credentials())
         except UniFiError as exc:
             logger.exception("list_credentials failed")
@@ -231,7 +232,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             controller: Name of the UniFi controller to target.
         """
         try:
-            backend = registry.get_access(controller)
+            backend = resolve_backend(registry, controller, "access")
             cred = await backend.get_credential(credential_id)
             if cred is None:
                 return err(f"credential {credential_id} not found")
@@ -270,7 +271,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         if credential_type and credential_type not in CREDENTIAL_TYPES:
             return err(f"credential_type {credential_type!r} not in {sorted(CREDENTIAL_TYPES)}")
         try:
-            backend = registry.get_access(controller)
+            backend = resolve_backend(registry, controller, "access")
             credentials = await backend.list_credentials()
         except UniFiError as exc:
             logger.exception("audit_expiring_credentials failed")
@@ -321,7 +322,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             controller: Name of the UniFi controller to target.
         """
         try:
-            backend = registry.get_access(controller)
+            backend = resolve_backend(registry, controller, "access")
             return format_json(await backend.list_visitors())
         except UniFiError as exc:
             logger.exception("list_visitors failed")
@@ -344,7 +345,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             controller: Name of the UniFi controller to target.
         """
         try:
-            backend = registry.get_access(controller)
+            backend = resolve_backend(registry, controller, "access")
             visitor = await backend.get_visitor(visitor_id)
             if visitor is None:
                 return err(f"visitor {visitor_id} not found")
@@ -388,7 +389,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         if result and result not in EVENT_RESULTS:
             return err(f"result {result!r} not in {sorted(EVENT_RESULTS)}")
         try:
-            backend = registry.get_access(controller)
+            backend = resolve_backend(registry, controller, "access")
             start_ms, end_ms = _hours_window(hours_back)
             events = await backend.list_events(
                 start_ms, end_ms, limit, result=result, door_id=door_id
@@ -418,7 +419,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             controller: Name of the UniFi controller to target.
         """
         try:
-            backend = registry.get_access(controller)
+            backend = resolve_backend(registry, controller, "access")
             start_ms, end_ms = _hours_window(24)
             events = await backend.list_events(start_ms, end_ms, limit)
             return format_json(events)
@@ -449,7 +450,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             controller: Name of the UniFi controller to target.
         """
         try:
-            backend = registry.get_access(controller)
+            backend = resolve_backend(registry, controller, "access")
             start_ms, end_ms = _hours_window(hours_back)
             events = await backend.list_events(start_ms, end_ms, 500)
         except UniFiError as exc:
@@ -517,7 +518,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             controller: Name of the UniFi controller to target.
         """
         try:
-            backend = registry.get_access(controller)
+            backend = resolve_backend(registry, controller, "access")
             start_ms, end_ms = _hours_window(hours_back)
             events = await backend.list_events(
                 start_ms, end_ms, limit, result="denied", door_id=door_id
@@ -549,7 +550,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             controller: Name of the UniFi controller to target.
         """
         try:
-            backend = registry.get_access(controller)
+            backend = resolve_backend(registry, controller, "access")
             return format_json(await backend.list_devices())
         except UniFiError as exc:
             logger.exception("list_access_devices failed")
@@ -573,7 +574,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             controller: Name of the UniFi controller to target.
         """
         try:
-            backend = registry.get_access(controller)
+            backend = resolve_backend(registry, controller, "access")
             device = await backend.get_device(device_id)
             if device is None:
                 return err(f"access device {device_id} not found")
@@ -604,7 +605,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             controller: Name of the UniFi controller to target.
         """
         try:
-            backend = registry.get_access(controller)
+            backend = resolve_backend(registry, controller, "access")
             return format_json(await backend.get_system_info())
         except UniFiError as exc:
             logger.exception("get_access_system_info failed")
@@ -627,7 +628,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             controller: Name of the UniFi controller to target.
         """
         try:
-            backend = registry.get_access(controller)
+            backend = resolve_backend(registry, controller, "access")
             return format_json(await backend.list_users())
         except UniFiError as exc:
             logger.exception("list_access_users failed")

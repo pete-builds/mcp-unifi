@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from mcp_unifi.clients.unifi import UniFiError
+from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
 from mcp_unifi.modules.network._common import format_json, make_err
 
@@ -39,7 +40,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 ``"default"``.
         """
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             return format_json(await backend.list_devices())
         except UniFiError as exc:
             logger.exception("list_devices failed")
@@ -82,7 +83,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 }
             )
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             ok = await backend.restart_device(mac)
             if not ok:
                 return err(f"device {mac} not found")
@@ -129,7 +130,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 }
             )
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             ok = await backend.locate_device(mac, on)
             if not ok:
                 return err(f"device {mac} not found")
@@ -198,7 +199,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 }
             )
         try:
-            backend = registry.get(controller)
+            backend = resolve_backend(registry, controller)
             updated = await backend.set_port_state(
                 device_mac,
                 port_idx,

@@ -24,6 +24,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from mcp_unifi.clients.unifi import UniFiError
+from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
 from mcp_unifi.modules.network._common import format_json, make_err
 
@@ -78,7 +79,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 ``"default"``.
         """
         try:
-            backend = registry.get_protect(controller)
+            backend = resolve_backend(registry, controller, "protect")
             return format_json(await backend.list_cameras())
         except UniFiError as exc:
             logger.exception("list_cameras failed")
@@ -103,7 +104,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 ``"default"``.
         """
         try:
-            backend = registry.get_protect(controller)
+            backend = resolve_backend(registry, controller, "protect")
             cam = await backend.get_camera(camera_id)
             if cam is None:
                 return err(f"camera {camera_id} not found")
@@ -139,7 +140,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 ``"default"``.
         """
         try:
-            backend = registry.get_protect(controller)
+            backend = resolve_backend(registry, controller, "protect")
             start_ms, end_ms = _hours_window(hours_back)
             events = await backend.list_events(["motion"], start_ms, end_ms, limit)
             events = _filter_by_camera(events, camera_id)
@@ -181,7 +182,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         if detection_type not in SMART_DETECT_TYPES:
             return err(f"detection_type {detection_type!r} not in {sorted(SMART_DETECT_TYPES)}")
         try:
-            backend = registry.get_protect(controller)
+            backend = resolve_backend(registry, controller, "protect")
             start_ms, end_ms = _hours_window(hours_back)
             raw = await backend.list_events(["smartDetectZone"], start_ms, end_ms, limit)
             filtered = [evt for evt in raw if detection_type in (evt.get("smartDetectTypes") or [])]
@@ -211,7 +212,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 ``"default"``.
         """
         try:
-            backend = registry.get_protect(controller)
+            backend = resolve_backend(registry, controller, "protect")
             data = await backend.get_snapshot(camera_id)
             encoded = base64.b64encode(data).decode()
             return format_json(
@@ -246,7 +247,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 ``"default"``.
         """
         try:
-            backend = registry.get_protect(controller)
+            backend = resolve_backend(registry, controller, "protect")
             data = await backend.get_event_thumbnail(event_id)
             encoded = base64.b64encode(data).decode()
             return format_json(
@@ -285,7 +286,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 ``"default"``.
         """
         try:
-            backend = registry.get_protect(controller)
+            backend = resolve_backend(registry, controller, "protect")
             start_ms, end_ms = _hours_window(hours_back)
             return format_json(await backend.list_recordings(camera_id, start_ms, end_ms))
         except UniFiError as exc:
@@ -331,7 +332,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 }
             )
         try:
-            backend = registry.get_protect(controller)
+            backend = resolve_backend(registry, controller, "protect")
             updated = await backend.update_camera(camera_id, patch)
             if updated is None:
                 return err(f"camera {camera_id} not found")
@@ -381,7 +382,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 }
             )
         try:
-            backend = registry.get_protect(controller)
+            backend = resolve_backend(registry, controller, "protect")
             updated = await backend.update_camera(camera_id, patch)
             if updated is None:
                 return err(f"camera {camera_id} not found")
@@ -432,7 +433,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 }
             )
         try:
-            backend = registry.get_protect(controller)
+            backend = resolve_backend(registry, controller, "protect")
             updated = await backend.update_camera(camera_id, patch)
             if updated is None:
                 return err(f"camera {camera_id} not found")
@@ -460,7 +461,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 ``"default"``.
         """
         try:
-            backend = registry.get_protect(controller)
+            backend = resolve_backend(registry, controller, "protect")
             cameras = await backend.list_cameras()
             doorbells = [
                 {
@@ -560,7 +561,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             )
 
         try:
-            backend = registry.get_protect(controller)
+            backend = resolve_backend(registry, controller, "protect")
             original = await backend.get_camera(camera_id)
             if original is None:
                 return err(f"camera {camera_id} not found")
