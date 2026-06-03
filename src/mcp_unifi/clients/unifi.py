@@ -361,11 +361,46 @@ class UniFiClient:
         return await self._get("/stat/health") or []
 
     async def list_events(self, limit: int) -> list[UniFiRecord]:
-        return await self._get(f"/stat/event?_limit={limit}") or []
+        """Return recent controller events, newest first.
+
+        UniFi OS gateways (UCG-Fiber, UDM) on UniFi Network 9.x reject the
+        legacy ``GET /stat/event?_limit=...`` form with HTTP 404
+        (``api.err.NotFound``). The modern contract is a ``POST`` to
+        ``/stat/event`` with a JSON body carrying ``_limit`` and ``_sort``
+        (same pattern as ``get_speedtest_results``). Verified against the
+        unpoller/unifi reference client, which posts
+        ``{"_limit": N, "within": H, "_sort": "-time"}`` to this path.
+        We omit ``within`` so the controller returns the most recent events
+        regardless of age, then let the caller's ``limit`` bound the set.
+        """
+        payload: dict[str, Any] = {"_limit": limit, "_sort": "-time"}
+        records = await self._post("/stat/event", payload) or []
+        return records if isinstance(records, list) else []
 
     async def list_alarms(self, limit: int, archived: bool) -> list[UniFiRecord]:
-        archived_str = "true" if archived else "false"
-        return await self._get(f"/stat/alarm?archived={archived_str}&_limit={limit}") or []
+        """Return controller alarms, active or archived, newest first.
+
+        Same modern-controller contract as ``list_events``: UniFi Network 9.x
+        404s the legacy ``GET /stat/alarm?archived=...&_limit=...`` form. We
+        ``POST`` to ``/stat/alarm`` with ``{"_limit", "_sort"}`` and filter on
+        the ``archived`` flag client-side, because the controller's server-side
+        ``archived`` body filter is inconsistent across firmware revisions.
+        Alarm records carry the originating client MAC (``user`` / ``sta``),
+        AP MAC (``ap``), ``ssid``, ``subsystem``, ``key``, ``msg``, and
+        ``time`` / ``datetime`` fields, which pass straight through to callers.
+        """
+        # Over-fetch so client-side archived filtering still yields up to
+        # ``limit`` matching records.
+        payload: dict[str, Any] = {"_limit": max(limit * 4, limit), "_sort": "-time"}
+        records = await self._post("/stat/alarm", payload) or []
+        if not isinstance(records, list):
+            return []
+        filtered = [
+            rec
+            for rec in records
+            if isinstance(rec, dict) and bool(rec.get("archived", False)) == archived
+        ]
+        return filtered[:limit]
 
     async def trigger_speedtest(self) -> UniFiRecord:
         return self._first_record(await self._post("/cmd/devmgr", {"cmd": "speedtest"}))

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-06-03
+
+### Fixed
+
+- **`list_alarms` and `list_events` no longer 404 on UniFi OS gateways.**
+  On UniFi Network 9.x (UCG-Fiber, UDM) the legacy
+  `GET /stat/event?_limit=...` and `GET /stat/alarm?archived=...&_limit=...`
+  forms return HTTP 404 (`api.err.NotFound`). Both calls now `POST` to the
+  same path with a JSON body `{"_limit", "_sort": "-time"}` (the modern
+  controller contract, matching the existing `get_speedtest_results`
+  migration). `list_alarms` over-fetches and filters the `archived` flag
+  client-side, since server-side `archived` body filtering is inconsistent
+  across firmware revisions. Alarm records surface the originating client
+  MAC (`user`/`sta`), AP MAC (`ap`), `ssid`, `subsystem`, `msg`, and
+  `time`/`datetime` fields unchanged.
+
 ### Changed
 
 - **`/health` now returns a JSON `{"status": "ok", "version": ...}` body**
