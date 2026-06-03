@@ -17,4 +17,4 @@ a real UCG-Fiber, UDM Pro, or other UniFi OS gateway.
 
 from __future__ import annotations
 
-__version__ = "0.10.1"
+__version__ = "0.11.0"
