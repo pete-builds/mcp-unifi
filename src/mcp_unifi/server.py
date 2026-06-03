@@ -22,12 +22,15 @@ Transport: Streamable HTTP via FastMCP (current MCP spec).
 from __future__ import annotations
 
 import logging
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
 
 from fastmcp import FastMCP
 from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
 from starlette.requests import Request
-from starlette.responses import PlainTextResponse
+from starlette.responses import JSONResponse
 
+from mcp_unifi import __version__
 from mcp_unifi.backends import (
     AccessBackend,
     AccessRealBackend,
@@ -50,6 +53,20 @@ from mcp_unifi.dispatcher import build_registry, register_modules
 from mcp_unifi.logging_setup import configure_logging
 
 logger = logging.getLogger("mcp_unifi.server")
+
+
+def _resolve_version() -> str:
+    """Best-effort running-version string for the ``/health`` echo.
+
+    Prefers the installed package metadata (the version baked into the wheel
+    at image-build time, i.e. what is actually running), and falls back to the
+    in-tree ``__version__`` when the package is not installed (editable/source
+    runs that never ran ``pip install``).
+    """
+    try:
+        return _pkg_version("mcp-unifi")
+    except PackageNotFoundError:
+        return __version__
 
 
 def build_server(
@@ -119,13 +136,16 @@ def build_server(
     mcp = FastMCP("UniFi", auth=auth_provider)
 
     @mcp.custom_route("/health", methods=["GET"])
-    async def health(_request: Request) -> PlainTextResponse:
+    async def health(_request: Request) -> JSONResponse:
         """Lightweight liveness endpoint for Docker / Kubernetes healthchecks.
 
         Returns 200 OK without touching the MCP transport, so the streamable-
-        http server doesn't log 406 noise every healthcheck interval.
+        http server doesn't log 406 noise every healthcheck interval. The body
+        echoes the running version so deploy checks can read it in one line:
+        ``curl .../health | jq .version``. The Docker HEALTHCHECK gates on the
+        200 status code, not the body, so the JSON shape is safe.
         """
-        return PlainTextResponse("ok")
+        return JSONResponse({"status": "ok", "version": _resolve_version()})
 
     register_modules(mcp, settings, registry)
     return mcp

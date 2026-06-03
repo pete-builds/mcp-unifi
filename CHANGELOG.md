@@ -5,6 +5,65 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.11.0] - 2026-06-03
+
+### Fixed
+
+- **`list_alarms` and `list_events` no longer 404 on UniFi OS gateways.**
+  On UniFi Network 9.x (UCG-Fiber, UDM) the legacy
+  `GET /stat/event?_limit=...` and `GET /stat/alarm?archived=...&_limit=...`
+  forms return HTTP 404 (`api.err.NotFound`). Both calls now `POST` to the
+  same path with a JSON body `{"_limit", "_sort": "-time"}` (the modern
+  controller contract, matching the existing `get_speedtest_results`
+  migration). `list_alarms` over-fetches and filters the `archived` flag
+  client-side, since server-side `archived` body filtering is inconsistent
+  across firmware revisions. Alarm records surface the originating client
+  MAC (`user`/`sta`), AP MAC (`ap`), `ssid`, `subsystem`, `msg`, and
+  `time`/`datetime` fields unchanged.
+
+### Changed
+
+- **`/health` now returns a JSON `{"status": "ok", "version": ...}` body**
+  instead of a bare `ok` string, so deploy checks can read the running
+  version in one line (`curl .../health | jq .version`). The version is
+  resolved from the installed package metadata
+  (`importlib.metadata.version`), falling back to the in-tree
+  `__version__` for source/editable runs. The Docker `HEALTHCHECK` gates
+  on the HTTP 200 status code, not the body, so this change does not
+  affect container health reporting.
+
+## [0.10.1] - 2026-05-28
+
+> **Fix-only release.** Routes controller-resolution errors through the
+> standard ``err()`` envelope so they no longer escape as raw framework
+> errors. No new tools.
+
+### Fixed
+
+- **Controller-resolution errors now return the ``err()`` envelope.**
+  The dispatcher-layer resolution errors (``AccessNotAvailableError``,
+  ``ProtectNotAvailableError``, ``UnknownControllerError``) are siblings
+  of ``UniFiError``, not subclasses, so they slipped past each tool's
+  ``except UniFiError`` guard and surfaced as raw framework errors. Most
+  visible on the new Access module: enabling ``access`` without
+  ``access_*`` config in real mode registered the tools but left the
+  registry with no Access backend, so the first call raised an
+  unhandled ``AccessNotAvailableError``.
+- Added ``resolve_backend(registry, controller, kind)``, which
+  translates the three resolution errors to ``UniFiError`` at the single
+  seam every tool already guards. Migrated all Access, Network, and
+  Protect tools to it; ``backup.py`` and ``drift.py`` now catch
+  ``UniFiError`` instead of the raw resolution ``KeyError``.
+
+### Changed
+
+- An unknown / typo'd controller name on a Network or Protect tool now
+  returns the ``err()`` envelope instead of raising. The
+  no-silent-fallback guarantee is unchanged; ``test_multi_site`` was
+  updated to pin the new contract.
+
 ## [0.10.0] - 2026-05-27
 
 > **UniFi Access module: 18 read-only tools for doors, credentials,

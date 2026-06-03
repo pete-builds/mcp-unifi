@@ -156,20 +156,68 @@ async def test_real_get_wan_status_unknown_when_missing(real_server: FastMCP) ->
 
 @respx.mock
 async def test_real_list_events(real_server: FastMCP) -> None:
-    respx.get(f"{BASE}/stat/event?_limit=5").mock(
-        return_value=httpx.Response(200, json={"data": [{"_id": "e1"}]})
-    )
+    """UniFi Network 9.x (UCG-Fiber) 404s the legacy ``GET /stat/event?_limit=``
+    form. The client now POSTs ``{"_limit", "_sort"}`` to ``/stat/event``."""
+    import json as _json
+
+    captured: dict = {}
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = _json.loads(request.content)
+        return httpx.Response(200, json={"data": [{"_id": "e1"}]})
+
+    respx.post(f"{BASE}/stat/event").mock(side_effect=capture)
     result = await _call(real_server, "list_events", {"limit": 5})
     assert result[0]["_id"] == "e1"
+    assert captured["body"]["_limit"] == 5
+    assert captured["body"]["_sort"] == "-time"
 
 
 @respx.mock
 async def test_real_list_alarms(real_server: FastMCP) -> None:
-    respx.get(f"{BASE}/stat/alarm?archived=false&_limit=5").mock(
-        return_value=httpx.Response(200, json={"data": [{"_id": "a1"}]})
-    )
+    """UniFi Network 9.x 404s the legacy ``GET /stat/alarm?archived=...`` form.
+    The client now POSTs to ``/stat/alarm`` and filters ``archived``
+    client-side, so an active query drops archived records."""
+    import json as _json
+
+    captured: dict = {}
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = _json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"_id": "a1", "archived": False, "user": "aa:bb:cc:dd:ee:ff"},
+                    {"_id": "a2", "archived": True},
+                ]
+            },
+        )
+
+    respx.post(f"{BASE}/stat/alarm").mock(side_effect=capture)
     result = await _call(real_server, "list_alarms", {"limit": 5, "archived": False})
-    assert result[0]["_id"] == "a1"
+    assert captured["body"]["_sort"] == "-time"
+    # Only the active alarm survives the client-side archived filter.
+    assert [r["_id"] for r in result] == ["a1"]
+    assert result[0]["user"] == "aa:bb:cc:dd:ee:ff"
+
+
+@respx.mock
+async def test_real_list_alarms_archived(real_server: FastMCP) -> None:
+    """Archived query returns only archived alarms."""
+    respx.post(f"{BASE}/stat/alarm").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"_id": "a1", "archived": False},
+                    {"_id": "a2", "archived": True},
+                ]
+            },
+        )
+    )
+    result = await _call(real_server, "list_alarms", {"limit": 5, "archived": True})
+    assert [r["_id"] for r in result] == ["a2"]
 
 
 @respx.mock
