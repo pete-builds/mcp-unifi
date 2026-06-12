@@ -7,6 +7,146 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-06-12
+
+### Added
+
+- **Network tool expansion: firewall groups, static routes, and v2 traffic
+  policies (18 new Network tools).** All four endpoint families were verified
+  live read-only against the UCG-Fiber (UniFi Network 10.4.57) before build;
+  each returns an empty list on a fresh gateway. Reads return the records as-is;
+  every mutating tool carries `dry_run=True`, and the deletes use the
+  preview-then-confirm token flow (`confirm_destructive_action`). A new
+  reusable client helper `_v2_request` wraps the `/proxy/network/v2/api/site/<site>/...`
+  surface (bare-list responses, unlike the legacy `{meta, data}` envelope).
+  - **Firewall groups** (`/rest/firewallgroup`, folded into the firewall
+    module): `list_firewall_groups`, `get_firewall_group_details`,
+    `create_firewall_group` (type one of `address-group` /
+    `ipv6-address-group` / `port-group`), `update_firewall_group` (full-PUT
+    read-modify-write; members replaced wholesale, `group_type` preserved),
+    `delete_firewall_group` (preview-token).
+  - **Static routes** (`/rest/routing`, new `routing` module):
+    `list_routes`, `get_route_details`, `create_route` (CIDR destination +
+    next-hop + administrative distance), `update_route`, `delete_route`
+    (preview-token).
+  - **Traffic rules** (v2 `/trafficrules`, new `traffic` module):
+    `list_traffic_rules`, `get_traffic_rule_details`, `create_traffic_rule`,
+    `update_traffic_rule` (read-modify-write), `toggle_traffic_rule`
+    (enable/disable).
+  - **Traffic routes** (v2 `/trafficroutes`, policy-based routing):
+    `list_traffic_routes`, `get_traffic_route_details`, `update_traffic_route`
+    (incl. `kill_switch_enabled`), `toggle_traffic_route`.
+- Stub parity: seeded in-memory state for firewall groups, static routes,
+  traffic rules, and traffic routes so the offline stub backend round-trips
+  create/update/delete for each.
+- **Network detail + DNS tools (10 new Network tools).** All endpoints were
+  verified live read-only against the UCG-Fiber (UniFi Network 10.4.57) before
+  build. Mutating tools carry `dry_run=True`; deletes use the
+  preview-then-confirm token flow (`confirm_destructive_action`).
+  - **Network detail** (`/rest/networkconf`, folded into the VLAN module):
+    `get_network_details` — the deep, sectioned view that complements
+    `list_networks`. Resolves a network by `network_id` or `name` and groups
+    the record into `network` (identity), `dhcp` (all `dhcpd_*`/`dhcpdv6_*`),
+    `ipv6` (LAN IPv6: `ipv6_interface_type`, `ipv6_ra_enabled`,
+    `ipv6_client_address_assignment`, `ipv6_pd_start`/`ipv6_pd_stop`, RA
+    tuning), `vpn`, and `raw` sections. (No `create_network`/`delete_network`
+    added: `create_vlan`/`delete_vlan` already cover non-VLAN corporate LANs
+    via the `purpose` parameter, so a generic pair would be redundant.)
+  - **DNS content filtering** (v2 `/content-filtering`, new `content_filtering`
+    module; the gateway's adblock/category-blocking profiles):
+    `list_content_filters`, `get_content_filter_details`,
+    `update_content_filter` (read-modify-write; list fields replaced
+    wholesale), `delete_content_filter` (preview-token).
+  - **Dynamic DNS** (`/rest/dynamicdns`, new `dynamic_dns` module):
+    `list_dynamic_dns`, `get_dynamic_dns_details`, `create_dynamic_dns`
+    (provider/host/login/password/interface; password redacted in previews and
+    reads), `update_dynamic_dns`, `delete_dynamic_dns` (preview-token).
+  - A static-DNS-records API (`/v2/.../dns-records`) returned 404 on this
+    firmware, so no static-DNS-record tools were built (no live surface).
+- Stub parity: seeded a sample content-filtering profile (so get/update/delete
+  round-trip) and an empty Dynamic DNS collection (matching the live gateway;
+  create/update/delete still round-trip).
+- **Stats & insights read pack (6 new Network tools, all read-only).** Every
+  endpoint was probed read-only against the live UCG-Fiber (UniFi Network
+  10.4.57) before build; tools were shipped only where the firmware exposes a
+  working surface. All six are in `READ_ONLY_TOOLS` (no `dry_run`). Backend
+  shaping (`clients/stats_shape.py`) trims the noisy controller records to a
+  compact, stable LLM-facing payload identical across the stub and real
+  backends.
+  - `get_system_info` (`/stat/sysinfo`) — controller version, build, hostname,
+    uptime, device type, and update-availability flags.
+  - `get_gateway_stats` (gateway `/stat/device` record) — CPU %, memory %,
+    board/CPU/PMIC temperatures, throughput counters, client count, WAN IP.
+  - `get_device_stats(mac)` (`/stat/device`) — per-device uptime, CPU/mem,
+    satisfaction, client count, throughput, and (for APs) tx-retries/packets.
+  - `get_client_stats(mac)` (`/stat/sta`) — per-client signal/RSSI/satisfaction,
+    uptime, tx/rx bytes and rates, retries, anomalies; wired fields when wired.
+  - `get_client_sessions(mac="", hours=24, limit=50)` (`POST /stat/session`) —
+    recent connection sessions, newest first, with assoc time, duration,
+    throughput, and roaming detail; optional per-client filter.
+  - `get_anomalies` (`/stat/anomalies`) — client-impacting anomalies
+    (e.g. `USER_HIGH_TCP_LATENCY`) with the affected MAC and occurrence times.
+  - **Deferred (no live surface on this firmware, not shipped):** IPS/IDS
+    threat events (`/stat/ips/event`, `/stat/ips/events`, `/rest/ips`,
+    `/stat/threat` all 404/400) and the full DPI pack (`get_dpi_stats`,
+    `get_site_dpi_traffic`, `list_dpi_applications`, `list_dpi_categories`) —
+    DPI is unpopulated on this gateway and the app/category reference dicts
+    (`/stat/dpiapp`, `/stat/dpigroup`) 404. **Skipped as duplicates:**
+    `get_top_clients` (the existing `list_top_talkers` already wraps the DPI
+    by-station view) and `get_network_health` (the existing `get_site_health`
+    already passes the full `/stat/health` per-subsystem record through).
+- Stub parity: seeded sysinfo, anomalies, and client-session state plus
+  `system-stats`/`temperatures`/`stat.ap` fields on the seed gateway and AP so
+  the offline stub backend returns plausible stats for every Wave C tool.
+
+## [0.14.0] - 2026-06-12
+
+### Added
+
+- **IPv6 / dual-stack configuration tools (3 new Network tools).** IPv6 is
+  modelled entirely inside the `/rest/networkconf` records the VLAN tools
+  already read-modify-write, so these tools reuse `list_networks` /
+  `update_network` (`PUT /rest/networkconf/<id>`) — no new endpoint. Every
+  write reads the live record first, mutates only the supplied IPv6 keys, and
+  writes the rest back unchanged. Mutating tools carry `dry_run=True` with a
+  `before`/`after` diff.
+  - `get_wan_ipv6` — read-only view of the WAN uplink IPv6 config:
+    `wan_type_v6` (connection type), `ipv6_wan_delegation_type`,
+    `wan_dhcpv6_pd_size_auto`/`wan_dhcpv6_pd_size`, `wan_ipv6_dns_preference`,
+    `ipv6_setting_preference`. The read-before-write companion for
+    `set_wan_ipv6`.
+  - `set_wan_ipv6` — set the WAN IPv6 connection type
+    (`disabled`/`dhcpv6`/`pppoe`/`static`), prefix delegation
+    (`none`/`prefix-delegation`), PD size (48-64), and IPv6 DNS preference.
+    Multi-WAN gateways select by `wan_name`. The `dry_run` output includes an
+    explicit **blast-radius** note: changing the WAN IPv6 type re-establishes
+    the WAN IPv6 session (IPv6 hosts briefly lose reachability; IPv4 is
+    unaffected).
+  - `set_lan_ipv6` — set a LAN/VLAN's IPv6 interface type
+    (`none`/`pd`/`static`), Router Advertisements on/off, address-assignment
+    mode (`slaac`/`dhcpv6`), and DHCPv6 DNS (auto or up to four explicit
+    servers). Refuses a WAN target and points the caller at `set_wan_ipv6`.
+- `list_networks` now surfaces each network's IPv6 state inline
+  (`ipv6_interface_type`, `ipv6_ra_enabled`, `ipv6_client_address_assignment`)
+  so callers see dual-stack status without a separate read.
+- Stub parity: the seeded stub state now carries a WAN `networkconf` record
+  and IPv6 keys on the LAN so the IPv6 tools return plausible state offline.
+
+### Field surface (probed live, 2026-06-12)
+
+- Probed a UCG-Fiber on UniFi Network 10.4.57 (Empire Access uplink, ASN
+  40545). All WAN and LAN IPv6 keys above are present and writable on the
+  `networkconf` records.
+
+### Not added
+
+- An IPv6-specific firewall tool. On this firmware the `/rest/firewallrule`
+  records carry **no** IP-family/version field and only the `LAN_IN` ruleset
+  is present, so IPv4 and IPv6 rules cannot be distinguished through this API
+  surface. Follow-up gap: when IPv6 is enabled, IPv6 inbound hosts are not
+  separately firewalled by the existing rule tools. Track separately before
+  exposing global IPv6 to LAN clients.
+
 ## [0.13.0] - 2026-06-11
 
 ### Added

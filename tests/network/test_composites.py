@@ -51,8 +51,9 @@ async def test_create_iot_network_happy_path(stub_server: FastMCP, stub_state: S
     assert result["firewall_rule"]["name"] == "Block IoT -> Main LAN"
     assert result["firewall_rule"]["src_address"] == "10.0.20.0/24"
     assert "iot-pass-1234" not in json.dumps(result)
-    # State should reflect all three resources.
-    assert len(stub_state.list_networks()) == 2
+    # State should reflect all three resources. Networks: seed LAN + seed WAN
+    # + the created IoT network.
+    assert len(stub_state.list_networks()) == 3
     assert len(stub_state.list_wlans()) == 2
     assert len(stub_state.list_firewall_rules()) == 2
 
@@ -101,8 +102,8 @@ async def test_create_iot_network_rollback_on_wlan_failure(
     assert "WLAN" in result["error"] or "wlan" in result["error"]
     assert result["partial"]["network"] is not None
     assert result["partial"]["wlan"] is None
-    # VLAN should be cleaned up in rollback
-    assert len(stub_state.list_networks()) == 1
+    # VLAN should be cleaned up in rollback, leaving the seed (LAN + WAN).
+    assert len(stub_state.list_networks()) == 2
     assert any(
         action.get("network") == result["partial"]["network"]["_id"]
         for action in result["rolled_back"]
@@ -129,8 +130,8 @@ async def test_create_iot_network_rollback_on_firewall_failure(
     assert "firewall" in result["error"].lower()
     assert result["partial"]["network"] is not None
     assert result["partial"]["wlan"] is not None
-    # Both VLAN and WLAN should be cleaned up
-    assert len(stub_state.list_networks()) == 1
+    # Both VLAN and WLAN should be cleaned up, leaving the seed (LAN + WAN).
+    assert len(stub_state.list_networks()) == 2
     assert len(stub_state.list_wlans()) == 1
     rolled_kinds = {next(iter(action.keys() - {"deleted"})) for action in result["rolled_back"]}
     assert "wlan" in rolled_kinds
@@ -521,8 +522,8 @@ async def test_create_guest_network_rollback_on_wlan_failure(
         },
     )
     assert "wlan" in result["error"].lower()
-    # VLAN should be rolled back.
-    assert len(stub_state.list_networks()) == 1
+    # VLAN should be rolled back, leaving the seed (LAN + WAN).
+    assert len(stub_state.list_networks()) == 2
 
 
 async def test_create_guest_network_rollback_on_vlan_failure(
