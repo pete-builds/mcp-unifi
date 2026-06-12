@@ -110,6 +110,31 @@ class UniFiClient:
     async def _get(self, path: str) -> Any:
         return await self._request("GET", f"{self._site_path}{path}")
 
+    async def _get_optional(self, path: str, params: dict[str, Any] | None = None) -> Any:
+        """GET that tolerates a route the firmware does not expose.
+
+        Some legacy endpoints (notably ``/stat/event``) are absent on newer
+        UniFi Network firmware and answer 404 (``api.err.NotFound``) or 400
+        (``api.err.InvalidObject``). For read-only observability calls that have
+        no working alternative on this gateway, we treat those as "no records"
+        rather than surfacing an error, while still raising on genuine transport
+        or auth failures.
+        """
+        query = ""
+        if params:
+            query = "?" + "&".join(f"{k}={v}" for k, v in params.items())
+        try:
+            return await self._request("GET", f"{self._site_path}{path}{query}")
+        except UniFiError as exc:
+            text = str(exc)
+            if " returned 404" in text or " returned 400" in text:
+                logger.info(
+                    "UniFi endpoint not available on this firmware; returning empty result",
+                    extra={"path": path, "error": text[:200]},
+                )
+                return []
+            raise
+
     async def _post(self, path: str, payload: dict[str, Any]) -> Any:
         return await self._request("POST", f"{self._site_path}{path}", json=payload)
 
@@ -298,6 +323,17 @@ class UniFiClient:
             )
         )
 
+    async def update_device(self, device_id: str, payload: dict[str, Any]) -> UniFiRecord:
+        """Patch fields on a device config record.
+
+        UniFi merges the supplied keys into the stored record via
+        ``PUT /rest/device/<device_id>`` (the same endpoint
+        :meth:`set_port_state` uses for ``port_overrides``). Array-valued
+        fields like ``radio_table`` replace wholesale, so callers must send
+        the full read-modify-written array, never a partial one.
+        """
+        return self._first_record(await self._put(f"/rest/device/{device_id}", payload))
+
     async def get_device(self, device_id: str) -> UniFiRecord:
         result = await self._get(f"/stat/device/{device_id}")
         if isinstance(result, list) and result:
@@ -363,36 +399,46 @@ class UniFiClient:
     async def list_events(self, limit: int) -> list[UniFiRecord]:
         """Return recent controller events, newest first.
 
-        UniFi OS gateways (UCG-Fiber, UDM) on UniFi Network 9.x reject the
-        legacy ``GET /stat/event?_limit=...`` form with HTTP 404
-        (``api.err.NotFound``). The modern contract is a ``POST`` to
-        ``/stat/event`` with a JSON body carrying ``_limit`` and ``_sort``
-        (same pattern as ``get_speedtest_results``). Verified against the
-        unpoller/unifi reference client, which posts
-        ``{"_limit": N, "within": H, "_sort": "-time"}`` to this path.
-        We omit ``within`` so the controller returns the most recent events
-        regardless of age, then let the caller's ``limit`` bound the set.
+        Probed live against a UCG-Fiber on UniFi Network 10.4.57 (2026-06-03):
+        the legacy event log route is **not exposed** on this firmware via the
+        local API-key surface. ``GET``/``POST /stat/event`` both return HTTP 404
+        (``api.err.NotFound``), the v2 (``/v2/api/site/default/...``) tree has no
+        event path, and the official Integration API (``/integration/v1/...``)
+        has no events resource. ``/rest/event`` answers 400
+        (``api.err.InvalidObject``) — it is a config collection, not a log
+        reader. The 404 is route-absence, not a scope gate: sibling ``stat/*``
+        routes (``stat/sta``, ``stat/rogueap``, ``stat/health``) all return 200
+        with the same key.
+
+        We attempt the legacy ``GET /stat/event`` for forward compatibility (a
+        future firmware may restore it) and, on the expected NOT_FOUND, return
+        an empty list rather than raising. Alarms (``list_alarms``) remain the
+        working observability surface on this gateway.
         """
-        payload: dict[str, Any] = {"_limit": limit, "_sort": "-time"}
-        records = await self._post("/stat/event", payload) or []
+        records = await self._get_optional(
+            "/stat/event", params={"_limit": limit, "_sort": "-time"}
+        )
         return records if isinstance(records, list) else []
 
     async def list_alarms(self, limit: int, archived: bool) -> list[UniFiRecord]:
         """Return controller alarms, active or archived, newest first.
 
-        Same modern-controller contract as ``list_events``: UniFi Network 9.x
-        404s the legacy ``GET /stat/alarm?archived=...&_limit=...`` form. We
-        ``POST`` to ``/stat/alarm`` with ``{"_limit", "_sort"}`` and filter on
-        the ``archived`` flag client-side, because the controller's server-side
-        ``archived`` body filter is inconsistent across firmware revisions.
-        Alarm records carry the originating client MAC (``user`` / ``sta``),
-        AP MAC (``ap``), ``ssid``, ``subsystem``, ``key``, ``msg``, and
-        ``time`` / ``datetime`` fields, which pass straight through to callers.
+        Probed live against a UCG-Fiber on UniFi Network 10.4.57 (2026-06-03):
+        the working route is ``GET /proxy/network/api/s/{site}/list/alarm``,
+        which returns HTTP 200 with the standard ``{"meta", "data"}`` envelope
+        and honours a server-side ``?archived=<bool>`` filter. The previously
+        shipped ``POST /stat/alarm`` form returns HTTP 404 on this firmware and
+        is abandoned.
+
+        We pass ``archived`` through as the server-side query filter and also
+        apply a defensive client-side filter, then bound the result to
+        ``limit``. Alarm records carry the originating client MAC
+        (``user`` / ``sta``), AP MAC (``ap``), ``ssid``, ``subsystem``,
+        ``key``, ``msg``, and ``time`` / ``datetime`` fields, which pass
+        straight through to callers.
         """
-        # Over-fetch so client-side archived filtering still yields up to
-        # ``limit`` matching records.
-        payload: dict[str, Any] = {"_limit": max(limit * 4, limit), "_sort": "-time"}
-        records = await self._post("/stat/alarm", payload) or []
+        archived_flag = "true" if archived else "false"
+        records = await self._get(f"/list/alarm?archived={archived_flag}") or []
         if not isinstance(records, list):
             return []
         filtered = [

@@ -1,5 +1,5 @@
 {
-  "tool_count": 86,
+  "tool_count": 91,
   "tools": [
     {
       "description": "Return credentials expiring within ``days_ahead`` days.\n\nSide effects: None (read-only).\n\nIterates ``list_credentials`` client-side and filters to those whose\n``expires_at`` falls inside the window ``[now, now + days_ahead]``.\nCredentials with no ``expires_at`` (typical for mobile credentials)\nare excluded. Each entry includes ``days_until_expiry`` so the LLM\ncan sort and summarise without re-doing the math.\n\nExample: audit_expiring_credentials(days_ahead=14)",
@@ -958,6 +958,28 @@
       "name": "get_credential"
     },
     {
+      "description": "Show per-radio RF settings for an access point.\n\nSide effects: None (read-only). Use this before any\n``set_radio_*`` call to see the current values you are about to\nchange.\n\nReturns the device identity plus one record per radio with\n``radio`` (UniFi id: ``ng``=2.4GHz, ``na``=5GHz, ``6e``=6GHz), the\nfriendly ``band``, ``channel``, ``ht`` (channel width MHz),\n``tx_power_mode`` (``auto`` when unset), ``tx_power``,\n``min_rssi_enabled``, ``min_rssi``, and the hardware\n``min_txpower``/``max_txpower`` bounds.\n\nExample: get_device_radios(device_mac=\"aa:bb:cc:00:00:02\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "device_mac": {
+            "description": "AP MAC address (from ``list_devices``).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_mac"
+        ],
+        "type": "object"
+      },
+      "name": "get_device_radios"
+    },
+    {
       "description": "Fetch one door's full record by ID.\n\nSide effects: None (read-only).\n\nReturns the same fields as one entry in ``list_doors`` plus the live\nlock and position status. Useful for confirming a door is online\nbefore reading recent events against it.\n\nExample: get_door(door_id=\"abc...\", controller=\"default\")",
       "input_schema": {
         "additionalProperties": false,
@@ -1853,6 +1875,38 @@
       "name": "reconnect_client"
     },
     {
+      "description": "Rename an adopted UniFi device (AP, switch, or gateway).\n\nSide effects:\n- Cosmetic only: changes the display name in the controller and in\n  tool output. No RF or traffic impact, no client disconnects.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: rename_device(device_mac=\"aa:bb:cc:00:00:02\", name=\"Bedroom AP\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "device_mac": {
+            "description": "Device MAC address (from ``list_devices``).",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it. Returns the\npredicted change set.",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "New display name. Must be non-empty.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_mac",
+          "name"
+        ],
+        "type": "object"
+      },
+      "name": "rename_device"
+    },
+    {
       "description": "Restart an adopted UniFi device (gateway, AP, or switch).\n\nSide effects:\n- Issues a soft reboot. The device is unreachable for ~60 seconds.\n- Wireless clients on a restarted AP will be disconnected and must\n  re-associate.\n- Restarting a gateway interrupts WAN/LAN traffic for the duration\n  of the reboot.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: restart_device(mac=\"aa:bb:cc:00:00:01\")",
       "input_schema": {
         "additionalProperties": false,
@@ -2055,6 +2109,132 @@
         "type": "object"
       },
       "name": "set_port_state"
+    },
+    {
+      "description": "Set the channel and/or channel width of one radio on an AP.\n\nSide effects:\n- The radio retunes immediately; wireless clients on that band\n  briefly disconnect and re-associate.\n- On 5GHz, DFS channels (52-144) may add a radar-scan delay before\n  the radio starts serving clients.\n- Only the targeted radio changes; everything else on the device is\n  read first and written back unchanged.\n- Mutates controller state. Use dry_run=True to preview the change\n  (including the current value) without applying.\n\nRead first: call ``get_device_radios`` to see the current channel\nand width.\n\nExample: set_radio_channel(device_mac=\"aa:bb:cc:00:00:02\", band=\"5g\", channel=\"36\", width_mhz=80)",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "band": {
+            "description": "``\"2g\"``, ``\"5g\"``, or ``\"6g\"`` (raw UniFi ids ``ng``,\n``na``, ``6e`` also accepted).",
+            "type": "string"
+          },
+          "channel": {
+            "default": "",
+            "description": "``\"auto\"`` or a channel number as a string (e.g.\n``\"36\"``). Empty (default) leaves the channel unchanged.",
+            "type": "string"
+          },
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "device_mac": {
+            "description": "AP MAC address (from ``list_devices``).",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it. Returns the\npredicted change set.",
+            "type": "boolean"
+          },
+          "width_mhz": {
+            "default": 0,
+            "description": "Channel width: 20, 40, 80, 160, 240, or 320.\n``0`` (default) leaves the width unchanged.",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "device_mac",
+          "band"
+        ],
+        "type": "object"
+      },
+      "name": "set_radio_channel"
+    },
+    {
+      "description": "Enable, tune, or disable minimum RSSI on one radio of an AP.\n\nSide effects:\n- With min-RSSI enabled, the AP kicks clients whose signal drops\n  below the threshold, forcing them to roam to a closer AP. A\n  threshold set too aggressive (e.g. -60) causes disconnect loops\n  for legitimately distant clients.\n- Only the targeted radio changes; everything else on the device is\n  read first and written back unchanged.\n- Mutates controller state. Use dry_run=True to preview the change\n  (including the current value) without applying.\n\nRead first: call ``get_device_radios`` to see the current state.\nTypical sticky-client thresholds are -75 to -70 dBm.\n\nExample: set_radio_min_rssi(device_mac=\"aa:bb:cc:00:00:02\", band=\"5g\", enabled=True, rssi_dbm=-75)",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "band": {
+            "description": "``\"2g\"``, ``\"5g\"``, or ``\"6g\"`` (raw UniFi ids ``ng``,\n``na``, ``6e`` also accepted).",
+            "type": "string"
+          },
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "device_mac": {
+            "description": "AP MAC address (from ``list_devices``).",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it. Returns the\npredicted change set.",
+            "type": "boolean"
+          },
+          "enabled": {
+            "description": "``True`` enforces the threshold; ``False`` turns\nmin-RSSI off for this radio.",
+            "type": "boolean"
+          },
+          "rssi_dbm": {
+            "default": 0,
+            "description": "Threshold in dBm (negative, e.g. ``-75``). Required\nwhen ``enabled=True``.",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "device_mac",
+          "band",
+          "enabled"
+        ],
+        "type": "object"
+      },
+      "name": "set_radio_min_rssi"
+    },
+    {
+      "description": "Set the transmit power mode of one radio on an access point.\n\nSide effects:\n- Changes the AP's RF footprint. Lowering TX power shrinks coverage;\n  clients at the cell edge may roam to another AP or drop to a lower\n  PHY rate. The radio applies the change within seconds (brief\n  client re-association possible).\n- Only the targeted radio changes; the device's other radios and\n  settings are read first and written back unchanged.\n- Mutates controller state. Use dry_run=True to preview the change\n  (including the current value) without applying.\n\nRead first: call ``get_device_radios`` to see the current mode and\nthe radio's supported dBm range before changing it.\n\nExample: set_radio_tx_power(device_mac=\"aa:bb:cc:00:00:02\", band=\"5g\", mode=\"medium\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "band": {
+            "description": "``\"2g\"``, ``\"5g\"``, or ``\"6g\"`` (raw UniFi ids ``ng``,\n``na``, ``6e`` also accepted).",
+            "type": "string"
+          },
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "device_mac": {
+            "description": "AP MAC address (from ``list_devices``).",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it. Returns the\npredicted change set.",
+            "type": "boolean"
+          },
+          "mode": {
+            "description": "``\"auto\"``, ``\"high\"``, ``\"medium\"``, ``\"low\"``, or\n``\"custom\"`` (requires ``power_dbm``).",
+            "type": "string"
+          },
+          "power_dbm": {
+            "default": 0,
+            "description": "Exact transmit power in dBm, only used with\n``mode=\"custom\"``. Validated against the radio's\n``min_txpower``/``max_txpower`` bounds.",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "device_mac",
+          "band",
+          "mode"
+        ],
+        "type": "object"
+      },
+      "name": "set_radio_tx_power"
     },
     {
       "description": "Toggle the Teleport VPN listener.\n\nSide effects:\n- Patches the ``teleport`` setting record's ``enabled`` field.\n  When ``False``, the controller tears down the listener and\n  disconnects any active sessions. Registered clients (via the\n  mobile app) remain registered and reconnect once the listener\n  is re-enabled.\n- Mutates controller state. Use dry_run=True to preview.\n\nExample: set_teleport_enabled(enabled=True)",

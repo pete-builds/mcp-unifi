@@ -508,6 +508,22 @@ class StubState:
                 return d
         return None
 
+    def update_device(self, device_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        """Merge ``patch`` into the device record matching ``device_id``."""
+        for dev in self.devices:
+            if dev.get("_id") == device_id:
+                dev.update(patch)
+                self.audit_log.append(
+                    {
+                        "action": "update_device",
+                        "device_id": device_id,
+                        "fields": sorted(patch),
+                        "ts": _ts(),
+                    }
+                )
+                return dev
+        return None
+
     def restart_device(self, mac: str) -> bool:
         dev = self.find_device_by_mac(mac)
         if dev is None:

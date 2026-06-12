@@ -156,35 +156,38 @@ async def test_real_get_wan_status_unknown_when_missing(real_server: FastMCP) ->
 
 @respx.mock
 async def test_real_list_events(real_server: FastMCP) -> None:
-    """UniFi Network 9.x (UCG-Fiber) 404s the legacy ``GET /stat/event?_limit=``
-    form. The client now POSTs ``{"_limit", "_sort"}`` to ``/stat/event``."""
-    import json as _json
+    """On a UCG-Fiber (Network 10.4.57) the legacy event log route is absent and
+    returns 404 ``api.err.NotFound`` (probed live 2026-06-03). The client GETs
+    ``/stat/event`` and, on the firmware's 404, returns an empty list rather
+    than raising. A future firmware that restores the route and returns 200
+    flows records straight through."""
+    respx.get(f"{BASE}/stat/event").mock(
+        return_value=httpx.Response(
+            404, json={"meta": {"rc": "error", "msg": "api.err.NotFound"}, "data": []}
+        )
+    )
+    result = await _call(real_server, "list_events", {"limit": 5})
+    assert result == []
 
-    captured: dict = {}
 
-    def capture(request: httpx.Request) -> httpx.Response:
-        captured["body"] = _json.loads(request.content)
-        return httpx.Response(200, json={"data": [{"_id": "e1"}]})
-
-    respx.post(f"{BASE}/stat/event").mock(side_effect=capture)
+@respx.mock
+async def test_real_list_events_forward_compat(real_server: FastMCP) -> None:
+    """If a firmware restores ``GET /stat/event``, records flow through."""
+    respx.get(f"{BASE}/stat/event").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "e1"}]})
+    )
     result = await _call(real_server, "list_events", {"limit": 5})
     assert result[0]["_id"] == "e1"
-    assert captured["body"]["_limit"] == 5
-    assert captured["body"]["_sort"] == "-time"
 
 
 @respx.mock
 async def test_real_list_alarms(real_server: FastMCP) -> None:
-    """UniFi Network 9.x 404s the legacy ``GET /stat/alarm?archived=...`` form.
-    The client now POSTs to ``/stat/alarm`` and filters ``archived``
-    client-side, so an active query drops archived records."""
-    import json as _json
-
-    captured: dict = {}
-
-    def capture(request: httpx.Request) -> httpx.Response:
-        captured["body"] = _json.loads(request.content)
-        return httpx.Response(
+    """On a UCG-Fiber (Network 10.4.57) alarms come from
+    ``GET /list/alarm?archived=<bool>`` (HTTP 200, probed live 2026-06-03). The
+    old ``POST /stat/alarm`` form 404s and is abandoned. The active query keeps
+    only non-archived records via the defensive client-side filter."""
+    respx.get(f"{BASE}/list/alarm").mock(
+        return_value=httpx.Response(
             200,
             json={
                 "data": [
@@ -193,11 +196,9 @@ async def test_real_list_alarms(real_server: FastMCP) -> None:
                 ]
             },
         )
-
-    respx.post(f"{BASE}/stat/alarm").mock(side_effect=capture)
+    )
     result = await _call(real_server, "list_alarms", {"limit": 5, "archived": False})
-    assert captured["body"]["_sort"] == "-time"
-    # Only the active alarm survives the client-side archived filter.
+    # Only the active alarm survives the archived filter.
     assert [r["_id"] for r in result] == ["a1"]
     assert result[0]["user"] == "aa:bb:cc:dd:ee:ff"
 
@@ -205,7 +206,7 @@ async def test_real_list_alarms(real_server: FastMCP) -> None:
 @respx.mock
 async def test_real_list_alarms_archived(real_server: FastMCP) -> None:
     """Archived query returns only archived alarms."""
-    respx.post(f"{BASE}/stat/alarm").mock(
+    respx.get(f"{BASE}/list/alarm").mock(
         return_value=httpx.Response(
             200,
             json={

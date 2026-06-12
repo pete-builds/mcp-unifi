@@ -57,6 +57,10 @@ DESTRUCTIVE_TOOLS: frozenset[str] = frozenset(
         "restart_device",
         "locate_device",
         "set_port_state",
+        "set_radio_tx_power",
+        "set_radio_min_rssi",
+        "set_radio_channel",
+        "rename_device",
         # composites
         "create_iot_network",
         "create_guest_network",
