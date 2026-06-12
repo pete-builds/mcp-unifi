@@ -67,8 +67,8 @@ async def test_create_vlan_does_not_leak_across_controllers(
 
     assert 50 in home_vlans
     assert 50 not in office_vlans
-    # Office should still only have its seed network (no vlan tag).
-    assert len(office_nets) == 1
+    # Office should still only have its seed networks (LAN + WAN, no vlan tag).
+    assert len(office_nets) == 2
 
 
 async def test_unknown_controller_returns_clear_error(

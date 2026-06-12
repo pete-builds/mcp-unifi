@@ -1,5 +1,5 @@
 {
-  "tool_count": 91,
+  "tool_count": 94,
   "tools": [
     {
       "description": "Return credentials expiring within ``days_ahead`` days.\n\nSide effects: None (read-only).\n\nIterates ``list_credentials`` client-side and filters to those whose\n``expires_at`` falls inside the window ``[now, now + days_ahead]``.\nCredentials with no ``expires_at`` (typical for mobile credentials)\nare excluded. Each entry includes ``days_until_expiry`` so the LLM\ncan sort and summarise without re-doing the math.\n\nExample: audit_expiring_credentials(days_ahead=14)",
@@ -1153,6 +1153,26 @@
       "name": "get_visitor"
     },
     {
+      "description": "Show the current IPv6 configuration of the WAN uplink(s).\n\nSide effects: None (read-only). Call this before ``set_wan_ipv6`` to\nsee exactly what you are about to change.\n\nReturns one record per WAN interface with ``name``, ``_id``, and the\nIPv6 keys: ``wan_type_v6`` (connection type: ``disabled``/``dhcpv6``/\n``pppoe``/``static``), ``ipv6_wan_delegation_type`` (``none`` or\n``prefix-delegation``), ``wan_dhcpv6_pd_size_auto``,\n``wan_dhcpv6_pd_size`` (present only when PD is configured),\n``wan_ipv6_dns_preference``, and ``ipv6_setting_preference``.\n\nExample: get_wan_ipv6(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "wan_name": {
+            "default": "",
+            "description": "Restrict the view to a single WAN by display name\n(e.g. ``\"Internet 1\"``). Empty (default) returns every WAN.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "get_wan_ipv6"
+    },
+    {
       "description": "Report current WAN status: link, ISP, public IP, throughput, latency.\n\nSide effects: None (read-only).\n\nConvenience wrapper around ``get_site_health`` that returns just the\nWAN subsystem record. Returns ``{\"subsystem\": \"wan\", \"status\":\n\"unknown\"}`` if the controller does not report WAN.\n\nExample: get_wan_status(controller=\"default\")",
       "input_schema": {
         "additionalProperties": false,
@@ -1518,7 +1538,7 @@
       "name": "list_motion_events"
     },
     {
-      "description": "List every network/VLAN configured on the controller.\n\nSide effects: None (read-only).\n\nReturns one record per network with ``_id``, ``name``, ``purpose``,\n``vlan``, ``vlan_enabled``, ``ip_subnet``, ``dhcpd_enabled``,\n``dhcpd_start``, ``dhcpd_stop``, and ``enabled``.\n\nExample: list_networks(controller=\"default\")",
+      "description": "List every network/VLAN configured on the controller.\n\nSide effects: None (read-only).\n\nReturns one record per network with ``_id``, ``name``, ``purpose``,\n``vlan``, ``vlan_enabled``, ``ip_subnet``, ``dhcpd_enabled``,\n``dhcpd_start``, ``dhcpd_stop``, and ``enabled``. Records also carry\ntheir IPv6 state inline: ``ipv6_interface_type`` (``none``/``pd``/\n``static``), ``ipv6_ra_enabled`` (router advertisements), and\n``ipv6_client_address_assignment`` (``slaac``/``dhcpv6``). Use\n``set_lan_ipv6`` to change those, or ``get_wan_ipv6`` /\n``set_wan_ipv6`` for the WAN uplink's IPv6 config.\n\nExample: list_networks(controller=\"default\")",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -2025,6 +2045,82 @@
       "name": "set_camera_recording_mode"
     },
     {
+      "description": "Set the IPv6 configuration of one LAN/VLAN network.\n\nSide effects:\n- Changes how this network gets and advertises IPv6. Turning on\n  ``interface_type=\"pd\"`` plus ``ra_enabled=True`` is what makes the\n  LAN's clients receive global IPv6 addresses from the prefix\n  delegated by the WAN. Toggling router advertisements\n  (``ra_enabled``) or the address-assignment mode causes clients on\n  this network to re-acquire IPv6; IPv4 is unaffected.\n- Only the IPv6 keys you supply change; every other field on the\n  network record is read first and written back unchanged (strict\n  read-modify-write).\n- Mutates controller state. Use dry_run=True to preview the before/\n  after diff without applying.\n\nRead first: call ``list_networks`` to find the ``network_id`` and see\nthe current ``ipv6_*`` state (now surfaced inline).\n\nExample: set_lan_ipv6(network_id=\"65f...\", interface_type=\"pd\", ra_enabled=True, dry_run=True)",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "address_assignment": {
+            "default": "",
+            "description": "``\"slaac\"`` or ``\"dhcpv6\"``. Empty leaves it\nunchanged.",
+            "type": "string"
+          },
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dns_auto": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "``True`` to advertise the gateway as DNS, ``False`` to\nuse explicit servers from ``dns_servers``. ``None`` leaves it\nunchanged."
+          },
+          "dns_servers": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Up to four IPv6 DNS server addresses, applied as\n``dhcpdv6_dns_1..4`` when ``dns_auto=False``. ``None`` leaves\nthem unchanged."
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the before/after diff without applying it.",
+            "type": "boolean"
+          },
+          "interface_type": {
+            "default": "",
+            "description": "``\"none\"``, ``\"pd\"`` (use the WAN-delegated\nprefix), or ``\"static\"``. Empty leaves it unchanged.",
+            "type": "string"
+          },
+          "network_id": {
+            "description": "The ``_id`` from ``list_networks`` (a LAN/VLAN, not a\nWAN).",
+            "type": "string"
+          },
+          "ra_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "``True``/``False`` to toggle IPv6 Router\nAdvertisements (SLAAC). ``None`` (default) leaves it unchanged."
+          }
+        },
+        "required": [
+          "network_id"
+        ],
+        "type": "object"
+      },
+      "name": "set_lan_ipv6"
+    },
+    {
       "description": "Set a camera's motion sensitivity (0-100).\n\nSide effects:\n- PATCHes ``motionSettings.sensitivity``. Higher values trigger more\n  motion events; 0 effectively disables motion-based recording even\n  when ``recordingSettings.mode`` is ``\"motion\"``.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: set_motion_sensitivity(camera_id=\"65f...\", sensitivity=60)",
       "input_schema": {
         "additionalProperties": false,
@@ -2309,6 +2405,51 @@
         "type": "object"
       },
       "name": "set_threat_management"
+    },
+    {
+      "description": "Set the WAN uplink's IPv6 connection type and prefix delegation.\n\nSide effects:\n- Changes how the gateway obtains IPv6 on the WAN. **Changing\n  ``connection_type`` tears down and re-establishes the WAN IPv6\n  session**: existing IPv6 connections drop and the gateway\n  re-negotiates with the ISP (DHCPv6/SLAAC). IPv4 connectivity is not\n  affected, but IPv6 hosts lose reachability for a few seconds to a\n  minute. Enabling delegation (``prefix-delegation``) is what hands\n  IPv6 prefixes down to your LANs.\n- Only the IPv6 keys you supply change; every other field on the WAN\n  record is read first and written back unchanged (strict\n  read-modify-write).\n- Mutates controller state. Use dry_run=True to preview the before/\n  after diff without applying.\n\nRead first: call ``get_wan_ipv6`` to see the current values.\n\nBLAST RADIUS: this is a WAN-level change. On dual-WAN gateways it only\ntouches the named WAN. Do not run this against the live gateway without\nintent: a mistyped ``connection_type`` can leave the WAN with no IPv6.\n\nExample: set_wan_ipv6(connection_type=\"dhcpv6\", prefix_delegation=\"prefix-delegation\", dry_run=True)",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "connection_type": {
+            "default": "",
+            "description": "``\"disabled\"``, ``\"dhcpv6\"``, ``\"pppoe\"``, or\n``\"static\"``. Empty leaves it unchanged. Most ISPs that hand\nout IPv6 (incl. Empire Access) use ``\"dhcpv6\"``.",
+            "type": "string"
+          },
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dns_preference": {
+            "default": "",
+            "description": "``\"auto\"`` or ``\"manual\"`` for IPv6 DNS. Empty\nleaves it unchanged.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the before/after diff without applying it.",
+            "type": "boolean"
+          },
+          "pd_size": {
+            "default": 0,
+            "description": "DHCPv6-PD prefix size (48-64), e.g. ``56``. Only sent when\nnon-zero; sending it also pins ``wan_dhcpv6_pd_size_auto`` to\n``false``. Leave 0 to keep the controller's auto sizing.",
+            "type": "integer"
+          },
+          "prefix_delegation": {
+            "default": "",
+            "description": "``\"none\"`` or ``\"prefix-delegation\"``. Empty\nleaves it unchanged. ``\"prefix-delegation\"`` is required for\nyour LANs to receive IPv6 subnets.",
+            "type": "string"
+          },
+          "wan_name": {
+            "default": "",
+            "description": "Display name of the WAN to target (e.g. ``\"Internet 1\"``).\nRequired only on multi-WAN gateways; single-WAN gateways match\nautomatically.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "set_wan_ipv6"
     },
     {
       "description": "Aggregate badge events by door, user, and outcome.\n\nSide effects: None (read-only).\n\nPulls events over the last ``hours_back`` hours (cap 500 to keep the\nsummary tractable) and rolls them up into counts so the LLM can\nanswer \"who used which door how often\" without re-aggregating\nclient-side. Returns ``total``, ``granted``, ``denied``, plus\n``by_door`` and ``by_user`` maps.\n\nExample: summarize_access_activity(hours_back=24)",

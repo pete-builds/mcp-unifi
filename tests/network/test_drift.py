@@ -26,10 +26,13 @@ from tests.network.conftest import _call
 
 
 async def test_drift_in_sync_when_spec_matches_seed(stub_server: FastMCP) -> None:
+    # Seed is the LAN "Default" plus the WAN "Internet 1" (v0.14.0). Drift
+    # audits both directions, so the spec must name every seeded network.
     spec = textwrap.dedent(
         """
         networks:
           - name: "Default"
+          - name: "Internet 1"
         """
     )
     result = await _call(stub_server, "audit_network_drift", {"spec_yaml": spec})
@@ -41,7 +44,8 @@ async def test_drift_in_sync_when_spec_matches_seed(stub_server: FastMCP) -> Non
 
 async def test_drift_in_sync_with_field_match(stub_server: FastMCP, stub_state: StubState) -> None:
     # Seed network "Default" has whatever the stub picks; align the spec to
-    # whatever the stub seeded so we can assert sync at the field level.
+    # whatever the stub seeded so we can assert sync at the field level. The
+    # WAN seed (v0.14.0) must also appear or drift flags it as extra.
     seed = stub_state.list_networks()[0]
     spec = textwrap.dedent(
         f"""
@@ -49,6 +53,7 @@ async def test_drift_in_sync_with_field_match(stub_server: FastMCP, stub_state: 
           - name: "{seed["name"]}"
             subnet: "{seed.get("ip_subnet", "")}"
             purpose: "{seed.get("purpose", "")}"
+          - name: "Internet 1"
         """
     )
     result = await _call(stub_server, "audit_network_drift", {"spec_yaml": spec})

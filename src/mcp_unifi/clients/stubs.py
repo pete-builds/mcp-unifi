@@ -111,6 +111,27 @@ def _seed_networks() -> list[UniFiRecord]:
             "domain_name": "localdomain",
             "site_id": "default",
             "enabled": True,
+            # IPv6 keys mirror a real UCG-Fiber LAN networkconf record so the
+            # IPv6 tools have plausible state to read-modify-write offline.
+            "ipv6_interface_type": "none",
+            "ipv6_client_address_assignment": "slaac",
+            "ipv6_ra_enabled": True,
+            "ipv6_setting_preference": "auto",
+            "dhcpdv6_dns_auto": True,
+        },
+        {
+            "_id": _oid(),
+            "name": "Internet 1",
+            "purpose": "wan",
+            "attr_no_delete": True,
+            "site_id": "default",
+            "enabled": True,
+            # IPv6 keys mirror a real UCG-Fiber WAN networkconf record.
+            "wan_type_v6": "disabled",
+            "ipv6_wan_delegation_type": "none",
+            "wan_dhcpv6_pd_size_auto": False,
+            "wan_ipv6_dns_preference": "auto",
+            "ipv6_setting_preference": "auto",
         },
     ]
 

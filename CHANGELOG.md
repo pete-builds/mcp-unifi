@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-06-12
+
+### Added
+
+- **IPv6 / dual-stack configuration tools (3 new Network tools).** IPv6 is
+  modelled entirely inside the `/rest/networkconf` records the VLAN tools
+  already read-modify-write, so these tools reuse `list_networks` /
+  `update_network` (`PUT /rest/networkconf/<id>`) — no new endpoint. Every
+  write reads the live record first, mutates only the supplied IPv6 keys, and
+  writes the rest back unchanged. Mutating tools carry `dry_run=True` with a
+  `before`/`after` diff.
+  - `get_wan_ipv6` — read-only view of the WAN uplink IPv6 config:
+    `wan_type_v6` (connection type), `ipv6_wan_delegation_type`,
+    `wan_dhcpv6_pd_size_auto`/`wan_dhcpv6_pd_size`, `wan_ipv6_dns_preference`,
+    `ipv6_setting_preference`. The read-before-write companion for
+    `set_wan_ipv6`.
+  - `set_wan_ipv6` — set the WAN IPv6 connection type
+    (`disabled`/`dhcpv6`/`pppoe`/`static`), prefix delegation
+    (`none`/`prefix-delegation`), PD size (48-64), and IPv6 DNS preference.
+    Multi-WAN gateways select by `wan_name`. The `dry_run` output includes an
+    explicit **blast-radius** note: changing the WAN IPv6 type re-establishes
+    the WAN IPv6 session (IPv6 hosts briefly lose reachability; IPv4 is
+    unaffected).
+  - `set_lan_ipv6` — set a LAN/VLAN's IPv6 interface type
+    (`none`/`pd`/`static`), Router Advertisements on/off, address-assignment
+    mode (`slaac`/`dhcpv6`), and DHCPv6 DNS (auto or up to four explicit
+    servers). Refuses a WAN target and points the caller at `set_wan_ipv6`.
+- `list_networks` now surfaces each network's IPv6 state inline
+  (`ipv6_interface_type`, `ipv6_ra_enabled`, `ipv6_client_address_assignment`)
+  so callers see dual-stack status without a separate read.
+- Stub parity: the seeded stub state now carries a WAN `networkconf` record
+  and IPv6 keys on the LAN so the IPv6 tools return plausible state offline.
+
+### Field surface (probed live, 2026-06-12)
+
+- Probed a UCG-Fiber on UniFi Network 10.4.57 (Empire Access uplink, ASN
+  40545). All WAN and LAN IPv6 keys above are present and writable on the
+  `networkconf` records.
+
+### Not added
+
+- An IPv6-specific firewall tool. On this firmware the `/rest/firewallrule`
+  records carry **no** IP-family/version field and only the `LAN_IN` ruleset
+  is present, so IPv4 and IPv6 rules cannot be distinguished through this API
+  surface. Follow-up gap: when IPv6 is enabled, IPv6 inbound hosts are not
+  separately firewalled by the existing rule tools. Track separately before
+  exposing global IPv6 to LAN clients.
+
 ## [0.13.0] - 2026-06-11
 
 ### Added

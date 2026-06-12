@@ -159,6 +159,12 @@ def _assert_unchanged(before: dict[str, Any], state: StubState) -> None:
             {"device_mac": "aa:bb:cc:11:22:33", "port_idx": 1, "enable": False},
             "would_apply",
         ),
+        # ipv6 (WAN: auto-resolves the single seeded WAN, no id needed)
+        (
+            "set_wan_ipv6",
+            {"connection_type": "dhcpv6", "prefix_delegation": "prefix-delegation"},
+            "would_update",
+        ),
     ],
 )
 async def test_dry_run_per_resource_destructive(
@@ -414,6 +420,7 @@ READ_ONLY_TOOLS = (
     "list_top_talkers",
     "get_site_health",
     "get_wan_status",
+    "get_wan_ipv6",
     "list_events",
     "list_alarms",
     "trigger_speedtest",

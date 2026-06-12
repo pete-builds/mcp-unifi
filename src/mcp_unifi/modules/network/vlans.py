@@ -37,7 +37,12 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
 
         Returns one record per network with ``_id``, ``name``, ``purpose``,
         ``vlan``, ``vlan_enabled``, ``ip_subnet``, ``dhcpd_enabled``,
-        ``dhcpd_start``, ``dhcpd_stop``, and ``enabled``.
+        ``dhcpd_start``, ``dhcpd_stop``, and ``enabled``. Records also carry
+        their IPv6 state inline: ``ipv6_interface_type`` (``none``/``pd``/
+        ``static``), ``ipv6_ra_enabled`` (router advertisements), and
+        ``ipv6_client_address_assignment`` (``slaac``/``dhcpv6``). Use
+        ``set_lan_ipv6`` to change those, or ``get_wan_ipv6`` /
+        ``set_wan_ipv6`` for the WAN uplink's IPv6 config.
 
         Example: list_networks(controller="default")
 

@@ -96,6 +96,9 @@ DESTRUCTIVE_TOOLS: frozenset[str] = frozenset(
         "set_radio_min_rssi",
         "set_radio_channel",
         "rename_device",
+        # ipv6
+        "set_wan_ipv6",
+        "set_lan_ipv6",
         # composites
         "create_iot_network",
         "create_guest_network",
