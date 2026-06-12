@@ -50,6 +50,8 @@ def _state_snapshot(state: StubState) -> dict[str, Any]:
         "clients": copy.deepcopy(state.clients),
         "dhcp_leases": copy.deepcopy(state.dhcp_leases),
         "port_forwards": copy.deepcopy(state.port_forwards),
+        "content_filters": copy.deepcopy(state.content_filters),
+        "dynamic_dns": copy.deepcopy(state.dynamic_dns),
         "audit_log": copy.deepcopy(state.audit_log),
     }
 
@@ -127,6 +129,25 @@ def _assert_unchanged(before: dict[str, Any], state: StubState) -> None:
             {"rule": {"action": "BLOCK", "matching_target": "INTERNET"}},
             "would_create",
         ),
+        # content filtering (v2 DNS) — delete short-circuits before lookup
+        ("delete_content_filter", {"filter_id": "cf-x"}, "would_delete"),
+        # dynamic DNS
+        (
+            "create_dynamic_dns",
+            {
+                "service": "namecheap",
+                "host_name": "home.example.com",
+                "login": "example.com",
+                "password": "dyndns-token-value",
+            },
+            "would_create",
+        ),
+        (
+            "update_dynamic_dns",
+            {"ddns_id": "dd-x", "updates": {"enabled": False}},
+            "would_update",
+        ),
+        ("delete_dynamic_dns", {"ddns_id": "dd-x"}, "would_delete"),
         # port profiles
         ("create_port_profile", {"name": "trunk-iot"}, "would_create"),
         (
@@ -430,6 +451,11 @@ async def test_provision_homelab_service_real_apply_rollback(
 
 READ_ONLY_TOOLS = (
     "list_networks",
+    "get_network_details",
+    "list_content_filters",
+    "get_content_filter_details",
+    "list_dynamic_dns",
+    "get_dynamic_dns_details",
     "list_wlans",
     "list_firewall_rules",
     "list_port_profiles",

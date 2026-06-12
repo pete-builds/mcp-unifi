@@ -37,6 +37,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Stub parity: seeded in-memory state for firewall groups, static routes,
   traffic rules, and traffic routes so the offline stub backend round-trips
   create/update/delete for each.
+- **Network detail + DNS tools (10 new Network tools).** All endpoints were
+  verified live read-only against the UCG-Fiber (UniFi Network 10.4.57) before
+  build. Mutating tools carry `dry_run=True`; deletes use the
+  preview-then-confirm token flow (`confirm_destructive_action`).
+  - **Network detail** (`/rest/networkconf`, folded into the VLAN module):
+    `get_network_details` — the deep, sectioned view that complements
+    `list_networks`. Resolves a network by `network_id` or `name` and groups
+    the record into `network` (identity), `dhcp` (all `dhcpd_*`/`dhcpdv6_*`),
+    `ipv6` (LAN IPv6: `ipv6_interface_type`, `ipv6_ra_enabled`,
+    `ipv6_client_address_assignment`, `ipv6_pd_start`/`ipv6_pd_stop`, RA
+    tuning), `vpn`, and `raw` sections. (No `create_network`/`delete_network`
+    added: `create_vlan`/`delete_vlan` already cover non-VLAN corporate LANs
+    via the `purpose` parameter, so a generic pair would be redundant.)
+  - **DNS content filtering** (v2 `/content-filtering`, new `content_filtering`
+    module; the gateway's adblock/category-blocking profiles):
+    `list_content_filters`, `get_content_filter_details`,
+    `update_content_filter` (read-modify-write; list fields replaced
+    wholesale), `delete_content_filter` (preview-token).
+  - **Dynamic DNS** (`/rest/dynamicdns`, new `dynamic_dns` module):
+    `list_dynamic_dns`, `get_dynamic_dns_details`, `create_dynamic_dns`
+    (provider/host/login/password/interface; password redacted in previews and
+    reads), `update_dynamic_dns`, `delete_dynamic_dns` (preview-token).
+  - A static-DNS-records API (`/v2/.../dns-records`) returned 404 on this
+    firmware, so no static-DNS-record tools were built (no live surface).
+- Stub parity: seeded a sample content-filtering profile (so get/update/delete
+  round-trip) and an empty Dynamic DNS collection (matching the live gateway;
+  create/update/delete still round-trip).
 
 ## [0.14.0] - 2026-06-12
 

@@ -90,9 +90,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         except UniFiError as exc:
             logger.exception("get_route_details failed", extra={"route_id": route_id})
             return err(str(exc))
-        target = next(
-            (r for r in routes if isinstance(r, dict) and r.get("_id") == route_id), None
-        )
+        target = next((r for r in routes if isinstance(r, dict) and r.get("_id") == route_id), None)
         if target is None:
             return err(f"route {route_id} not found")
         return format_json(target)
@@ -156,8 +154,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                     "controller": controller,
                     "would_create": {"route": payload},
                     "summary": (
-                        f"Would create static route '{name}' "
-                        f"({destination} via {next_hop})"
+                        f"Would create static route '{name}' ({destination} via {next_hop})"
                     ),
                 }
             )
@@ -263,9 +260,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("delete_route preview lookup failed", extra={"route_id": route_id})
             return err(str(exc))
 
-        target = next(
-            (r for r in routes if isinstance(r, dict) and r.get("_id") == route_id), None
-        )
+        target = next((r for r in routes if isinstance(r, dict) and r.get("_id") == route_id), None)
         if target is None:
             return err(f"route {route_id} not found")
 

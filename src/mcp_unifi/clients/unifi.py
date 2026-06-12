@@ -399,6 +399,58 @@ class UniFiClient:
         return self._first_record(result)
 
     # ------------------------------------------------------------------
+    # Content filtering (v2 DNS-category blocking via .../content-filtering)
+    # ------------------------------------------------------------------
+
+    async def list_content_filters(self) -> list[UniFiRecord]:
+        """List DNS content-filtering profiles.
+
+        Probed live read-only against a UCG-Fiber on UniFi Network 10.4.57
+        (2026-06-12): ``GET .../content-filtering`` answers HTTP 200 with a
+        bare JSON list (no legacy envelope). A profile carries ``_id``,
+        ``name``, ``enabled``, ``categories`` (blocked DNS category enum list),
+        ``allow_list`` / ``block_list`` (per-domain overrides), ``client_macs``
+        and ``network_ids`` (scope), ``safe_search``, and a ``schedule`` block.
+        """
+        result = await self._v2_request("GET", "/content-filtering")
+        return result if isinstance(result, list) else []
+
+    async def update_content_filter(self, filter_id: str, payload: dict[str, Any]) -> UniFiRecord:
+        result = await self._v2_request("PUT", f"/content-filtering/{filter_id}", json=payload)
+        return self._first_record(result)
+
+    async def delete_content_filter(self, filter_id: str) -> bool:
+        await self._v2_request("DELETE", f"/content-filtering/{filter_id}")
+        return True
+
+    # ------------------------------------------------------------------
+    # Dynamic DNS (legacy /rest/dynamicdns)
+    # ------------------------------------------------------------------
+
+    async def list_dynamic_dns(self) -> list[UniFiRecord]:
+        """List Dynamic DNS update configurations.
+
+        Probed live read-only against a UCG-Fiber on UniFi Network 10.4.57
+        (2026-06-12): ``GET /rest/dynamicdns`` answers HTTP 200 with the
+        standard ``{"meta", "data"}`` envelope (empty on this gateway). A
+        record carries ``service`` (provider), ``host_name`` (the FQDN to
+        update), ``login`` / ``x_password`` (provider credentials),
+        ``server`` (optional custom update URL), and ``interface`` (WAN to
+        track, e.g. ``"wan"``).
+        """
+        return await self._get("/rest/dynamicdns") or []
+
+    async def create_dynamic_dns(self, payload: dict[str, Any]) -> UniFiRecord:
+        return self._first_record(await self._post("/rest/dynamicdns", payload))
+
+    async def update_dynamic_dns(self, ddns_id: str, payload: dict[str, Any]) -> UniFiRecord:
+        return self._first_record(await self._put(f"/rest/dynamicdns/{ddns_id}", payload))
+
+    async def delete_dynamic_dns(self, ddns_id: str) -> bool:
+        await self._delete(f"/rest/dynamicdns/{ddns_id}")
+        return True
+
+    # ------------------------------------------------------------------
     # Port profiles (create/update/delete)
     # ------------------------------------------------------------------
 

@@ -31,9 +31,7 @@ async def test_list_firewall_groups_stub(stub_server: FastMCP) -> None:
     assert "port-group" in types
 
 
-async def test_get_firewall_group_details_stub(
-    stub_server: FastMCP, stub_state: StubState
-) -> None:
+async def test_get_firewall_group_details_stub(stub_server: FastMCP, stub_state: StubState) -> None:
     gid = stub_state.list_firewall_groups()[0]["_id"]
     result = await _call(stub_server, "get_firewall_group_details", {"group_id": gid})
     assert result["_id"] == gid
@@ -77,9 +75,7 @@ async def test_create_firewall_group_rejects_bad_type(stub_server: FastMCP) -> N
     assert "group_type" in result["error"]
 
 
-async def test_create_firewall_group_dry_run(
-    stub_server: FastMCP, stub_state: StubState
-) -> None:
+async def test_create_firewall_group_dry_run(stub_server: FastMCP, stub_state: StubState) -> None:
     before = len(stub_state.list_firewall_groups())
     result = await _call(
         stub_server,
@@ -101,9 +97,7 @@ async def test_create_firewall_group_dry_run(
 # ---------------------------------------------------------------------------
 
 
-async def test_update_firewall_group_members(
-    stub_server: FastMCP, stub_state: StubState
-) -> None:
+async def test_update_firewall_group_members(stub_server: FastMCP, stub_state: StubState) -> None:
     gid = stub_state.list_firewall_groups()[0]["_id"]
     result = await _call(
         stub_server,
@@ -142,9 +136,7 @@ async def test_update_firewall_group_requires_a_field(
 
 
 async def test_update_firewall_group_missing(stub_server: FastMCP) -> None:
-    result = await _call(
-        stub_server, "update_firewall_group", {"group_id": "ghost", "name": "X"}
-    )
+    result = await _call(stub_server, "update_firewall_group", {"group_id": "ghost", "name": "X"})
     assert "error" in result
     assert "not found" in result["error"]
 
@@ -163,18 +155,14 @@ async def test_delete_firewall_group_round_trip(
     assert preview["resource"]["_id"] == gid
     # Preview must not delete.
     assert any(g["_id"] == gid for g in stub_state.list_firewall_groups())
-    result = await _call(
-        stub_server, "confirm_destructive_action", {"token": preview["token"]}
-    )
+    result = await _call(stub_server, "confirm_destructive_action", {"token": preview["token"]})
     assert result["deleted"] is True
     assert result["group_id"] == gid
     assert not any(g["_id"] == gid for g in stub_state.list_firewall_groups())
 
 
 async def test_delete_firewall_group_dry_run(stub_server: FastMCP) -> None:
-    result = await _call(
-        stub_server, "delete_firewall_group", {"group_id": "x", "dry_run": True}
-    )
+    result = await _call(stub_server, "delete_firewall_group", {"group_id": "x", "dry_run": True})
     assert result["dry_run"] is True
     assert result["would_delete"]["group_id"] == "x"
 
@@ -193,9 +181,7 @@ async def test_delete_firewall_group_missing(stub_server: FastMCP) -> None:
 @respx.mock
 async def test_real_list_firewall_groups(real_server: FastMCP) -> None:
     respx.get(f"{BASE}/rest/firewallgroup").mock(
-        return_value=httpx.Response(
-            200, json={"data": [{"_id": "g1", "name": "RFC1918"}]}
-        )
+        return_value=httpx.Response(200, json={"data": [{"_id": "g1", "name": "RFC1918"}]})
     )
     result = await _call(real_server, "list_firewall_groups")
     assert result[0]["_id"] == "g1"
@@ -267,9 +253,7 @@ async def test_real_delete_firewall_group(real_server: FastMCP) -> None:
     respx.delete(f"{BASE}/rest/firewallgroup/g1").mock(return_value=httpx.Response(200))
     preview = await _call(real_server, "delete_firewall_group", {"group_id": "g1"})
     assert preview["preview"] is True
-    result = await _call(
-        real_server, "confirm_destructive_action", {"token": preview["token"]}
-    )
+    result = await _call(real_server, "confirm_destructive_action", {"token": preview["token"]})
     assert result["deleted"] is True
 
 
@@ -294,9 +278,7 @@ async def test_real_create_firewall_group_handles_500(real_server: FastMCP) -> N
 @respx.mock
 async def test_real_update_firewall_group_handles_500_on_lookup(real_server: FastMCP) -> None:
     respx.get(f"{BASE}/rest/firewallgroup").mock(return_value=httpx.Response(500))
-    result = await _call(
-        real_server, "update_firewall_group", {"group_id": "g1", "name": "X"}
-    )
+    result = await _call(real_server, "update_firewall_group", {"group_id": "g1", "name": "X"})
     assert "error" in result
 
 
@@ -309,9 +291,7 @@ async def test_real_update_firewall_group_handles_500_on_put(real_server: FastMC
         )
     )
     respx.put(f"{BASE}/rest/firewallgroup/g1").mock(return_value=httpx.Response(500))
-    result = await _call(
-        real_server, "update_firewall_group", {"group_id": "g1", "name": "Y"}
-    )
+    result = await _call(real_server, "update_firewall_group", {"group_id": "g1", "name": "Y"})
     assert "error" in result
 
 

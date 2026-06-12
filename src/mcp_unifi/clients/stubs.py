@@ -259,6 +259,42 @@ def _seed_traffic_routes() -> list[UniFiRecord]:
     ]
 
 
+def _seed_content_filters(network_id: str) -> list[UniFiRecord]:
+    """Seed one DNS content-filtering profile.
+
+    Mirrors the ``/v2/api/site/<site>/content-filtering`` record shape probed
+    live on a UCG-Fiber (UniFi Network 10.4.57, 2026-06-12): a ``name``, an
+    ``enabled`` flag, a ``categories`` list (blocked DNS-category enum values),
+    per-domain ``allow_list`` / ``block_list`` overrides, ``client_macs`` and
+    ``network_ids`` scope, a ``safe_search`` list, and a ``schedule`` block.
+    The v2 surface returns a bare list, not the legacy envelope.
+    """
+    return [
+        {
+            "_id": _oid(),
+            "name": "adblock",
+            "enabled": True,
+            "categories": ["ADVERTISEMENT"],
+            "allow_list": [],
+            "block_list": [],
+            "client_macs": [],
+            "network_ids": [network_id],
+            "safe_search": [],
+            "schedule": {"mode": "ALWAYS"},
+        },
+    ]
+
+
+def _seed_dynamic_dns() -> list[UniFiRecord]:
+    """Seed Dynamic DNS as empty.
+
+    Mirrors the ``/rest/dynamicdns`` collection, which is empty on this
+    gateway (probed live 2026-06-12). Tests exercise the create/update/delete
+    round-trip from an empty starting point, matching production reality.
+    """
+    return []
+
+
 def _seed_ap_groups() -> list[UniFiRecord]:
     """Seed the default AP group that ships with every UniFi controller.
 
@@ -575,6 +611,8 @@ class StubState:
         self.routes: list[UniFiRecord] = _seed_routes()
         self.traffic_rules: list[UniFiRecord] = _seed_traffic_rules()
         self.traffic_routes: list[UniFiRecord] = _seed_traffic_routes()
+        self.content_filters: list[UniFiRecord] = _seed_content_filters(default_net_id)
+        self.dynamic_dns: list[UniFiRecord] = _seed_dynamic_dns()
         self.port_profiles: list[UniFiRecord] = _seed_port_profiles()
         self.ap_groups: list[UniFiRecord] = _seed_ap_groups()
         self.clients: list[UniFiRecord] = _seed_clients()
@@ -839,6 +877,46 @@ class StubState:
                 route.update(patch)
                 return route
         return None
+
+    # ----- Content filtering (v2 DNS) -------------------------------------
+    def list_content_filters(self) -> list[UniFiRecord]:
+        return self.content_filters
+
+    def update_content_filter(self, filter_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        for prof in self.content_filters:
+            if prof.get("_id") == filter_id:
+                prof.update(patch)
+                return prof
+        return None
+
+    def delete_content_filter(self, filter_id: str) -> bool:
+        self._check_failure("delete_content_filter")
+        before = len(self.content_filters)
+        self.content_filters = [c for c in self.content_filters if c.get("_id") != filter_id]
+        return len(self.content_filters) < before
+
+    # ----- Dynamic DNS ----------------------------------------------------
+    def list_dynamic_dns(self) -> list[UniFiRecord]:
+        return self.dynamic_dns
+
+    def create_dynamic_dns(self, payload: dict[str, Any]) -> UniFiRecord:
+        self._check_failure("create_dynamic_dns")
+        record: UniFiRecord = {"_id": _oid(), "site_id": "default", **payload}
+        self.dynamic_dns.append(record)
+        return record
+
+    def update_dynamic_dns(self, ddns_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        for entry in self.dynamic_dns:
+            if entry.get("_id") == ddns_id:
+                entry.update(patch)
+                return entry
+        return None
+
+    def delete_dynamic_dns(self, ddns_id: str) -> bool:
+        self._check_failure("delete_dynamic_dns")
+        before = len(self.dynamic_dns)
+        self.dynamic_dns = [d for d in self.dynamic_dns if d.get("_id") != ddns_id]
+        return len(self.dynamic_dns) < before
 
     # ----- Port profiles --------------------------------------------------
     def list_port_profiles(self) -> list[UniFiRecord]:

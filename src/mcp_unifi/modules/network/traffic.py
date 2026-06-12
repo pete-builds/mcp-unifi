@@ -47,15 +47,11 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
 
     async def _find_traffic_rule(backend: Backend, rule_id: str) -> UniFiRecord | None:
         rules = await backend.list_traffic_rules()
-        return next(
-            (r for r in rules if isinstance(r, dict) and r.get("_id") == rule_id), None
-        )
+        return next((r for r in rules if isinstance(r, dict) and r.get("_id") == rule_id), None)
 
     async def _find_traffic_route(backend: Backend, route_id: str) -> UniFiRecord | None:
         routes = await backend.list_traffic_routes()
-        return next(
-            (r for r in routes if isinstance(r, dict) and r.get("_id") == route_id), None
-        )
+        return next((r for r in routes if isinstance(r, dict) and r.get("_id") == route_id), None)
 
     # ------------------------------------------------------------------
     # Traffic rules
@@ -213,9 +209,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                     "dry_run": True,
                     "controller": controller,
                     "would_update": {"rule_id": rule_id, "patch": updates},
-                    "summary": (
-                        f"Would update traffic rule {rule_id} ({len(updates)} field(s))"
-                    ),
+                    "summary": (f"Would update traffic rule {rule_id} ({len(updates)} field(s))"),
                 }
             )
         try:
@@ -388,9 +382,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         if kill_switch_enabled is not None:
             patch["kill_switch_enabled"] = kill_switch_enabled
         if not patch:
-            return err(
-                "update_traffic_route requires at least one of updates, kill_switch_enabled"
-            )
+            return err("update_traffic_route requires at least one of updates, kill_switch_enabled")
         try:
             backend = resolve_backend(registry, controller)
             existing = await _find_traffic_route(backend, route_id)
@@ -406,9 +398,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                     "dry_run": True,
                     "controller": controller,
                     "would_update": {"route_id": route_id, "patch": patch},
-                    "summary": (
-                        f"Would update traffic route {route_id} ({len(patch)} field(s))"
-                    ),
+                    "summary": (f"Would update traffic route {route_id} ({len(patch)} field(s))"),
                 }
             )
         try:

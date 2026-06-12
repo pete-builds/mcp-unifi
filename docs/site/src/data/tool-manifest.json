@@ -1,5 +1,5 @@
 {
-  "tool_count": 113,
+  "tool_count": 123,
   "tools": [
     {
       "description": "Return credentials expiring within ``days_ahead`` days.\n\nSide effects: None (read-only).\n\nIterates ``list_credentials`` client-side and filters to those whose\n``expires_at`` falls inside the window ``[now, now + days_ahead]``.\nCredentials with no ``expires_at`` (typical for mobile credentials)\nare excluded. Each entry includes ``days_until_expiry`` so the LLM\ncan sort and summarise without re-doing the math.\n\nExample: audit_expiring_credentials(days_ahead=14)",
@@ -121,6 +121,63 @@
         "type": "object"
       },
       "name": "confirm_destructive_action"
+    },
+    {
+      "description": "Create a Dynamic DNS update configuration.\n\nSide effects:\n- Adds a DDNS config: the gateway will push the WAN IP to ``service``\n  for ``host_name`` whenever the WAN address changes. Takes effect\n  immediately (the gateway sends an update on the next IP check).\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: create_dynamic_dns(service=\"namecheap\", host_name=\"home.example.com\", login=\"example.com\", password=\"<token>\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it. Returns the\npredicted change set (with the password redacted).",
+            "type": "boolean"
+          },
+          "enabled": {
+            "default": true,
+            "description": "``False`` creates the config disabled for staging.",
+            "type": "boolean"
+          },
+          "host_name": {
+            "description": "The FQDN to keep pointed at the WAN IP\n(``\"home.example.com\"``).",
+            "type": "string"
+          },
+          "interface": {
+            "default": "wan",
+            "description": "WAN interface whose IP is tracked. Defaults to\n``\"wan\"`` (the primary WAN on a single-WAN gateway).",
+            "type": "string"
+          },
+          "login": {
+            "description": "Provider account / username. For some providers (e.g.\nNamecheap) this is the zone/domain.",
+            "type": "string"
+          },
+          "password": {
+            "description": "Provider password or API token. Stored write-only and\nredacted in reads.",
+            "type": "string"
+          },
+          "server": {
+            "default": "",
+            "description": "Custom update-URL host. Only used (and required) when\n``service == \"custom\"``; leave empty otherwise.",
+            "type": "string"
+          },
+          "service": {
+            "description": "Provider keyword (e.g. ``\"dyndns\"``, ``\"namecheap\"``,\n``\"cloudflare\"``, ``\"noip\"``, or ``\"custom\"``).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "service",
+          "host_name",
+          "login",
+          "password"
+        ],
+        "type": "object"
+      },
+      "name": "create_dynamic_dns"
     },
     {
       "description": "Create a reusable firewall group of addresses, IPv6 addresses, or ports.\n\nSide effects:\n- Adds a new reusable object. It does nothing on its own until a\n  firewall rule or policy references it by ``_id``.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: create_firewall_group(name=\"IoT Subnets\", group_type=\"address-group\", members=[\"10.50.0.0/24\", \"10.60.0.0/24\"])",
@@ -781,6 +838,60 @@
       "name": "create_wlan"
     },
     {
+      "description": "Preview deletion of a content-filtering profile.\n\nThis tool does not delete on its own. It returns a preview envelope\nwith a ``token``; call ``confirm_destructive_action(token)`` to commit\nthe delete. Tokens expire after 5 minutes.\n\nSide effects:\n- None until ``confirm_destructive_action`` runs against the token.\n- On confirm: removes the profile. The clients and networks in its\n  scope stop being filtered by it and fall back to whatever other\n  profile (or none) applies.\n- ``dry_run=True`` returns the legacy ``would_delete`` envelope with\n  no token: purely informational, no commit step possible.\n\nExample: delete_content_filter(filter_id=\"65f...\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "``True`` skips token generation and returns the legacy\n``{\"dry_run\": true, ...}`` envelope. ``False`` (default)\ngenerates a preview token that must be confirmed.",
+            "type": "boolean"
+          },
+          "filter_id": {
+            "description": "The ``_id`` from ``list_content_filters``.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "filter_id"
+        ],
+        "type": "object"
+      },
+      "name": "delete_content_filter"
+    },
+    {
+      "description": "Preview deletion of a Dynamic DNS config.\n\nThis tool does not delete on its own. It returns a preview envelope\nwith a ``token``; call ``confirm_destructive_action(token)`` to commit\nthe delete. Tokens expire after 5 minutes.\n\nSide effects:\n- None until ``confirm_destructive_action`` runs against the token.\n- On confirm: removes the DDNS config. The provider stops receiving\n  updates from the gateway; the external hostname goes stale once its\n  TTL lapses.\n- ``dry_run=True`` returns the legacy ``would_delete`` envelope with\n  no token: purely informational, no commit step possible.\n\nExample: delete_dynamic_dns(ddns_id=\"65f...\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "ddns_id": {
+            "description": "The ``_id`` from ``list_dynamic_dns``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "``True`` skips token generation and returns the legacy\n``{\"dry_run\": true, ...}`` envelope. ``False`` (default)\ngenerates a preview token that must be confirmed.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ddns_id"
+        ],
+        "type": "object"
+      },
+      "name": "delete_dynamic_dns"
+    },
+    {
       "description": "Preview deletion of a firewall group.\n\nThis tool no longer deletes on its own. It returns a preview envelope\nwith a ``token``; call ``confirm_destructive_action(token)`` to commit\nthe delete. Tokens expire after 5 minutes.\n\nSide effects:\n- None until ``confirm_destructive_action`` runs against the token.\n- On confirm: removes the group. **The controller rejects deletion of\n  a group still referenced by any firewall rule** \u2014 detach it from\n  every rule first.\n- ``dry_run=True`` returns the legacy ``would_delete`` envelope with\n  no token \u2014 purely informational, no commit step possible.\n\nExample: delete_firewall_group(group_id=\"65f...\")",
       "input_schema": {
         "additionalProperties": false,
@@ -1105,6 +1216,28 @@
       "name": "get_camera"
     },
     {
+      "description": "Show one content-filtering profile's full record by ``_id``.\n\nSide effects: None (read-only). Call this before\n``update_content_filter`` to see the profile's current categories,\nallow/block lists, and scope (the values you are about to\nread-modify-write).\n\nReturns the profile record, or an error envelope if no profile\nmatches.\n\nExample: get_content_filter_details(filter_id=\"65f...\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "filter_id": {
+            "description": "The ``_id`` from ``list_content_filters``.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "filter_id"
+        ],
+        "type": "object"
+      },
+      "name": "get_content_filter_details"
+    },
+    {
       "description": "Fetch one credential's full record by ID.\n\nSide effects: None (read-only).\n\nSame shape as one entry from ``list_credentials`` plus any\ntype-specific fields (``card_id`` for NFC, ``pin_length`` for PIN,\n``device_label`` for mobile).\n\nExample: get_credential(credential_id=\"cred...\", controller=\"default\")",
       "input_schema": {
         "additionalProperties": false,
@@ -1171,6 +1304,28 @@
       "name": "get_door"
     },
     {
+      "description": "Show one Dynamic DNS config's full record by ``_id``.\n\nSide effects: None (read-only). Call this before\n``update_dynamic_dns`` to see the current provider, hostname, and\ntracked interface.\n\nReturns the DDNS record (with ``x_password`` redacted), or an error\nenvelope if no config matches.\n\nExample: get_dynamic_dns_details(ddns_id=\"65f...\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "ddns_id": {
+            "description": "The ``_id`` from ``list_dynamic_dns``.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ddns_id"
+        ],
+        "type": "object"
+      },
+      "name": "get_dynamic_dns_details"
+    },
+    {
       "description": "Fetch the JPEG thumbnail for a Protect event, base64-encoded.\n\nSide effects: None (read-only).\n\nSame response shape as ``get_snapshot``, but keyed on the event\ninstead of the camera. Useful for previewing a motion or\nsmart-detection trigger without pulling the full clip.\n\nExample: get_event_thumbnail(event_id=\"evt123\", controller=\"default\")",
       "input_schema": {
         "additionalProperties": false,
@@ -1213,6 +1368,31 @@
         "type": "object"
       },
       "name": "get_firewall_group_details"
+    },
+    {
+      "description": "Show one network's full record, grouped into readable sections.\n\nSide effects: None (read-only). This is the deep view that complements\n``list_networks`` (the summary). Use it to inspect a network's DHCP\nscope, IPv6 configuration, and VPN fields before editing with\n``update_vlan`` / ``set_lan_ipv6``.\n\nResolve the network by ``network_id`` (preferred, from\n``list_networks``) or by ``name`` (case-insensitive; errors if the name\nis ambiguous). Returns:\n\n- ``network``: identity fields (``_id``, ``name``, ``purpose``,\n  ``vlan``, ``vlan_enabled``, ``ip_subnet``, ``enabled``,\n  ``networkgroup``).\n- ``dhcp``: every ``dhcpd_*`` key (lease window, gateway/DNS toggles,\n  lease time, NTP/WINS) plus the IPv6 DHCP (``dhcpdv6_*``) keys.\n- ``ipv6``: the LAN IPv6 view: ``ipv6_interface_type``,\n  ``ipv6_ra_enabled``, ``ipv6_client_address_assignment``,\n  ``ipv6_pd_start`` / ``ipv6_pd_stop`` (the delegated-prefix window),\n  and the RA tuning keys. Empty section on a network with no IPv6.\n- ``vpn``: VPN-related keys (``vpn_type``, ``*_vpn_*``,\n  ``remote_vpn_*``) when the network is a VPN; empty otherwise.\n- ``raw``: the complete unfiltered record, so nothing is hidden.\n\nExample: get_network_details(name=\"Default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "name": {
+            "default": "",
+            "description": "Network display name (case-insensitive) as an alternative to\n``network_id``. Errors if more than one network matches.",
+            "type": "string"
+          },
+          "network_id": {
+            "default": "",
+            "description": "The ``_id`` from ``list_networks``. Wins over ``name``\nwhen both are given.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "get_network_details"
     },
     {
       "description": "Return the most recent N events across every door.\n\nSide effects: None (read-only).\n\nConvenience wrapper around ``list_access_events`` with a 24-hour\nwindow and no filters. Useful for \"what just happened\" triage.\n\nExample: get_recent_access_events(limit=10)",
@@ -1595,6 +1775,21 @@
       "name": "list_clients"
     },
     {
+      "description": "List DNS content-filtering profiles (category blocking, safe-search).\n\nSide effects: None (read-only).\n\nReturns one record per profile with ``_id``, ``name``, ``enabled``,\n``categories`` (blocked DNS-category enum list), ``allow_list`` /\n``block_list`` (per-domain overrides), ``client_macs`` and\n``network_ids`` (the scope the profile applies to), ``safe_search``,\nand ``schedule``. Empty on a gateway with no filtering profiles.\n\nExample: list_content_filters(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_content_filters"
+    },
+    {
       "description": "List every credential enrolled in the Access controller.\n\nSide effects: None (read-only).\n\nReturns one record per credential with ``id``, ``type`` (``nfc``,\n``pin``, or ``mobile``), ``label``, ``user_id``, ``status``,\n``issued_at`` (ms), and ``expires_at`` (ms or null for non-expiring\nmobile credentials).\n\nExample: list_credentials(controller=\"default\")",
       "input_schema": {
         "additionalProperties": false,
@@ -1683,6 +1878,21 @@
         "type": "object"
       },
       "name": "list_doors"
+    },
+    {
+      "description": "List Dynamic DNS update configurations on the controller.\n\nSide effects: None (read-only).\n\nReturns one record per DDNS config with ``_id``, ``service``\n(provider), ``host_name`` (the FQDN kept updated), ``login``,\n``server`` (custom update-URL host, if any), ``interface`` (tracked\nWAN), and ``enabled``. The provider password (``x_password``) is\nwrite-only and comes back redacted. Empty on a gateway with no DDNS\nconfigured.\n\nExample: list_dynamic_dns(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_dynamic_dns"
     },
     {
       "description": "List recent controller events (connections, disconnections, etc.).\n\nSide effects: None (read-only).\n\nReturns the most recent ``limit`` event records, newest first.\n\nExample: list_events(limit=100)",
@@ -2893,6 +3103,72 @@
         "type": "object"
       },
       "name": "unblock_client"
+    },
+    {
+      "description": "Patch fields on an existing content-filtering profile (read-modify-write).\n\nSide effects:\n- Modifies the named profile in place. The v2 PUT replaces the whole\n  object, so this reads the current profile first and merges\n  ``updates`` onto it before writing: only the keys you supply change,\n  everything else (scope, schedule, the other lists) is preserved.\n- Takes effect immediately on DNS resolution for the in-scope clients\n  and networks: enabling a category starts blocking it; adding a\n  ``block_list`` domain starts NXDOMAIN-ing it.\n- List fields (``categories``, ``allow_list``, ``block_list``,\n  ``client_macs``, ``network_ids``, ``safe_search``) are **replaced\n  wholesale**, not appended, so pass the full desired list. Read the\n  current value with ``get_content_filter_details`` first.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: update_content_filter(filter_id=\"65f...\", updates={\"enabled\": False})",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it. Returns the\npredicted change set.",
+            "type": "boolean"
+          },
+          "filter_id": {
+            "description": "The ``_id`` from ``list_content_filters``.",
+            "type": "string"
+          },
+          "updates": {
+            "additionalProperties": true,
+            "description": "Partial profile record to merge. Common keys: ``name``,\n``enabled``, ``categories`` (full blocked-category list),\n``allow_list`` / ``block_list`` (full per-domain lists),\n``client_macs`` / ``network_ids`` (full scope lists),\n``safe_search``, ``schedule``.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "filter_id",
+          "updates"
+        ],
+        "type": "object"
+      },
+      "name": "update_content_filter"
+    },
+    {
+      "description": "Patch fields on an existing Dynamic DNS config.\n\nSide effects:\n- Modifies the named DDNS config in place. Only fields supplied in\n  ``updates`` change; everything else is preserved.\n- Takes effect immediately: changing ``host_name`` or ``service``\n  repoints the next update; toggling ``enabled`` starts or stops\n  updates.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: update_dynamic_dns(ddns_id=\"65f...\", updates={\"enabled\": False})",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "ddns_id": {
+            "description": "The ``_id`` from ``list_dynamic_dns``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it. Returns the\npredicted change set (``x_password`` redacted if present).",
+            "type": "boolean"
+          },
+          "updates": {
+            "additionalProperties": true,
+            "description": "Partial DDNS record. Common keys: ``service``,\n``host_name``, ``login``, ``x_password`` (new password/token),\n``server``, ``interface``, ``enabled``.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "ddns_id",
+          "updates"
+        ],
+        "type": "object"
+      },
+      "name": "update_dynamic_dns"
     },
     {
       "description": "Rename a firewall group or replace its members (read-modify-write).\n\nSide effects:\n- Replaces the group's name and/or members in place. The members list\n  is **replaced wholesale**, not merged, so pass the full desired set.\n  The group's ``group_type`` is preserved (it is read first and\n  written back unchanged); group type cannot be changed after\n  creation, only members.\n- Every rule referencing this group immediately sees the new members.\n- Mutates controller state. Use dry_run=True to preview the before/\n  after diff without applying.\n\nRead first: call ``get_firewall_group_details`` to see the current\nmembers.\n\nExample: update_firewall_group(group_id=\"65f...\", members=[\"10.50.0.0/24\", \"10.70.0.0/24\"])",

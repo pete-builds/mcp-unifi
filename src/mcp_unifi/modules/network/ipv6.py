@@ -366,7 +366,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             patch["dhcpdv6_dns_auto"] = dns_auto
         if dns_servers is not None:
             for idx in range(1, 5):
-                patch[f"dhcpdv6_dns_{idx}"] = dns_servers[idx - 1] if idx <= len(dns_servers) else ""
+                patch[f"dhcpdv6_dns_{idx}"] = (
+                    dns_servers[idx - 1] if idx <= len(dns_servers) else ""
+                )
         if not patch:
             return err(
                 "set_lan_ipv6 requires at least one of interface_type, ra_enabled, "
@@ -392,9 +394,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             if isinstance(found, str):
                 return err(found)
             if found.get("purpose") == "wan":
-                return err(
-                    f"network {network_id} is a WAN; use set_wan_ipv6 for WAN IPv6"
-                )
+                return err(f"network {network_id} is a WAN; use set_wan_ipv6 for WAN IPv6")
             before = _ipv6_view(found, view_keys)
             after = {**before, **patch}
             if dry_run:

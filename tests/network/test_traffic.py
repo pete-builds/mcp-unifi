@@ -33,9 +33,7 @@ async def test_list_traffic_rules_stub(stub_server: FastMCP) -> None:
     assert rules[0]["action"] in {"BLOCK", "ALLOW"}
 
 
-async def test_get_traffic_rule_details_stub(
-    stub_server: FastMCP, stub_state: StubState
-) -> None:
+async def test_get_traffic_rule_details_stub(stub_server: FastMCP, stub_state: StubState) -> None:
     rid = stub_state.list_traffic_rules()[0]["_id"]
     result = await _call(stub_server, "get_traffic_rule_details", {"rule_id": rid})
     assert result["_id"] == rid
@@ -68,9 +66,7 @@ async def test_create_traffic_rule_requires_object(stub_server: FastMCP) -> None
     assert "error" in result
 
 
-async def test_create_traffic_rule_dry_run(
-    stub_server: FastMCP, stub_state: StubState
-) -> None:
+async def test_create_traffic_rule_dry_run(stub_server: FastMCP, stub_state: StubState) -> None:
     before = len(stub_state.list_traffic_rules())
     result = await _call(
         stub_server,
@@ -93,9 +89,7 @@ async def test_update_traffic_rule_stub(stub_server: FastMCP, stub_state: StubSt
     assert "matching_target" in result
 
 
-async def test_update_traffic_rule_dry_run(
-    stub_server: FastMCP, stub_state: StubState
-) -> None:
+async def test_update_traffic_rule_dry_run(stub_server: FastMCP, stub_state: StubState) -> None:
     rid = stub_state.list_traffic_rules()[0]["_id"]
     result = await _call(
         stub_server,
@@ -116,15 +110,11 @@ async def test_update_traffic_rule_missing(stub_server: FastMCP) -> None:
 
 async def test_toggle_traffic_rule_stub(stub_server: FastMCP, stub_state: StubState) -> None:
     rid = stub_state.list_traffic_rules()[0]["_id"]
-    result = await _call(
-        stub_server, "toggle_traffic_rule", {"rule_id": rid, "enabled": False}
-    )
+    result = await _call(stub_server, "toggle_traffic_rule", {"rule_id": rid, "enabled": False})
     assert result["enabled"] is False
 
 
-async def test_toggle_traffic_rule_dry_run(
-    stub_server: FastMCP, stub_state: StubState
-) -> None:
+async def test_toggle_traffic_rule_dry_run(stub_server: FastMCP, stub_state: StubState) -> None:
     rid = stub_state.list_traffic_rules()[0]["_id"]
     result = await _call(
         stub_server,
@@ -137,9 +127,7 @@ async def test_toggle_traffic_rule_dry_run(
 
 
 async def test_toggle_traffic_rule_missing(stub_server: FastMCP) -> None:
-    result = await _call(
-        stub_server, "toggle_traffic_rule", {"rule_id": "ghost", "enabled": False}
-    )
+    result = await _call(stub_server, "toggle_traffic_rule", {"rule_id": "ghost", "enabled": False})
     assert "error" in result
     assert "not found" in result["error"]
 
@@ -155,9 +143,7 @@ async def test_list_traffic_routes_stub(stub_server: FastMCP) -> None:
     assert "kill_switch_enabled" in routes[0]
 
 
-async def test_get_traffic_route_details_stub(
-    stub_server: FastMCP, stub_state: StubState
-) -> None:
+async def test_get_traffic_route_details_stub(stub_server: FastMCP, stub_state: StubState) -> None:
     rid = stub_state.list_traffic_routes()[0]["_id"]
     result = await _call(stub_server, "get_traffic_route_details", {"route_id": rid})
     assert result["_id"] == rid
@@ -186,9 +172,7 @@ async def test_update_traffic_route_kill_switch(
     assert result["kill_switch_enabled"] is True
 
 
-async def test_update_traffic_route_dry_run(
-    stub_server: FastMCP, stub_state: StubState
-) -> None:
+async def test_update_traffic_route_dry_run(stub_server: FastMCP, stub_state: StubState) -> None:
     rid = stub_state.list_traffic_routes()[0]["_id"]
     result = await _call(
         stub_server,
@@ -219,15 +203,11 @@ async def test_update_traffic_route_missing(stub_server: FastMCP) -> None:
 
 async def test_toggle_traffic_route_stub(stub_server: FastMCP, stub_state: StubState) -> None:
     rid = stub_state.list_traffic_routes()[0]["_id"]
-    result = await _call(
-        stub_server, "toggle_traffic_route", {"route_id": rid, "enabled": False}
-    )
+    result = await _call(stub_server, "toggle_traffic_route", {"route_id": rid, "enabled": False})
     assert result["enabled"] is False
 
 
-async def test_toggle_traffic_route_dry_run(
-    stub_server: FastMCP, stub_state: StubState
-) -> None:
+async def test_toggle_traffic_route_dry_run(stub_server: FastMCP, stub_state: StubState) -> None:
     rid = stub_state.list_traffic_routes()[0]["_id"]
     result = await _call(
         stub_server,
@@ -299,9 +279,7 @@ async def test_real_toggle_traffic_rule_is_full_put(real_server: FastMCP) -> Non
     put_route = respx.put(f"{V2_BASE}/trafficrules/tr1").mock(
         return_value=httpx.Response(200, json={"_id": "tr1", "enabled": False})
     )
-    result = await _call(
-        real_server, "toggle_traffic_rule", {"rule_id": "tr1", "enabled": False}
-    )
+    result = await _call(real_server, "toggle_traffic_rule", {"rule_id": "tr1", "enabled": False})
     assert result["enabled"] is False
     assert put_route.called
     body = json.loads(put_route.calls[0].request.content)
@@ -359,9 +337,7 @@ async def test_real_list_traffic_rules_handles_500(real_server: FastMCP) -> None
 @respx.mock
 async def test_real_create_traffic_rule_handles_500(real_server: FastMCP) -> None:
     respx.post(f"{V2_BASE}/trafficrules").mock(return_value=httpx.Response(500))
-    result = await _call(
-        real_server, "create_traffic_rule", {"rule": {"action": "BLOCK"}}
-    )
+    result = await _call(real_server, "create_traffic_rule", {"rule": {"action": "BLOCK"}})
     assert "error" in result
 
 
@@ -383,9 +359,7 @@ async def test_real_toggle_traffic_rule_handles_500(real_server: FastMCP) -> Non
         return_value=httpx.Response(200, json=[{"_id": "tr1", "enabled": True}])
     )
     respx.put(f"{V2_BASE}/trafficrules/tr1").mock(return_value=httpx.Response(500))
-    result = await _call(
-        real_server, "toggle_traffic_rule", {"rule_id": "tr1", "enabled": False}
-    )
+    result = await _call(real_server, "toggle_traffic_rule", {"rule_id": "tr1", "enabled": False})
     assert "error" in result
 
 

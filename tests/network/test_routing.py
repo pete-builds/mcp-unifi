@@ -141,9 +141,7 @@ async def test_delete_route_round_trip(stub_server: FastMCP, stub_state: StubSta
     assert preview["preview"] is True
     assert preview["resource"]["_id"] == rid
     assert any(r["_id"] == rid for r in stub_state.list_routes())  # not deleted yet
-    result = await _call(
-        stub_server, "confirm_destructive_action", {"token": preview["token"]}
-    )
+    result = await _call(stub_server, "confirm_destructive_action", {"token": preview["token"]})
     assert result["deleted"] is True
     assert result["route_id"] == rid
     assert not any(r["_id"] == rid for r in stub_state.list_routes())
@@ -213,9 +211,7 @@ async def test_real_delete_route(real_server: FastMCP) -> None:
     respx.delete(f"{BASE}/rest/routing/rt1").mock(return_value=httpx.Response(200))
     preview = await _call(real_server, "delete_route", {"route_id": "rt1"})
     assert preview["preview"] is True
-    result = await _call(
-        real_server, "confirm_destructive_action", {"token": preview["token"]}
-    )
+    result = await _call(real_server, "confirm_destructive_action", {"token": preview["token"]})
     assert result["deleted"] is True
 
 

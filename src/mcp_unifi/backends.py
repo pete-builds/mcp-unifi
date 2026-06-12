@@ -97,6 +97,21 @@ class Backend(Protocol):
         self, route_id: str, patch: dict[str, Any]
     ) -> UniFiRecord | None: ...
 
+    # ----- Content filtering (v2 DNS) -------------------------------------
+    async def list_content_filters(self) -> list[UniFiRecord]: ...
+    async def update_content_filter(
+        self, filter_id: str, patch: dict[str, Any]
+    ) -> UniFiRecord | None: ...
+    async def delete_content_filter(self, filter_id: str) -> bool: ...
+
+    # ----- Dynamic DNS ----------------------------------------------------
+    async def list_dynamic_dns(self) -> list[UniFiRecord]: ...
+    async def create_dynamic_dns(self, payload: dict[str, Any]) -> UniFiRecord: ...
+    async def update_dynamic_dns(
+        self, ddns_id: str, patch: dict[str, Any]
+    ) -> UniFiRecord | None: ...
+    async def delete_dynamic_dns(self, ddns_id: str) -> bool: ...
+
     # ----- Port profiles --------------------------------------------------
     async def list_port_profiles(self) -> list[UniFiRecord]: ...
     async def create_port_profile(self, payload: dict[str, Any]) -> UniFiRecord: ...
@@ -272,6 +287,31 @@ class StubBackend:
         self, route_id: str, patch: dict[str, Any]
     ) -> UniFiRecord | None:
         return self.state.update_traffic_route(route_id, patch)
+
+    # ----- Content filtering (v2 DNS) -------------------------------------
+    async def list_content_filters(self) -> list[UniFiRecord]:
+        return self.state.list_content_filters()
+
+    async def update_content_filter(
+        self, filter_id: str, patch: dict[str, Any]
+    ) -> UniFiRecord | None:
+        return self.state.update_content_filter(filter_id, patch)
+
+    async def delete_content_filter(self, filter_id: str) -> bool:
+        return self.state.delete_content_filter(filter_id)
+
+    # ----- Dynamic DNS ----------------------------------------------------
+    async def list_dynamic_dns(self) -> list[UniFiRecord]:
+        return self.state.list_dynamic_dns()
+
+    async def create_dynamic_dns(self, payload: dict[str, Any]) -> UniFiRecord:
+        return self.state.create_dynamic_dns(payload)
+
+    async def update_dynamic_dns(self, ddns_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        return self.state.update_dynamic_dns(ddns_id, patch)
+
+    async def delete_dynamic_dns(self, ddns_id: str) -> bool:
+        return self.state.delete_dynamic_dns(ddns_id)
 
     # ----- Port profiles --------------------------------------------------
     async def list_port_profiles(self) -> list[UniFiRecord]:
@@ -511,6 +551,31 @@ class RealBackend:
         self, route_id: str, patch: dict[str, Any]
     ) -> UniFiRecord | None:
         return await self.client.update_traffic_route(route_id, patch)
+
+    # ----- Content filtering (v2 DNS) -------------------------------------
+    async def list_content_filters(self) -> list[UniFiRecord]:
+        return await self.client.list_content_filters()
+
+    async def update_content_filter(
+        self, filter_id: str, patch: dict[str, Any]
+    ) -> UniFiRecord | None:
+        return await self.client.update_content_filter(filter_id, patch)
+
+    async def delete_content_filter(self, filter_id: str) -> bool:
+        return await self.client.delete_content_filter(filter_id)
+
+    # ----- Dynamic DNS ----------------------------------------------------
+    async def list_dynamic_dns(self) -> list[UniFiRecord]:
+        return await self.client.list_dynamic_dns()
+
+    async def create_dynamic_dns(self, payload: dict[str, Any]) -> UniFiRecord:
+        return await self.client.create_dynamic_dns(payload)
+
+    async def update_dynamic_dns(self, ddns_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        return await self.client.update_dynamic_dns(ddns_id, patch)
+
+    async def delete_dynamic_dns(self, ddns_id: str) -> bool:
+        return await self.client.delete_dynamic_dns(ddns_id)
 
     # ----- Port profiles --------------------------------------------------
     async def list_port_profiles(self) -> list[UniFiRecord]:

@@ -58,6 +58,106 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
+    @audited("get_network_details")
+    async def get_network_details(
+        network_id: str = "",
+        name: str = "",
+        controller: str = "default",
+    ) -> str:
+        """Show one network's full record, grouped into readable sections.
+
+        Side effects: None (read-only). This is the deep view that complements
+        ``list_networks`` (the summary). Use it to inspect a network's DHCP
+        scope, IPv6 configuration, and VPN fields before editing with
+        ``update_vlan`` / ``set_lan_ipv6``.
+
+        Resolve the network by ``network_id`` (preferred, from
+        ``list_networks``) or by ``name`` (case-insensitive; errors if the name
+        is ambiguous). Returns:
+
+        - ``network``: identity fields (``_id``, ``name``, ``purpose``,
+          ``vlan``, ``vlan_enabled``, ``ip_subnet``, ``enabled``,
+          ``networkgroup``).
+        - ``dhcp``: every ``dhcpd_*`` key (lease window, gateway/DNS toggles,
+          lease time, NTP/WINS) plus the IPv6 DHCP (``dhcpdv6_*``) keys.
+        - ``ipv6``: the LAN IPv6 view: ``ipv6_interface_type``,
+          ``ipv6_ra_enabled``, ``ipv6_client_address_assignment``,
+          ``ipv6_pd_start`` / ``ipv6_pd_stop`` (the delegated-prefix window),
+          and the RA tuning keys. Empty section on a network with no IPv6.
+        - ``vpn``: VPN-related keys (``vpn_type``, ``*_vpn_*``,
+          ``remote_vpn_*``) when the network is a VPN; empty otherwise.
+        - ``raw``: the complete unfiltered record, so nothing is hidden.
+
+        Example: get_network_details(name="Default")
+
+        Args:
+            network_id: The ``_id`` from ``list_networks``. Wins over ``name``
+                when both are given.
+            name: Network display name (case-insensitive) as an alternative to
+                ``network_id``. Errors if more than one network matches.
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+        """
+        if not network_id and not name:
+            return err("get_network_details requires network_id or name")
+        try:
+            backend = resolve_backend(registry, controller)
+            networks = await backend.list_networks()
+        except UniFiError as exc:
+            logger.exception("get_network_details failed")
+            return err(str(exc))
+
+        target: dict[str, Any] | None = None
+        if network_id:
+            target = next(
+                (n for n in networks if isinstance(n, dict) and n.get("_id") == network_id),
+                None,
+            )
+            if target is None:
+                return err(f"network {network_id} not found")
+        else:
+            matches = [
+                n
+                for n in networks
+                if isinstance(n, dict) and str(n.get("name", "")).lower() == name.strip().lower()
+            ]
+            if not matches:
+                return err(f"network named {name!r} not found")
+            if len(matches) > 1:
+                ids = ", ".join(str(m.get("_id")) for m in matches)
+                return err(f"multiple networks named {name!r}; pass network_id (ids: {ids})")
+            target = matches[0]
+
+        identity_keys = (
+            "_id",
+            "name",
+            "purpose",
+            "vlan",
+            "vlan_enabled",
+            "ip_subnet",
+            "enabled",
+            "networkgroup",
+            "domain_name",
+            "is_nat",
+        )
+        sections = {
+            "network": {k: target[k] for k in identity_keys if k in target},
+            "dhcp": {
+                k: v
+                for k, v in target.items()
+                if k.startswith("dhcpd_") or k.startswith("dhcpdv6_")
+            },
+            "ipv6": {k: v for k, v in target.items() if k.startswith("ipv6_")},
+            "vpn": {
+                k: v
+                for k, v in target.items()
+                if "vpn" in k.lower() or k.startswith("radiusprofile_")
+            },
+            "raw": target,
+        }
+        return format_json({"controller": controller, **sections})
+
+    @mcp.tool()
     @audited("create_vlan")
     async def create_vlan(
         name: str,

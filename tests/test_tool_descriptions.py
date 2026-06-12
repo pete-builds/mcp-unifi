@@ -52,6 +52,13 @@ DESTRUCTIVE_TOOLS: frozenset[str] = frozenset(
         # traffic routes (v2)
         "update_traffic_route",
         "toggle_traffic_route",
+        # content filtering (v2 DNS)
+        "update_content_filter",
+        "delete_content_filter",
+        # dynamic DNS
+        "create_dynamic_dns",
+        "update_dynamic_dns",
+        "delete_dynamic_dns",
         # port profiles
         "create_port_profile",
         "update_port_profile",

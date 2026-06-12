@@ -20,9 +20,11 @@ from mcp_unifi.modules.network import (
     clients,
     composites,
     confirm,
+    content_filtering,
     devices,
     dhcp,
     drift,
+    dynamic_dns,
     firewall,
     honeypot,
     ipv6,
@@ -58,6 +60,8 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     firewall.register(mcp, settings, registry)
     routing.register(mcp, settings, registry)
     traffic.register(mcp, settings, registry)
+    content_filtering.register(mcp, settings, registry)
+    dynamic_dns.register(mcp, settings, registry)
     port_profiles.register(mcp, settings, registry)
     devices.register(mcp, settings, registry)
     clients.register(mcp, settings, registry)

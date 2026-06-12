@@ -347,9 +347,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         except UniFiError as exc:
             logger.exception("get_firewall_group_details failed", extra={"group_id": group_id})
             return err(str(exc))
-        target = next(
-            (g for g in groups if isinstance(g, dict) and g.get("_id") == group_id), None
-        )
+        target = next((g for g in groups if isinstance(g, dict) and g.get("_id") == group_id), None)
         if target is None:
             return err(f"firewall group {group_id} not found")
         return format_json(target)
@@ -404,9 +402,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                     "dry_run": True,
                     "controller": controller,
                     "would_create": {"firewall_group": payload},
-                    "summary": (
-                        f"Would create {gt} '{name}' with {len(members)} member(s)"
-                    ),
+                    "summary": (f"Would create {gt} '{name}' with {len(members)} member(s)"),
                 }
             )
         try:
@@ -457,9 +453,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             backend = resolve_backend(registry, controller)
             groups = await backend.list_firewall_groups()
         except UniFiError as exc:
-            logger.exception(
-                "update_firewall_group lookup failed", extra={"group_id": group_id}
-            )
+            logger.exception("update_firewall_group lookup failed", extra={"group_id": group_id})
             return err(str(exc))
         existing = next(
             (g for g in groups if isinstance(g, dict) and g.get("_id") == group_id), None
@@ -556,9 +550,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             )
             return err(str(exc))
 
-        target = next(
-            (g for g in groups if isinstance(g, dict) and g.get("_id") == group_id), None
-        )
+        target = next((g for g in groups if isinstance(g, dict) and g.get("_id") == group_id), None)
         if target is None:
             return err(f"firewall group {group_id} not found")
 
