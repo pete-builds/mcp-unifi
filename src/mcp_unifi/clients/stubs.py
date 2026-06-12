@@ -53,6 +53,18 @@ def _seed_devices() -> list[UniFiRecord]:
             "num_sta": 12,
             "satisfaction": 99,
             "locating": False,
+            # Stats fields mirror a live UCG-Fiber gateway record so the Wave C
+            # read-only stats tools have plausible state to shape offline.
+            "tx_bytes": 9_900_000_000,
+            "rx_bytes": 42_000_000_000,
+            "last_wan_ip": "203.0.113.42",
+            "speedtest-status": "Idle",
+            "system-stats": {"cpu": "11.7", "mem": "82.3", "uptime": "482311"},
+            "temperatures": [
+                {"name": "Local", "type": "board", "value": 48.5},
+                {"name": "CPU", "type": "cpu", "value": 51.8},
+                {"name": "PMIC", "type": "board", "value": 54.6},
+            ],
         },
         {
             "_id": _oid(),
@@ -73,6 +85,17 @@ def _seed_devices() -> list[UniFiRecord]:
                 {"radio": "na", "channel": 36, "ht": 80, "tx_power": 26},
                 {"radio": "6e", "channel": 37, "ht": 160, "tx_power": 24},
             ],
+            # Stats fields for the Wave C read-only device-stats tool.
+            "tx_bytes": 204_000_000_000,
+            "rx_bytes": 40_000_000_000,
+            "system-stats": {"cpu": "6.4", "mem": "44.0", "uptime": "482010"},
+            "stat": {
+                "ap": {
+                    "tx_packets": 184_899_174,
+                    "rx_packets": 76_426_931,
+                    "tx_retries": 185_271_001,
+                }
+            },
         },
         {
             "_id": _oid(),
@@ -588,6 +611,90 @@ def _seed_speedtest_results() -> list[UniFiRecord]:
     ]
 
 
+def _seed_sysinfo() -> UniFiRecord:
+    """Seed a ``/stat/sysinfo`` record.
+
+    Mirrors the shape probed live on a UCG-Fiber (UniFi Network 10.4.57,
+    2026-06-12): controller version/build, hostname, uptime, device type, and
+    update-availability flags.
+    """
+    return {
+        "version": "10.4.57",
+        "previous_version": "10.3.58",
+        "build": "atag_10.4.57_34628",
+        "hostname": "Cloud-Gateway-Fiber",
+        "name": "Cloud Gateway Fiber",
+        "uptime": 420934,
+        "timezone": "America/New_York",
+        "ubnt_device_type": "UDMA6A8",
+        "udm_version": "UCGF.ipq9574.v5.1.15",
+        "console_display_version": "5.1.15",
+        "update_available": False,
+        "update_downloaded": False,
+        "is_cloud_console": False,
+    }
+
+
+def _seed_anomalies() -> list[UniFiRecord]:
+    """Seed one client anomaly.
+
+    Mirrors the ``/stat/anomalies`` record shape probed live (2026-06-12): an
+    ``anomaly`` enum string, the affected client ``mac``, and a list of
+    epoch-ms ``timestamps``.
+    """
+    now_ms = _ts() * 1000
+    return [
+        {
+            "anomaly": "USER_HIGH_TCP_LATENCY",
+            "mac": "aa:bb:cc:00:00:04",
+            "timestamps": [now_ms - 3_600_000, now_ms - 1_800_000, now_ms - 300_000],
+        },
+    ]
+
+
+def _seed_sessions() -> list[UniFiRecord]:
+    """Seed recent client connection sessions.
+
+    Mirrors the ``POST /stat/session`` record shape probed live (2026-06-12):
+    one row per association with ``assoc_time`` (epoch seconds), ``duration``,
+    throughput counters, and client identity. Spread across the past day so
+    callers can test the newest-first ordering and time-window filter.
+    """
+    now = _ts()
+    return [
+        {
+            "_id": _oid(),
+            "mac": "aa:bb:cc:00:00:01",
+            "hostname": "petes-laptop",
+            "name": "Pete's MacBook",
+            "ip": "192.168.1.101",
+            "assoc_time": now - 3600,
+            "duration": 3600,
+            "rx_bytes": 8_400_000_000,
+            "tx_bytes": 1_200_000_000,
+            "is_wired": False,
+            "is_guest": False,
+            "ap_mac": "f4:e2:c6:00:00:02",
+            "satisfaction": 96,
+        },
+        {
+            "_id": _oid(),
+            "mac": "aa:bb:cc:00:00:02",
+            "hostname": "iphone-15",
+            "name": "iPhone 15",
+            "ip": "192.168.1.102",
+            "assoc_time": now - 86400,
+            "duration": 7200,
+            "rx_bytes": 1_900_000_000,
+            "tx_bytes": 240_000_000,
+            "is_wired": False,
+            "is_guest": False,
+            "ap_mac": "f4:e2:c6:00:00:02",
+            "satisfaction": 88,
+        },
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Stub state container
 # ---------------------------------------------------------------------------
@@ -622,6 +729,9 @@ class StubState:
         self.alarms: list[UniFiRecord] = _seed_alarms()
         self.health: list[UniFiRecord] = _seed_health()
         self.speedtest_results: list[UniFiRecord] = _seed_speedtest_results()
+        self.sysinfo: UniFiRecord = _seed_sysinfo()
+        self.anomalies: list[UniFiRecord] = _seed_anomalies()
+        self.sessions: list[UniFiRecord] = _seed_sessions()
         self.settings: dict[str, UniFiRecord] = _seed_settings(default_net_id)
         self.audit_log: list[UniFiRecord] = []  # records of block/unblock/reconnect/etc.
         # Failure-injection queue: maps method name to a FIFO deque of
@@ -1101,6 +1211,37 @@ class StubState:
 
     def get_speedtest_results(self, limit: int) -> list[UniFiRecord]:
         return self.speedtest_results[:limit]
+
+    # ----- Stats & insights (read-only — Wave C) --------------------------
+    def get_system_info(self) -> UniFiRecord:
+        return dict(self.sysinfo)
+
+    def get_gateway_record(self) -> UniFiRecord | None:
+        for dev in self.devices:
+            if dev.get("type") in ("ugw", "udm"):
+                return dev
+        return None
+
+    def find_client_by_mac(self, mac: str) -> UniFiRecord | None:
+        target = mac.lower()
+        for client in self.clients:
+            if str(client.get("mac", "")).lower() == target:
+                return client
+        return None
+
+    def get_client_sessions(self, mac: str, start: int, end: int, limit: int) -> list[UniFiRecord]:
+        target = mac.lower()
+        rows = [
+            s
+            for s in self.sessions
+            if start <= s.get("assoc_time", 0) <= end
+            and (not target or str(s.get("mac", "")).lower() == target)
+        ]
+        rows.sort(key=lambda s: s.get("assoc_time", 0), reverse=True)
+        return rows[:limit]
+
+    def get_anomalies(self) -> list[UniFiRecord]:
+        return self.anomalies
 
     # ----- Site settings (Threat Management, Honeypot, Teleport) ----------
     def get_setting(self, key: str) -> UniFiRecord:

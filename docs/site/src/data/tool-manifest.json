@@ -1,5 +1,5 @@
 {
-  "tool_count": 123,
+  "tool_count": 129,
   "tools": [
     {
       "description": "Return credentials expiring within ``days_ahead`` days.\n\nSide effects: None (read-only).\n\nIterates ``list_credentials`` client-side and filters to those whose\n``expires_at`` falls inside the window ``[now, now + days_ahead]``.\nCredentials with no ``expires_at`` (typical for mobile credentials)\nare excluded. Each entry includes ``days_until_expiry`` so the LLM\ncan sort and summarise without re-doing the math.\n\nExample: audit_expiring_credentials(days_ahead=14)",
@@ -1194,6 +1194,21 @@
       "name": "get_access_system_info"
     },
     {
+      "description": "List client-impacting anomalies the controller has detected.\n\nSide effects: None (read-only).\n\nReturns one record per anomaly with ``anomaly`` (an enum string such\nas ``USER_HIGH_TCP_LATENCY`` or ``USER_DNS_LATENCY``), ``mac`` (the\naffected client), and ``timestamps`` (a list of epoch-ms occurrence\ntimes). Returns an empty list on a clean network.\n\nExample: get_anomalies(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "get_anomalies"
+    },
+    {
       "description": "Fetch a single camera's full record by ID.\n\nSide effects: None (read-only).\n\nReturns the full camera record (same shape as one entry from\n``list_cameras``) including current recording mode, motion sensitivity,\nprivacy-mask state, and the most recent ``lastMotion`` timestamp.\n\nExample: get_camera(camera_id=\"65f...\", controller=\"default\")",
       "input_schema": {
         "additionalProperties": false,
@@ -1214,6 +1229,58 @@
         "type": "object"
       },
       "name": "get_camera"
+    },
+    {
+      "description": "List recent client connection sessions over a time window.\n\nSide effects: None (read-only).\n\nReturns one record per association, newest first, with ``mac``,\n``hostname``, ``name``, ``ip``, ``assoc_time`` (epoch seconds),\n``duration`` (seconds), ``rx_bytes``/``tx_bytes``, ``is_wired``,\n``is_guest``, ``ap_mac``, and ``satisfaction``. Pass ``mac`` to scope\nto one client; omit it for every client's sessions in the window.\n\nExample: get_client_sessions(mac=\"aa:bb:cc:00:00:01\", hours=48, limit=20)",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "hours": {
+            "default": 24,
+            "description": "Look-back window in hours (default 24, max 720 = 30 days).",
+            "type": "integer"
+          },
+          "limit": {
+            "default": 50,
+            "description": "Max number of sessions to return (default 50, max 1000).",
+            "type": "integer"
+          },
+          "mac": {
+            "default": "",
+            "description": "MAC address to filter to one client. Empty (default) returns\nsessions for all clients.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "get_client_sessions"
+    },
+    {
+      "description": "Report per-client traffic, signal, and uptime for one client by MAC.\n\nSide effects: None (read-only).\n\nReturns a record with ``hostname``, ``name``, ``ip``, ``is_wired``,\n``network``, ``essid``, ``uptime``, ``first_seen``/``last_seen``,\n``signal``/``rssi``/``satisfaction`` (wireless), ``tx_rate``/``rx_rate``,\n``tx_bytes``/``rx_bytes``, ``tx_retries``, ``anomalies``, and the wired\n``wired_rate_mbps``/``wired_tx_bytes``/``wired_rx_bytes`` fields when\npresent. Returns a NOT_FOUND error envelope if the client is not\ncurrently connected.\n\nExample: get_client_stats(mac=\"aa:bb:cc:00:00:01\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "mac": {
+            "description": "MAC address of the connected client.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mac"
+        ],
+        "type": "object"
+      },
+      "name": "get_client_stats"
     },
     {
       "description": "Show one content-filtering profile's full record by ``_id``.\n\nSide effects: None (read-only). Call this before\n``update_content_filter`` to see the profile's current categories,\nallow/block lists, and scope (the values you are about to\nread-modify-write).\n\nReturns the profile record, or an error envelope if no profile\nmatches.\n\nExample: get_content_filter_details(filter_id=\"65f...\")",
@@ -1280,6 +1347,28 @@
         "type": "object"
       },
       "name": "get_device_radios"
+    },
+    {
+      "description": "Report per-device stats for one UniFi device by MAC.\n\nSide effects: None (read-only).\n\nReturns a record with ``name``, ``model``, ``type``, ``state``,\n``uptime`` (seconds), ``cpu_pct``, ``mem_pct``, ``satisfaction``,\n``num_sta``, ``tx_bytes``/``rx_bytes``, and (for access points)\n``tx_retries``/``tx_packets``/``rx_packets``. Returns a NOT_FOUND\nerror envelope if no adopted device matches ``mac``.\n\nExample: get_device_stats(mac=\"f4:e2:c6:00:00:02\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "mac": {
+            "description": "MAC address of the device (gateway, AP, or switch).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mac"
+        ],
+        "type": "object"
+      },
+      "name": "get_device_stats"
     },
     {
       "description": "Fetch one door's full record by ID.\n\nSide effects: None (read-only).\n\nReturns the same fields as one entry in ``list_doors`` plus the live\nlock and position status. Useful for confirming a door is online\nbefore reading recent events against it.\n\nExample: get_door(door_id=\"abc...\", controller=\"default\")",
@@ -1368,6 +1457,21 @@
         "type": "object"
       },
       "name": "get_firewall_group_details"
+    },
+    {
+      "description": "Report gateway resource stats: CPU, memory, temperature, throughput.\n\nSide effects: None (read-only).\n\nReturns a single record for the gateway (UCG/UDM) with ``cpu_pct``,\n``mem_pct``, ``temperatures`` (a list of ``{name, type, value}`` in\ndegrees C), ``uptime`` (seconds), ``tx_bytes``/``rx_bytes``,\n``num_sta``, ``last_wan_ip``, and ``speedtest_status``. Returns ``{}``\nif no gateway device is adopted on this controller.\n\nExample: get_gateway_stats(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "get_gateway_stats"
     },
     {
       "description": "Show one network's full record, grouped into readable sections.\n\nSide effects: None (read-only). This is the deep view that complements\n``list_networks`` (the summary). Use it to inspect a network's DHCP\nscope, IPv6 configuration, and VPN fields before editing with\n``update_vlan`` / ``set_lan_ipv6``.\n\nResolve the network by ``network_id`` (preferred, from\n``list_networks``) or by ``name`` (case-insensitive; errors if the name\nis ambiguous). Returns:\n\n- ``network``: identity fields (``_id``, ``name``, ``purpose``,\n  ``vlan``, ``vlan_enabled``, ``ip_subnet``, ``enabled``,\n  ``networkgroup``).\n- ``dhcp``: every ``dhcpd_*`` key (lease window, gateway/DNS toggles,\n  lease time, NTP/WINS) plus the IPv6 DHCP (``dhcpdv6_*``) keys.\n- ``ipv6``: the LAN IPv6 view: ``ipv6_interface_type``,\n  ``ipv6_ra_enabled``, ``ipv6_client_address_assignment``,\n  ``ipv6_pd_start`` / ``ipv6_pd_stop`` (the delegated-prefix window),\n  and the RA tuning keys. Empty section on a network with no IPv6.\n- ``vpn``: VPN-related keys (``vpn_type``, ``*_vpn_*``,\n  ``remote_vpn_*``) when the network is a VPN; empty otherwise.\n- ``raw``: the complete unfiltered record, so nothing is hidden.\n\nExample: get_network_details(name=\"Default\")",
@@ -1492,6 +1596,21 @@
         "type": "object"
       },
       "name": "get_speedtest_results"
+    },
+    {
+      "description": "Report controller/system info: version, uptime, device type.\n\nSide effects: None (read-only).\n\nReturns a single record with ``version``, ``build``,\n``previous_version``, ``hostname``, ``name``, ``uptime`` (seconds),\n``timezone``, ``ubnt_device_type``, ``udm_version``,\n``console_display_version``, and ``update_available``. Use it to check\nthe firmware level and whether an update is pending.\n\nExample: get_system_info(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "get_system_info"
     },
     {
       "description": "Return Teleport VPN state and any wireguard-server networks.\n\nSide effects: None (read-only).\n\nReturns ``{\"enabled\": bool, \"vpn_networks\": [...],\n\"clients_via_local_api\": false, \"notes\": [...]}``. The ``enabled``\nflag is the global Teleport listener toggle; ``vpn_networks``\nlists the underlying wireguard-server network records (Teleport\nrides on these for tunnel termination); ``clients_via_local_api``\nis a hard ``false`` on UniFi Network 9.x \u2014 the client roster and\ninvitation lifecycle are only reachable via the Ubiquiti mobile\napp pairing flow, not the local API.\n\nExample: get_teleport_config(controller=\"default\")",

@@ -670,6 +670,86 @@ class UniFiClient:
         return results[:limit] if isinstance(results, list) else []
 
     # ------------------------------------------------------------------
+    # Stats & insights (read-only observability — Wave C)
+    # ------------------------------------------------------------------
+
+    async def get_system_info(self) -> UniFiRecord:
+        """Return controller/system info from ``/stat/sysinfo``.
+
+        Probed live read-only against a UCG-Fiber on UniFi Network 10.4.57
+        (2026-06-12): ``GET /stat/sysinfo`` answers HTTP 200 with the standard
+        ``{"meta", "data"}`` envelope wrapping a single record carrying
+        ``version``, ``build``, ``previous_version``, ``hostname``, ``name``,
+        ``uptime``, ``ubnt_device_type``, ``udm_version``,
+        ``console_display_version``, ``update_available`` and ``timezone``.
+        Returns ``{}`` if the controller answers with no record.
+        """
+        result = await self._get("/stat/sysinfo")
+        if isinstance(result, list) and result:
+            first = result[0]
+            return first if isinstance(first, dict) else {}
+        return result if isinstance(result, dict) else {}
+
+    async def get_client_by_mac(self, mac: str) -> UniFiRecord | None:
+        """Return a single active client record by MAC from ``/stat/sta``.
+
+        Probed live (2026-06-12): a client record carries ``signal``,
+        ``rssi``, ``satisfaction``/``satisfaction_avg``, ``uptime``,
+        ``tx_bytes``/``rx_bytes``, ``tx_rate``/``rx_rate``, ``tx_retries``,
+        ``anomalies``, ``wifi_tx_attempts`` (wireless) and ``wired-tx_bytes``
+        / ``wired_rate_mbps`` (wired). Returns ``None`` when the client is
+        not currently connected.
+        """
+        clients = await self._get("/stat/sta") or []
+        if not isinstance(clients, list):
+            return None
+        target = mac.lower()
+        for client in clients:
+            if isinstance(client, dict) and str(client.get("mac", "")).lower() == target:
+                return client
+        return None
+
+    async def get_client_sessions(
+        self, mac: str, start: int, end: int, limit: int
+    ) -> list[UniFiRecord]:
+        """Return recent client connection sessions from ``POST /stat/session``.
+
+        Probed live (2026-06-12): ``POST /stat/session`` with a JSON body of
+        ``{"type": "all", "start": <epoch_s>, "end": <epoch_s>}`` (plus an
+        optional ``"mac"`` filter) answers HTTP 200 with the standard
+        ``{"meta", "data"}`` envelope. Each session carries ``mac``,
+        ``hostname``, ``name``, ``ip``, ``assoc_time``, ``duration`` (seconds),
+        ``rx_bytes``/``tx_bytes``, ``is_wired``, ``is_guest``, ``ap_mac``,
+        ``satisfaction`` and ``roaming_sessions``. ``start``/``end`` are epoch
+        **seconds**. Results are sorted newest-first by ``assoc_time`` and
+        bounded to ``limit``.
+        """
+        body: dict[str, Any] = {"type": "all", "start": start, "end": end}
+        if mac:
+            body["mac"] = mac.lower()
+        records = await self._post("/stat/session", body) or []
+        if not isinstance(records, list):
+            return []
+        ordered = sorted(
+            (r for r in records if isinstance(r, dict)),
+            key=lambda r: r.get("assoc_time", 0),
+            reverse=True,
+        )
+        return ordered[:limit]
+
+    async def get_anomalies(self) -> list[UniFiRecord]:
+        """Return client-impacting anomalies from ``/stat/anomalies``.
+
+        Probed live (2026-06-12): ``GET /stat/anomalies`` answers HTTP 200
+        with the standard ``{"meta", "data"}`` envelope. Each record carries
+        ``anomaly`` (an enum string such as ``USER_HIGH_TCP_LATENCY``),
+        ``mac`` (the affected client), and ``timestamps`` (a list of epoch-ms
+        occurrence times). Returns an empty list on a clean network.
+        """
+        result = await self._get("/stat/anomalies") or []
+        return result if isinstance(result, list) else []
+
+    # ------------------------------------------------------------------
     # Site settings (Threat Management, Honeypot, Teleport)
     # ------------------------------------------------------------------
 

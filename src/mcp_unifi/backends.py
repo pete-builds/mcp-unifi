@@ -18,6 +18,13 @@ from mcp_unifi.clients.access import AccessClient
 from mcp_unifi.clients.access_stubs import AccessStubState
 from mcp_unifi.clients.protect import ProtectClient
 from mcp_unifi.clients.protect_stubs import ProtectStubState
+from mcp_unifi.clients.stats_shape import (
+    shape_client_stats,
+    shape_device_stats,
+    shape_gateway_stats,
+    shape_session,
+    shape_system_info,
+)
 from mcp_unifi.clients.stubs import StubState
 from mcp_unifi.clients.unifi import UniFiClient, UniFiError
 from mcp_unifi.models import UniFiRecord
@@ -152,6 +159,16 @@ class Backend(Protocol):
     async def list_alarms(self, limit: int, archived: bool) -> list[UniFiRecord]: ...
     async def trigger_speedtest(self) -> UniFiRecord: ...
     async def get_speedtest_results(self, limit: int) -> list[UniFiRecord]: ...
+
+    # ----- Stats & insights (read-only — Wave C) --------------------------
+    async def get_system_info(self) -> UniFiRecord: ...
+    async def get_gateway_stats(self) -> UniFiRecord: ...
+    async def get_device_stats(self, mac: str) -> UniFiRecord | None: ...
+    async def get_client_stats(self, mac: str) -> UniFiRecord | None: ...
+    async def get_client_sessions(
+        self, mac: str, start: int, end: int, limit: int
+    ) -> list[UniFiRecord]: ...
+    async def get_anomalies(self) -> list[UniFiRecord]: ...
 
     # ----- Site settings (Threat Mgmt, Honeypot, Teleport) ---------------
     async def get_setting(self, key: str) -> UniFiRecord: ...
@@ -397,6 +414,41 @@ class StubBackend:
 
     async def get_speedtest_results(self, limit: int) -> list[UniFiRecord]:
         return self.state.get_speedtest_results(limit)
+
+    # ----- Stats & insights (read-only — Wave C) --------------------------
+    async def get_system_info(self) -> UniFiRecord:
+        return shape_system_info(self.state.get_system_info())
+
+    async def get_gateway_stats(self) -> UniFiRecord:
+        gateway = self.state.get_gateway_record()
+        if gateway is None:
+            return {}
+        return shape_gateway_stats(gateway)
+
+    async def get_device_stats(self, mac: str) -> UniFiRecord | None:
+        target = mac.lower()
+        record = next(
+            (d for d in self.state.list_devices() if str(d.get("mac", "")).lower() == target),
+            None,
+        )
+        if record is None:
+            return None
+        return shape_device_stats(record)
+
+    async def get_client_stats(self, mac: str) -> UniFiRecord | None:
+        record = self.state.find_client_by_mac(mac)
+        if record is None:
+            return None
+        return shape_client_stats(record)
+
+    async def get_client_sessions(
+        self, mac: str, start: int, end: int, limit: int
+    ) -> list[UniFiRecord]:
+        records = self.state.get_client_sessions(mac, start, end, limit)
+        return [shape_session(r) for r in records]
+
+    async def get_anomalies(self) -> list[UniFiRecord]:
+        return self.state.get_anomalies()
 
     # ----- Site settings --------------------------------------------------
     async def get_setting(self, key: str) -> UniFiRecord:
@@ -666,6 +718,46 @@ class RealBackend:
 
     async def get_speedtest_results(self, limit: int) -> list[UniFiRecord]:
         return await self.client.get_speedtest_results(limit)
+
+    # ----- Stats & insights (read-only — Wave C) --------------------------
+    async def get_system_info(self) -> UniFiRecord:
+        return shape_system_info(await self.client.get_system_info())
+
+    async def get_gateway_stats(self) -> UniFiRecord:
+        devices = await self.client.list_devices()
+        gateway = next(
+            (d for d in devices if isinstance(d, dict) and d.get("type") in ("ugw", "udm")),
+            None,
+        )
+        if gateway is None:
+            return {}
+        return shape_gateway_stats(gateway)
+
+    async def get_device_stats(self, mac: str) -> UniFiRecord | None:
+        devices = await self.client.list_devices()
+        target = mac.lower()
+        record = next(
+            (d for d in devices if isinstance(d, dict) and str(d.get("mac", "")).lower() == target),
+            None,
+        )
+        if record is None:
+            return None
+        return shape_device_stats(record)
+
+    async def get_client_stats(self, mac: str) -> UniFiRecord | None:
+        record = await self.client.get_client_by_mac(mac)
+        if record is None:
+            return None
+        return shape_client_stats(record)
+
+    async def get_client_sessions(
+        self, mac: str, start: int, end: int, limit: int
+    ) -> list[UniFiRecord]:
+        records = await self.client.get_client_sessions(mac, start, end, limit)
+        return [shape_session(r) for r in records]
+
+    async def get_anomalies(self) -> list[UniFiRecord]:
+        return await self.client.get_anomalies()
 
     # ----- Site settings --------------------------------------------------
     async def get_setting(self, key: str) -> UniFiRecord:

@@ -64,6 +64,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Stub parity: seeded a sample content-filtering profile (so get/update/delete
   round-trip) and an empty Dynamic DNS collection (matching the live gateway;
   create/update/delete still round-trip).
+- **Stats & insights read pack (6 new Network tools, all read-only).** Every
+  endpoint was probed read-only against the live UCG-Fiber (UniFi Network
+  10.4.57) before build; tools were shipped only where the firmware exposes a
+  working surface. All six are in `READ_ONLY_TOOLS` (no `dry_run`). Backend
+  shaping (`clients/stats_shape.py`) trims the noisy controller records to a
+  compact, stable LLM-facing payload identical across the stub and real
+  backends.
+  - `get_system_info` (`/stat/sysinfo`) — controller version, build, hostname,
+    uptime, device type, and update-availability flags.
+  - `get_gateway_stats` (gateway `/stat/device` record) — CPU %, memory %,
+    board/CPU/PMIC temperatures, throughput counters, client count, WAN IP.
+  - `get_device_stats(mac)` (`/stat/device`) — per-device uptime, CPU/mem,
+    satisfaction, client count, throughput, and (for APs) tx-retries/packets.
+  - `get_client_stats(mac)` (`/stat/sta`) — per-client signal/RSSI/satisfaction,
+    uptime, tx/rx bytes and rates, retries, anomalies; wired fields when wired.
+  - `get_client_sessions(mac="", hours=24, limit=50)` (`POST /stat/session`) —
+    recent connection sessions, newest first, with assoc time, duration,
+    throughput, and roaming detail; optional per-client filter.
+  - `get_anomalies` (`/stat/anomalies`) — client-impacting anomalies
+    (e.g. `USER_HIGH_TCP_LATENCY`) with the affected MAC and occurrence times.
+  - **Deferred (no live surface on this firmware, not shipped):** IPS/IDS
+    threat events (`/stat/ips/event`, `/stat/ips/events`, `/rest/ips`,
+    `/stat/threat` all 404/400) and the full DPI pack (`get_dpi_stats`,
+    `get_site_dpi_traffic`, `list_dpi_applications`, `list_dpi_categories`) —
+    DPI is unpopulated on this gateway and the app/category reference dicts
+    (`/stat/dpiapp`, `/stat/dpigroup`) 404. **Skipped as duplicates:**
+    `get_top_clients` (the existing `list_top_talkers` already wraps the DPI
+    by-station view) and `get_network_health` (the existing `get_site_health`
+    already passes the full `/stat/health` per-subsystem record through).
+- Stub parity: seeded sysinfo, anomalies, and client-session state plus
+  `system-stats`/`temperatures`/`stat.ap` fields on the seed gateway and AP so
+  the offline stub backend returns plausible stats for every Wave C tool.
 
 ## [0.14.0] - 2026-06-12
 

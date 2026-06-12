@@ -32,6 +32,7 @@ from mcp_unifi.modules.network import (
     port_forwards,
     port_profiles,
     routing,
+    stats,
     teleport,
     threat_management,
     traffic,
@@ -68,6 +69,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     dhcp.register(mcp, settings, registry)
     port_forwards.register(mcp, settings, registry)
     observability.register(mcp, settings, registry)
+    stats.register(mcp, settings, registry)
     threat_management.register(mcp, settings, registry)
     honeypot.register(mcp, settings, registry)
     teleport.register(mcp, settings, registry)

@@ -472,6 +472,13 @@ READ_ONLY_TOOLS = (
     "trigger_speedtest",
     "get_speedtest_results",
     "audit_open_ports",
+    # Wave C — stats & insights (all read-only)
+    "get_system_info",
+    "get_gateway_stats",
+    "get_device_stats",
+    "get_client_stats",
+    "get_client_sessions",
+    "get_anomalies",
 )
 
 
