@@ -169,6 +169,96 @@ def _seed_firewall_rules() -> list[UniFiRecord]:
     ]
 
 
+def _seed_firewall_groups() -> list[UniFiRecord]:
+    """Seed one reusable firewall group of each common type.
+
+    Mirrors the ``/rest/firewallgroup`` record shape: a ``group_type`` of
+    ``address-group`` / ``ipv6-address-group`` / ``port-group`` and a
+    ``group_members`` string list. Real gateways start empty; the seed gives
+    the read/update/delete tools plausible state to round-trip offline.
+    """
+    return [
+        {
+            "_id": _oid(),
+            "name": "RFC1918",
+            "group_type": "address-group",
+            "group_members": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
+            "site_id": "default",
+        },
+        {
+            "_id": _oid(),
+            "name": "Web Ports",
+            "group_type": "port-group",
+            "group_members": ["80", "443"],
+            "site_id": "default",
+        },
+    ]
+
+
+def _seed_routes() -> list[UniFiRecord]:
+    """Seed one static (next-hop) route.
+
+    Mirrors the ``/rest/routing`` record shape: a static route carries a
+    ``type`` of ``static-route``, the destination CIDR in
+    ``static-route_network``, the next hop in ``static-route_nexthop``, and an
+    administrative ``static-route_distance``.
+    """
+    return [
+        {
+            "_id": _oid(),
+            "name": "Lab subnet via firewall",
+            "type": "static-route",
+            "static-route_network": "10.99.0.0/24",
+            "static-route_nexthop": "192.168.1.254",
+            "static-route_distance": 1,
+            "static-route_type": "nexthop-route",
+            "enabled": True,
+            "site_id": "default",
+        },
+    ]
+
+
+def _seed_traffic_rules() -> list[UniFiRecord]:
+    """Seed one v2 traffic rule.
+
+    Mirrors the ``/v2/api/site/<site>/trafficrules`` record shape: an
+    ``action`` (``BLOCK``/``ALLOW``), a ``matching_target``, and an
+    ``enabled`` flag. The v2 surface returns a bare list, not the legacy
+    envelope.
+    """
+    return [
+        {
+            "_id": _oid(),
+            "action": "BLOCK",
+            "matching_target": "INTERNET",
+            "target_devices": [],
+            "enabled": True,
+            "description": "Block guest devices from the internet (sample)",
+        },
+    ]
+
+
+def _seed_traffic_routes() -> list[UniFiRecord]:
+    """Seed one v2 traffic route (policy-based routing).
+
+    Mirrors the ``/v2/api/site/<site>/trafficroutes`` record shape: a
+    ``next_hop`` / interface selection, a ``matching_target``, a
+    ``kill_switch_enabled`` flag (present on VPN-client routes), and
+    ``enabled``.
+    """
+    return [
+        {
+            "_id": _oid(),
+            "matching_target": "DOMAIN",
+            "domains": [{"domain": "example.com", "port_ranges": [], "ports": []}],
+            "next_hop": "",
+            "network_id": "",
+            "kill_switch_enabled": False,
+            "enabled": True,
+        },
+    ]
+
+
 def _seed_ap_groups() -> list[UniFiRecord]:
     """Seed the default AP group that ships with every UniFi controller.
 
@@ -481,6 +571,10 @@ class StubState:
         default_net_id: str = self.networks[0]["_id"]
         self.wlans: list[UniFiRecord] = _seed_wlans(default_net_id)
         self.firewall_rules: list[UniFiRecord] = _seed_firewall_rules()
+        self.firewall_groups: list[UniFiRecord] = _seed_firewall_groups()
+        self.routes: list[UniFiRecord] = _seed_routes()
+        self.traffic_rules: list[UniFiRecord] = _seed_traffic_rules()
+        self.traffic_routes: list[UniFiRecord] = _seed_traffic_routes()
         self.port_profiles: list[UniFiRecord] = _seed_port_profiles()
         self.ap_groups: list[UniFiRecord] = _seed_ap_groups()
         self.clients: list[UniFiRecord] = _seed_clients()
@@ -671,6 +765,80 @@ class StubState:
         before = len(self.firewall_rules)
         self.firewall_rules = [r for r in self.firewall_rules if r.get("_id") != rule_id]
         return len(self.firewall_rules) < before
+
+    # ----- Firewall groups ------------------------------------------------
+    def list_firewall_groups(self) -> list[UniFiRecord]:
+        return self.firewall_groups
+
+    def create_firewall_group(self, payload: dict[str, Any]) -> UniFiRecord:
+        self._check_failure("create_firewall_group")
+        record: UniFiRecord = {"_id": _oid(), "site_id": "default", **payload}
+        self.firewall_groups.append(record)
+        return record
+
+    def update_firewall_group(self, group_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        for group in self.firewall_groups:
+            if group.get("_id") == group_id:
+                group.update(patch)
+                return group
+        return None
+
+    def delete_firewall_group(self, group_id: str) -> bool:
+        self._check_failure("delete_firewall_group")
+        before = len(self.firewall_groups)
+        self.firewall_groups = [g for g in self.firewall_groups if g.get("_id") != group_id]
+        return len(self.firewall_groups) < before
+
+    # ----- Static routes --------------------------------------------------
+    def list_routes(self) -> list[UniFiRecord]:
+        return self.routes
+
+    def create_route(self, payload: dict[str, Any]) -> UniFiRecord:
+        self._check_failure("create_route")
+        record: UniFiRecord = {"_id": _oid(), "site_id": "default", "enabled": True, **payload}
+        self.routes.append(record)
+        return record
+
+    def update_route(self, route_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        for route in self.routes:
+            if route.get("_id") == route_id:
+                route.update(patch)
+                return route
+        return None
+
+    def delete_route(self, route_id: str) -> bool:
+        self._check_failure("delete_route")
+        before = len(self.routes)
+        self.routes = [r for r in self.routes if r.get("_id") != route_id]
+        return len(self.routes) < before
+
+    # ----- Traffic rules (v2) ---------------------------------------------
+    def list_traffic_rules(self) -> list[UniFiRecord]:
+        return self.traffic_rules
+
+    def create_traffic_rule(self, payload: dict[str, Any]) -> UniFiRecord:
+        self._check_failure("create_traffic_rule")
+        record: UniFiRecord = {"_id": _oid(), "enabled": True, **payload}
+        self.traffic_rules.append(record)
+        return record
+
+    def update_traffic_rule(self, rule_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        for rule in self.traffic_rules:
+            if rule.get("_id") == rule_id:
+                rule.update(patch)
+                return rule
+        return None
+
+    # ----- Traffic routes (v2) --------------------------------------------
+    def list_traffic_routes(self) -> list[UniFiRecord]:
+        return self.traffic_routes
+
+    def update_traffic_route(self, route_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        for route in self.traffic_routes:
+            if route.get("_id") == route_id:
+                route.update(patch)
+                return route
+        return None
 
     # ----- Port profiles --------------------------------------------------
     def list_port_profiles(self) -> list[UniFiRecord]:

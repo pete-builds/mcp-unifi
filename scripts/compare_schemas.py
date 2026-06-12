@@ -72,6 +72,21 @@ DESTRUCTIVE_TOOLS: frozenset[str] = frozenset(
         "create_firewall_rule",
         "update_firewall_rule",
         "delete_firewall_rule",
+        # firewall groups
+        "create_firewall_group",
+        "update_firewall_group",
+        "delete_firewall_group",
+        # static routes
+        "create_route",
+        "update_route",
+        "delete_route",
+        # traffic rules (v2)
+        "create_traffic_rule",
+        "update_traffic_rule",
+        "toggle_traffic_rule",
+        # traffic routes (v2)
+        "update_traffic_route",
+        "toggle_traffic_route",
         # port profiles
         "create_port_profile",
         "update_port_profile",

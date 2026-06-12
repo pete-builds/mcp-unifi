@@ -1,5 +1,5 @@
 {
-  "tool_count": 94,
+  "tool_count": 113,
   "tools": [
     {
       "description": "Return credentials expiring within ``days_ahead`` days.\n\nSide effects: None (read-only).\n\nIterates ``list_credentials`` client-side and filters to those whose\n``expires_at`` falls inside the window ``[now, now + days_ahead]``.\nCredentials with no ``expires_at`` (typical for mobile credentials)\nare excluded. Each entry includes ``days_until_expiry`` so the LLM\ncan sort and summarise without re-doing the math.\n\nExample: audit_expiring_credentials(days_ahead=14)",
@@ -121,6 +121,46 @@
         "type": "object"
       },
       "name": "confirm_destructive_action"
+    },
+    {
+      "description": "Create a reusable firewall group of addresses, IPv6 addresses, or ports.\n\nSide effects:\n- Adds a new reusable object. It does nothing on its own until a\n  firewall rule or policy references it by ``_id``.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: create_firewall_group(name=\"IoT Subnets\", group_type=\"address-group\", members=[\"10.50.0.0/24\", \"10.60.0.0/24\"])",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it. Returns the\npredicted change set.",
+            "type": "boolean"
+          },
+          "group_type": {
+            "description": "One of ``\"address-group\"`` (IPv4 CIDRs/IPs),\n``\"ipv6-address-group\"`` (IPv6 CIDRs/IPs), or ``\"port-group\"``\n(TCP/UDP port numbers and ranges).",
+            "type": "string"
+          },
+          "members": {
+            "description": "The group's members as strings. For address groups:\nCIDRs or IPs (``\"10.50.0.0/24\"``). For IPv6 address groups:\nIPv6 CIDRs/IPs. For port groups: ports or ranges\n(``\"443\"``, ``\"8000-8100\"``).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "name": {
+            "description": "Display name for the group (e.g. ``\"IoT Subnets\"``).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "group_type",
+          "members"
+        ],
+        "type": "object"
+      },
+      "name": "create_firewall_group"
     },
     {
       "description": "Create a firewall rule on the controller.\n\nSide effects:\n- Adds a new rule into the named ``ruleset`` at the given\n  ``rule_index``. Rules with lower indexes evaluate first.\n- Takes effect immediately on the next packet hitting the affected\n  datapath.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: create_firewall_rule(name=\"Allow IoT to Plex\", ruleset=\"LAN_IN\", action=\"accept\", protocol=\"tcp\", src_networkconf_id=\"65f...\", dst_networkconf_id=\"65a...\", dst_port=\"32400\")",
@@ -485,6 +525,53 @@
       "name": "create_port_profile"
     },
     {
+      "description": "Create a static next-hop route.\n\nSide effects:\n- Adds a destination-based route: traffic to ``destination`` is sent\n  to ``next_hop`` instead of following the default route. Takes effect\n  immediately on the gateway's routing table.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nBLAST RADIUS: a static route changes where traffic for the\ndestination prefix is sent. A wrong next-hop can black-hole that\nprefix. It does not affect traffic outside ``destination``.\n\nExample: create_route(name=\"Lab via firewall\", destination=\"10.99.0.0/24\", next_hop=\"192.168.1.254\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "destination": {
+            "description": "Destination network in CIDR form\n(``\"10.99.0.0/24\"``). This is the prefix the route matches.",
+            "type": "string"
+          },
+          "distance": {
+            "default": 1,
+            "description": "Administrative distance (1-255). Lower wins when two\nroutes match the same destination. Defaults to ``1``.",
+            "type": "integer"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it. Returns the\npredicted change set.",
+            "type": "boolean"
+          },
+          "enabled": {
+            "default": true,
+            "description": "``False`` creates the route disabled for staging.",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "Display name for the route (e.g. ``\"Lab via firewall\"``).",
+            "type": "string"
+          },
+          "next_hop": {
+            "description": "Next-hop gateway IP that traffic to ``destination`` is\nforwarded to (must be reachable on a directly-connected\nnetwork).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "destination",
+          "next_hop"
+        ],
+        "type": "object"
+      },
+      "name": "create_route"
+    },
+    {
       "description": "Reserve a fixed IP for a client by MAC.\n\nSide effects:\n- Adds a fixed-IP entry on the user object so ``mac`` always receives\n  ``ip`` from the controller's DHCP server. The next DHCP renewal\n  for that client picks up the reservation.\n- The IP must fall inside the network's subnet or the controller\n  will reject the request.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: create_static_dhcp_lease(mac=\"aa:bb:cc:00:00:01\", ip=\"10.50.0.10\", network_id=\"65f...\", name=\"cameras-nvr\")",
       "input_schema": {
         "additionalProperties": false,
@@ -530,6 +617,34 @@
         "type": "object"
       },
       "name": "create_static_dhcp_lease"
+    },
+    {
+      "description": "Create a v2 traffic rule from a full rule object.\n\nSide effects:\n- Adds a new app/domain/IP allow-or-block policy that takes effect\n  immediately on matching traffic.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nThe v2 traffic-rule schema is rich and version-dependent, so this tool\ntakes the full rule object as a dict rather than fixed parameters.\nBuild it from a ``get_traffic_rule_details`` example on a similar rule,\nor from the UniFi UI's network inspector.\n\nExample: create_traffic_rule(rule={\"action\": \"BLOCK\", \"matching_target\": \"INTERNET\", \"target_devices\": [], \"enabled\": True})",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it. Returns the\npredicted change set.",
+            "type": "boolean"
+          },
+          "rule": {
+            "additionalProperties": true,
+            "description": "The full traffic-rule object. Common keys: ``action``\n(``\"BLOCK\"``/``\"ALLOW\"``), ``matching_target``\n(``\"INTERNET\"``/``\"DOMAIN\"``/``\"IP\"``/``\"REGION\"`` etc.),\n``target_devices`` (list), ``enabled`` (bool), and the\ntarget-specific fields (``domains``, ``ip_addresses``,\n``app_ids``, ``regions``) for the chosen ``matching_target``.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "rule"
+        ],
+        "type": "object"
+      },
+      "name": "create_traffic_rule"
     },
     {
       "description": "Create a VLAN-tagged network on the controller.\n\nSide effects:\n- Adds a new network record with the given VLAN ID, IP subnet, and\n  DHCP scope. The first usable address (.1) becomes the gateway.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: create_vlan(name=\"iot\", vlan_id=50, subnet=\"10.50.0.0/24\")",
@@ -666,6 +781,33 @@
       "name": "create_wlan"
     },
     {
+      "description": "Preview deletion of a firewall group.\n\nThis tool no longer deletes on its own. It returns a preview envelope\nwith a ``token``; call ``confirm_destructive_action(token)`` to commit\nthe delete. Tokens expire after 5 minutes.\n\nSide effects:\n- None until ``confirm_destructive_action`` runs against the token.\n- On confirm: removes the group. **The controller rejects deletion of\n  a group still referenced by any firewall rule** \u2014 detach it from\n  every rule first.\n- ``dry_run=True`` returns the legacy ``would_delete`` envelope with\n  no token \u2014 purely informational, no commit step possible.\n\nExample: delete_firewall_group(group_id=\"65f...\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "``True`` skips token generation and returns the legacy\n``{\"dry_run\": true, ...}`` envelope. ``False`` (default)\ngenerates a preview token that must be confirmed.",
+            "type": "boolean"
+          },
+          "group_id": {
+            "description": "The ``_id`` from ``list_firewall_groups``.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "group_id"
+        ],
+        "type": "object"
+      },
+      "name": "delete_firewall_group"
+    },
+    {
       "description": "Preview deletion of a firewall rule.\n\nv0.7.0: this tool no longer deletes on its own. It returns a preview\nenvelope with a ``token``; call ``confirm_destructive_action(token)``\nto commit the delete. Tokens expire after 5 minutes.\n\nSide effects:\n- None until ``confirm_destructive_action`` runs against the token.\n- On confirm: removes the rule. Traffic that previously matched it\n  falls through to the next rule (or the implicit default).\n- ``dry_run=True`` returns the legacy ``would_delete`` envelope with\n  no token \u2014 purely informational, no commit step possible.\n\nExample: delete_firewall_rule(rule_id=\"65f...\")",
       "input_schema": {
         "additionalProperties": false,
@@ -772,6 +914,33 @@
         "type": "object"
       },
       "name": "delete_port_profile"
+    },
+    {
+      "description": "Preview deletion of a static route.\n\nThis tool no longer deletes on its own. It returns a preview envelope\nwith a ``token``; call ``confirm_destructive_action(token)`` to commit\nthe delete. Tokens expire after 5 minutes.\n\nSide effects:\n- None until ``confirm_destructive_action`` runs against the token.\n- On confirm: removes the route. Traffic to the destination prefix\n  falls back to the default route (or another matching route).\n- ``dry_run=True`` returns the legacy ``would_delete`` envelope with\n  no token \u2014 purely informational, no commit step possible.\n\nExample: delete_route(route_id=\"65f...\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "``True`` skips token generation and returns the legacy\n``{\"dry_run\": true, ...}`` envelope. ``False`` (default)\ngenerates a preview token that must be confirmed.",
+            "type": "boolean"
+          },
+          "route_id": {
+            "description": "The ``_id`` from ``list_routes``.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "route_id"
+        ],
+        "type": "object"
+      },
+      "name": "delete_route"
     },
     {
       "description": "Preview deletion of a static DHCP reservation.\n\nv0.7.0: this tool no longer deletes on its own. It returns a preview\nenvelope with a ``token``; call ``confirm_destructive_action(token)``\nto commit the delete. Tokens expire after 5 minutes.\n\nSide effects:\n- None until ``confirm_destructive_action`` runs against the token.\n- On confirm: removes the fixed-IP entry. The client returns to\n  dynamic DHCP on its next renewal and may receive a different\n  address.\n- ``dry_run=True`` returns the legacy ``would_delete`` envelope with\n  no token \u2014 purely informational, no commit step possible.\n\nExample: delete_static_dhcp_lease(lease_id=\"65f...\")",
@@ -1024,6 +1193,28 @@
       "name": "get_event_thumbnail"
     },
     {
+      "description": "Show one firewall group's full record by ``_id``.\n\nSide effects: None (read-only). Call this before\n``update_firewall_group`` to see the current members you are about to\nread-modify-write.\n\nReturns the group record with ``_id``, ``name``, ``group_type``, and\n``group_members``, or an error envelope if no group matches.\n\nExample: get_firewall_group_details(group_id=\"65f...\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "group_id": {
+            "description": "The ``_id`` from ``list_firewall_groups``.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "group_id"
+        ],
+        "type": "object"
+      },
+      "name": "get_firewall_group_details"
+    },
+    {
       "description": "Return the most recent N events across every door.\n\nSide effects: None (read-only).\n\nConvenience wrapper around ``list_access_events`` with a 24-hour\nwindow and no filters. Useful for \"what just happened\" triage.\n\nExample: get_recent_access_events(limit=10)",
       "input_schema": {
         "additionalProperties": false,
@@ -1042,6 +1233,28 @@
         "type": "object"
       },
       "name": "get_recent_access_events"
+    },
+    {
+      "description": "Show one static route's full record by ``_id``.\n\nSide effects: None (read-only). Call this before ``update_route`` to\nsee the current destination, next hop, and distance.\n\nReturns the route record, or an error envelope if no route matches.\n\nExample: get_route_details(route_id=\"65f...\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "route_id": {
+            "description": "The ``_id`` from ``list_routes``.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "route_id"
+        ],
+        "type": "object"
+      },
+      "name": "get_route_details"
     },
     {
       "description": "Report per-subsystem health (wan, lan, wlan, www, vpn).\n\nSide effects: None (read-only).\n\nReturns one record per subsystem with ``subsystem``, ``status``, and\nsubsystem-specific metrics (e.g. WAN throughput, LAN client counts).\n\nExample: get_site_health(controller=\"default\")",
@@ -1129,6 +1342,50 @@
         "type": "object"
       },
       "name": "get_threat_management"
+    },
+    {
+      "description": "Show one traffic route's full record by ``_id``.\n\nSide effects: None (read-only). Call this before\n``update_traffic_route`` or ``toggle_traffic_route`` to see the route's\ncurrent matching target, next hop, and kill-switch state.\n\nReturns the route record, or an error envelope if no route matches.\n\nExample: get_traffic_route_details(route_id=\"65f...\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "route_id": {
+            "description": "The ``_id`` from ``list_traffic_routes``.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "route_id"
+        ],
+        "type": "object"
+      },
+      "name": "get_traffic_route_details"
+    },
+    {
+      "description": "Show one traffic rule's full record by ``_id``.\n\nSide effects: None (read-only). Call this before\n``update_traffic_rule`` or ``toggle_traffic_rule`` to see the rule's\ncurrent matching target and action.\n\nReturns the rule record, or an error envelope if no rule matches.\n\nExample: get_traffic_rule_details(rule_id=\"65f...\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "rule_id": {
+            "description": "The ``_id`` from ``list_traffic_rules``.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule_id"
+        ],
+        "type": "object"
+      },
+      "name": "get_traffic_rule_details"
     },
     {
       "description": "Fetch one visitor pass's full record by ID.\n\nSide effects: None (read-only).\n\nSame shape as one entry from ``list_visitors`` plus any per-pass\npurpose / notes.\n\nExample: get_visitor(visitor_id=\"vis...\", controller=\"default\")",
@@ -1478,6 +1735,21 @@
       "name": "list_failed_access_attempts"
     },
     {
+      "description": "List reusable firewall groups (address, IPv6-address, and port groups).\n\nSide effects: None (read-only).\n\nFirewall groups are named, reusable sets of addresses or ports that\nfirewall rules and other policies reference by ``_id`` instead of\nrepeating literals. Returns one record per group with ``_id``,\n``name``, ``group_type`` (``address-group``/``ipv6-address-group``/\n``port-group``), and ``group_members`` (the list of CIDRs, IPs, or\nports).\n\nExample: list_firewall_groups(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_firewall_groups"
+    },
+    {
       "description": "List every firewall rule on the controller.\n\nSide effects: None (read-only).\n\nReturns one record per rule with ``_id``, ``name``, ``ruleset``,\n``rule_index``, ``action``, ``enabled``, ``protocol``, and\n``src_*``/``dst_*`` fields.\n\nExample: list_firewall_rules(controller=\"default\")",
       "input_schema": {
         "additionalProperties": false,
@@ -1610,6 +1882,21 @@
       "name": "list_recordings"
     },
     {
+      "description": "List user-defined static (next-hop) routes on the controller.\n\nSide effects: None (read-only).\n\nReturns one record per route with ``_id``, ``name``, ``type``,\n``static-route_network`` (destination CIDR),\n``static-route_nexthop`` (next-hop IP), ``static-route_distance``,\nand ``enabled``. Empty on a gateway with no custom routes (the default\nroute is managed by the WAN config, not listed here).\n\nExample: list_routes(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_routes"
+    },
+    {
       "description": "List smart-detection events (person, vehicle, animal, package).\n\nSide effects: None (read-only).\n\nFilters Protect's event stream to ``type == \"smartDetectZone\"`` and\nnarrows to entries whose ``smartDetectTypes`` contain\n``detection_type``. Empty ``camera_id`` returns detections across all\ncameras.\n\nExample: list_smart_detections(detection_type=\"person\", hours_back=12)",
       "input_schema": {
         "additionalProperties": false,
@@ -1663,6 +1950,36 @@
         "type": "object"
       },
       "name": "list_top_talkers"
+    },
+    {
+      "description": "List v2 traffic routes (policy-based routing, e.g. VPN-client routes).\n\nSide effects: None (read-only).\n\nReturns one record per route with ``_id``, ``matching_target``,\n``next_hop`` / ``network_id`` (the interface or VPN the matched\ntraffic is sent out), ``kill_switch_enabled``, and ``enabled``. Empty\non a gateway with no policy routes configured.\n\nExample: list_traffic_routes(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_traffic_routes"
+    },
+    {
+      "description": "List v2 traffic rules (app/domain/IP-based allow & block policies).\n\nSide effects: None (read-only).\n\nReturns one record per rule with ``_id``, ``action``\n(``BLOCK``/``ALLOW``), ``matching_target``, ``target_devices``, and\n``enabled``. Empty on a gateway with no traffic rules configured.\n\nExample: list_traffic_rules(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_traffic_rules"
     },
     {
       "description": "List every visitor pass on the controller (active and expired).\n\nSide effects: None (read-only).\n\nReturns one record per visitor with ``id``, ``first_name``,\n``last_name``, ``full_name``, ``email``, ``host_user_id``,\n``valid_from`` (ms), ``valid_until`` (ms), ``status``, and\n``pass_code``.\n\nExample: list_visitors(controller=\"default\")",
@@ -2472,6 +2789,70 @@
       "name": "summarize_access_activity"
     },
     {
+      "description": "Enable or disable a traffic route without editing its other fields.\n\nSide effects:\n- Flips the route's ``enabled`` flag. Reads the current route first\n  and PUTs the full object back with only ``enabled`` changed\n  (read-modify-write), so the rest of the route is preserved.\n- Takes effect immediately: a disabled route stops steering its\n  matched traffic, which then follows the default route.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: toggle_traffic_route(route_id=\"65f...\", enabled=False)",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it. Returns the\npredicted change set.",
+            "type": "boolean"
+          },
+          "enabled": {
+            "description": "``True`` to enable the route, ``False`` to disable it.",
+            "type": "boolean"
+          },
+          "route_id": {
+            "description": "The ``_id`` from ``list_traffic_routes``.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "route_id",
+          "enabled"
+        ],
+        "type": "object"
+      },
+      "name": "toggle_traffic_route"
+    },
+    {
+      "description": "Enable or disable a traffic rule without editing its other fields.\n\nSide effects:\n- Flips the rule's ``enabled`` flag. Reads the current rule first and\n  PUTs the full object back with only ``enabled`` changed\n  (read-modify-write), so the rest of the rule is preserved.\n- Takes effect immediately: a disabled BLOCK rule stops blocking; a\n  disabled ALLOW rule stops allowing.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: toggle_traffic_rule(rule_id=\"65f...\", enabled=False)",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it. Returns the\npredicted change set.",
+            "type": "boolean"
+          },
+          "enabled": {
+            "description": "``True`` to enable the rule, ``False`` to disable it.",
+            "type": "boolean"
+          },
+          "rule_id": {
+            "description": "The ``_id`` from ``list_traffic_rules``.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule_id",
+          "enabled"
+        ],
+        "type": "object"
+      },
+      "name": "toggle_traffic_rule"
+    },
+    {
       "description": "Kick off a UniFi speed test on the WAN link.\n\nSide effects: None on the controller's persistent state. Issues a\none-shot WAN measurement that consumes WAN bandwidth for ~30-60\nseconds while the test runs server-side. Use\n``get_speedtest_results`` to read the result once it finishes.\n\nExample: trigger_speedtest(controller=\"default\")",
       "input_schema": {
         "additionalProperties": false,
@@ -2512,6 +2893,53 @@
         "type": "object"
       },
       "name": "unblock_client"
+    },
+    {
+      "description": "Rename a firewall group or replace its members (read-modify-write).\n\nSide effects:\n- Replaces the group's name and/or members in place. The members list\n  is **replaced wholesale**, not merged, so pass the full desired set.\n  The group's ``group_type`` is preserved (it is read first and\n  written back unchanged); group type cannot be changed after\n  creation, only members.\n- Every rule referencing this group immediately sees the new members.\n- Mutates controller state. Use dry_run=True to preview the before/\n  after diff without applying.\n\nRead first: call ``get_firewall_group_details`` to see the current\nmembers.\n\nExample: update_firewall_group(group_id=\"65f...\", members=[\"10.50.0.0/24\", \"10.70.0.0/24\"])",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the before/after diff without applying it.",
+            "type": "boolean"
+          },
+          "group_id": {
+            "description": "The ``_id`` from ``list_firewall_groups``.",
+            "type": "string"
+          },
+          "members": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "New full member list (replaces the old one). ``None``\n(default) keeps the current members."
+          },
+          "name": {
+            "default": "",
+            "description": "New display name. Empty (default) keeps the current name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "group_id"
+        ],
+        "type": "object"
+      },
+      "name": "update_firewall_group"
     },
     {
       "description": "Patch fields on an existing firewall rule.\n\nSide effects:\n- Modifies the named rule in place. Only fields supplied in\n  ``updates`` change; everything else is preserved.\n- Takes effect immediately on the next packet hitting the affected\n  datapath.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: update_firewall_rule(rule_id=\"65f...\", updates={\"enabled\": False})",
@@ -2613,6 +3041,39 @@
       "name": "update_port_profile"
     },
     {
+      "description": "Patch fields on an existing static route.\n\nSide effects:\n- Modifies the named route in place. Only fields supplied in\n  ``updates`` change; everything else is preserved.\n- Takes effect immediately on the gateway's routing table.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: update_route(route_id=\"65f...\", updates={\"enabled\": False})",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it. Returns the\npredicted change set.",
+            "type": "boolean"
+          },
+          "route_id": {
+            "description": "The ``_id`` from ``list_routes``.",
+            "type": "string"
+          },
+          "updates": {
+            "additionalProperties": true,
+            "description": "Partial route record. Common keys: ``name``, ``enabled``,\n``static-route_network`` (destination CIDR),\n``static-route_nexthop`` (next-hop IP),\n``static-route_distance``.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "route_id",
+          "updates"
+        ],
+        "type": "object"
+      },
+      "name": "update_route"
+    },
+    {
       "description": "Convert or update an existing client to a fixed-IP reservation.\n\nUse this instead of ``create_static_dhcp_lease`` when the MAC already\nhas a user record on the controller (any client that has ever\nconnected). The controller rejects POST ``/rest/user`` for known MACs\nwith ``api.err.MacUsed``; this tool resolves the existing ``_id`` and\nPUTs an update to ``/rest/user/{_id}`` instead.\n\nSide effects:\n- Sets ``use_fixedip=true`` and pins ``fixed_ip`` on the user record.\n- If ``local_dns_record`` is supplied, also sets\n  ``local_dns_record_enabled=true`` so the name resolves on the LAN\n  (controller version permitting).\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n- If no user record exists for ``mac``, the call fails with a clear\n  error. In that case use ``create_static_dhcp_lease`` instead.\n\nExample: update_static_dhcp_lease(mac=\"d0:11:e5:03:f6:3a\", fixed_ip=\"192.168.1.50\", network_id=\"6a0...\", name=\"cypher\")",
       "input_schema": {
         "additionalProperties": false,
@@ -2658,6 +3119,91 @@
         "type": "object"
       },
       "name": "update_static_dhcp_lease"
+    },
+    {
+      "description": "Patch fields on an existing traffic route (read-modify-write).\n\nSide effects:\n- Modifies the named policy route in place. The v2 PUT replaces the\n  whole object, so this reads the current route first and merges your\n  changes onto it before writing \u2014 only the keys you supply change.\n- Changes where matched traffic is routed (and, via\n  ``kill_switch_enabled``, whether it is dropped when the route's\n  interface is down). Takes effect immediately.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: update_traffic_route(route_id=\"65f...\", kill_switch_enabled=True)",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it. Returns the\npredicted change set.",
+            "type": "boolean"
+          },
+          "kill_switch_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "When set, toggles the route's kill switch\n(drop matched traffic if the route's interface is down).\n``None`` (default) leaves it unchanged. Merged into ``updates``\nif both are given."
+          },
+          "route_id": {
+            "description": "The ``_id`` from ``list_traffic_routes``.",
+            "type": "string"
+          },
+          "updates": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Partial traffic-route record to merge. Common keys:\n``matching_target``, ``domains``, ``ip_addresses``,\n``next_hop``, ``network_id``, ``enabled``. ``None`` (default)\napplies no field changes beyond ``kill_switch_enabled``."
+          }
+        },
+        "required": [
+          "route_id"
+        ],
+        "type": "object"
+      },
+      "name": "update_traffic_route"
+    },
+    {
+      "description": "Patch fields on an existing traffic rule (read-modify-write).\n\nSide effects:\n- Modifies the named rule in place. The v2 PUT replaces the whole\n  object, so this reads the current rule first and merges ``updates``\n  onto it before writing \u2014 only the keys you supply change.\n- Takes effect immediately on matching traffic.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: update_traffic_rule(rule_id=\"65f...\", updates={\"action\": \"ALLOW\"})",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it. Returns the\npredicted change set.",
+            "type": "boolean"
+          },
+          "rule_id": {
+            "description": "The ``_id`` from ``list_traffic_rules``.",
+            "type": "string"
+          },
+          "updates": {
+            "additionalProperties": true,
+            "description": "Partial traffic-rule record to merge. Common keys:\n``action``, ``matching_target``, ``target_devices``,\n``enabled``, plus target-specific fields.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "rule_id",
+          "updates"
+        ],
+        "type": "object"
+      },
+      "name": "update_traffic_rule"
     },
     {
       "description": "Patch fields on an existing VLAN/network record.\n\nSide effects:\n- Modifies the named network in place. Only fields supplied in\n  ``updates`` change; everything else is preserved.\n- Changes to ``vlan`` or ``ip_subnet`` may disconnect clients on the\n  affected network.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: update_vlan(network_id=\"65f...\", updates={\"enabled\": False})",

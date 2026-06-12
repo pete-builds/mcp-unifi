@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Network tool expansion: firewall groups, static routes, and v2 traffic
+  policies (18 new Network tools).** All four endpoint families were verified
+  live read-only against the UCG-Fiber (UniFi Network 10.4.57) before build;
+  each returns an empty list on a fresh gateway. Reads return the records as-is;
+  every mutating tool carries `dry_run=True`, and the deletes use the
+  preview-then-confirm token flow (`confirm_destructive_action`). A new
+  reusable client helper `_v2_request` wraps the `/proxy/network/v2/api/site/<site>/...`
+  surface (bare-list responses, unlike the legacy `{meta, data}` envelope).
+  - **Firewall groups** (`/rest/firewallgroup`, folded into the firewall
+    module): `list_firewall_groups`, `get_firewall_group_details`,
+    `create_firewall_group` (type one of `address-group` /
+    `ipv6-address-group` / `port-group`), `update_firewall_group` (full-PUT
+    read-modify-write; members replaced wholesale, `group_type` preserved),
+    `delete_firewall_group` (preview-token).
+  - **Static routes** (`/rest/routing`, new `routing` module):
+    `list_routes`, `get_route_details`, `create_route` (CIDR destination +
+    next-hop + administrative distance), `update_route`, `delete_route`
+    (preview-token).
+  - **Traffic rules** (v2 `/trafficrules`, new `traffic` module):
+    `list_traffic_rules`, `get_traffic_rule_details`, `create_traffic_rule`,
+    `update_traffic_rule` (read-modify-write), `toggle_traffic_rule`
+    (enable/disable).
+  - **Traffic routes** (v2 `/trafficroutes`, policy-based routing):
+    `list_traffic_routes`, `get_traffic_route_details`, `update_traffic_route`
+    (incl. `kill_switch_enabled`), `toggle_traffic_route`.
+- Stub parity: seeded in-memory state for firewall groups, static routes,
+  traffic rules, and traffic routes so the offline stub backend round-trips
+  create/update/delete for each.
+
 ## [0.14.0] - 2026-06-12
 
 ### Added

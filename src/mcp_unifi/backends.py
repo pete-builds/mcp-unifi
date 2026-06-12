@@ -70,6 +70,33 @@ class Backend(Protocol):
     ) -> UniFiRecord | None: ...
     async def delete_firewall_rule(self, rule_id: str) -> bool: ...
 
+    # ----- Firewall groups ------------------------------------------------
+    async def list_firewall_groups(self) -> list[UniFiRecord]: ...
+    async def create_firewall_group(self, payload: dict[str, Any]) -> UniFiRecord: ...
+    async def update_firewall_group(
+        self, group_id: str, payload: dict[str, Any]
+    ) -> UniFiRecord | None: ...
+    async def delete_firewall_group(self, group_id: str) -> bool: ...
+
+    # ----- Static routes --------------------------------------------------
+    async def list_routes(self) -> list[UniFiRecord]: ...
+    async def create_route(self, payload: dict[str, Any]) -> UniFiRecord: ...
+    async def update_route(self, route_id: str, patch: dict[str, Any]) -> UniFiRecord | None: ...
+    async def delete_route(self, route_id: str) -> bool: ...
+
+    # ----- Traffic rules (v2) ---------------------------------------------
+    async def list_traffic_rules(self) -> list[UniFiRecord]: ...
+    async def create_traffic_rule(self, payload: dict[str, Any]) -> UniFiRecord: ...
+    async def update_traffic_rule(
+        self, rule_id: str, patch: dict[str, Any]
+    ) -> UniFiRecord | None: ...
+
+    # ----- Traffic routes (v2) --------------------------------------------
+    async def list_traffic_routes(self) -> list[UniFiRecord]: ...
+    async def update_traffic_route(
+        self, route_id: str, patch: dict[str, Any]
+    ) -> UniFiRecord | None: ...
+
     # ----- Port profiles --------------------------------------------------
     async def list_port_profiles(self) -> list[UniFiRecord]: ...
     async def create_port_profile(self, payload: dict[str, Any]) -> UniFiRecord: ...
@@ -198,6 +225,53 @@ class StubBackend:
 
     async def delete_firewall_rule(self, rule_id: str) -> bool:
         return self.state.delete_firewall_rule(rule_id)
+
+    # ----- Firewall groups ------------------------------------------------
+    async def list_firewall_groups(self) -> list[UniFiRecord]:
+        return self.state.list_firewall_groups()
+
+    async def create_firewall_group(self, payload: dict[str, Any]) -> UniFiRecord:
+        return self.state.create_firewall_group(payload)
+
+    async def update_firewall_group(
+        self, group_id: str, payload: dict[str, Any]
+    ) -> UniFiRecord | None:
+        return self.state.update_firewall_group(group_id, payload)
+
+    async def delete_firewall_group(self, group_id: str) -> bool:
+        return self.state.delete_firewall_group(group_id)
+
+    # ----- Static routes --------------------------------------------------
+    async def list_routes(self) -> list[UniFiRecord]:
+        return self.state.list_routes()
+
+    async def create_route(self, payload: dict[str, Any]) -> UniFiRecord:
+        return self.state.create_route(payload)
+
+    async def update_route(self, route_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        return self.state.update_route(route_id, patch)
+
+    async def delete_route(self, route_id: str) -> bool:
+        return self.state.delete_route(route_id)
+
+    # ----- Traffic rules (v2) ---------------------------------------------
+    async def list_traffic_rules(self) -> list[UniFiRecord]:
+        return self.state.list_traffic_rules()
+
+    async def create_traffic_rule(self, payload: dict[str, Any]) -> UniFiRecord:
+        return self.state.create_traffic_rule(payload)
+
+    async def update_traffic_rule(self, rule_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        return self.state.update_traffic_rule(rule_id, patch)
+
+    # ----- Traffic routes (v2) --------------------------------------------
+    async def list_traffic_routes(self) -> list[UniFiRecord]:
+        return self.state.list_traffic_routes()
+
+    async def update_traffic_route(
+        self, route_id: str, patch: dict[str, Any]
+    ) -> UniFiRecord | None:
+        return self.state.update_traffic_route(route_id, patch)
 
     # ----- Port profiles --------------------------------------------------
     async def list_port_profiles(self) -> list[UniFiRecord]:
@@ -390,6 +464,53 @@ class RealBackend:
 
     async def delete_firewall_rule(self, rule_id: str) -> bool:
         return await self.client.delete_firewall_rule(rule_id)
+
+    # ----- Firewall groups ------------------------------------------------
+    async def list_firewall_groups(self) -> list[UniFiRecord]:
+        return await self.client.list_firewall_groups()
+
+    async def create_firewall_group(self, payload: dict[str, Any]) -> UniFiRecord:
+        return await self.client.create_firewall_group(payload)
+
+    async def update_firewall_group(
+        self, group_id: str, payload: dict[str, Any]
+    ) -> UniFiRecord | None:
+        return await self.client.update_firewall_group(group_id, payload)
+
+    async def delete_firewall_group(self, group_id: str) -> bool:
+        return await self.client.delete_firewall_group(group_id)
+
+    # ----- Static routes --------------------------------------------------
+    async def list_routes(self) -> list[UniFiRecord]:
+        return await self.client.list_routes()
+
+    async def create_route(self, payload: dict[str, Any]) -> UniFiRecord:
+        return await self.client.create_route(payload)
+
+    async def update_route(self, route_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        return await self.client.update_route(route_id, patch)
+
+    async def delete_route(self, route_id: str) -> bool:
+        return await self.client.delete_route(route_id)
+
+    # ----- Traffic rules (v2) ---------------------------------------------
+    async def list_traffic_rules(self) -> list[UniFiRecord]:
+        return await self.client.list_traffic_rules()
+
+    async def create_traffic_rule(self, payload: dict[str, Any]) -> UniFiRecord:
+        return await self.client.create_traffic_rule(payload)
+
+    async def update_traffic_rule(self, rule_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        return await self.client.update_traffic_rule(rule_id, patch)
+
+    # ----- Traffic routes (v2) --------------------------------------------
+    async def list_traffic_routes(self) -> list[UniFiRecord]:
+        return await self.client.list_traffic_routes()
+
+    async def update_traffic_route(
+        self, route_id: str, patch: dict[str, Any]
+    ) -> UniFiRecord | None:
+        return await self.client.update_traffic_route(route_id, patch)
 
     # ----- Port profiles --------------------------------------------------
     async def list_port_profiles(self) -> list[UniFiRecord]:

@@ -29,8 +29,10 @@ from mcp_unifi.modules.network import (
     observability,
     port_forwards,
     port_profiles,
+    routing,
     teleport,
     threat_management,
+    traffic,
     vlans,
     wlans,
 )
@@ -54,6 +56,8 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     ipv6.register(mcp, settings, registry)
     wlans.register(mcp, settings, registry)
     firewall.register(mcp, settings, registry)
+    routing.register(mcp, settings, registry)
+    traffic.register(mcp, settings, registry)
     port_profiles.register(mcp, settings, registry)
     devices.register(mcp, settings, registry)
     clients.register(mcp, settings, registry)

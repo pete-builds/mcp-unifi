@@ -1,4 +1,4 @@
-"""Firewall rule tools: list, create, update, delete."""
+"""Firewall tools: rules (list/create/update/delete) and reusable groups."""
 
 from __future__ import annotations
 
@@ -18,6 +18,11 @@ if TYPE_CHECKING:
     from mcp_unifi.dispatcher import ControllerRegistry
 
 logger = logging.getLogger("mcp_unifi.network.firewall")
+
+#: Accepted ``group_type`` values for a reusable firewall group.
+_FIREWALL_GROUP_TYPES: frozenset[str] = frozenset(
+    {"address-group", "ipv6-address-group", "port-group"}
+)
 
 
 def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> None:
@@ -280,6 +285,299 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
 
         pending = get_pending_actions().put(
             action="delete_firewall_rule",
+            controller=controller,
+            resource=resource,
+            executor=_execute,
+        )
+        return format_json(build_preview_envelope(pending))
+
+    # ------------------------------------------------------------------
+    # Firewall groups (reusable address/port objects)
+    # ------------------------------------------------------------------
+
+    @mcp.tool()
+    @audited("list_firewall_groups")
+    async def list_firewall_groups(controller: str = "default") -> str:
+        """List reusable firewall groups (address, IPv6-address, and port groups).
+
+        Side effects: None (read-only).
+
+        Firewall groups are named, reusable sets of addresses or ports that
+        firewall rules and other policies reference by ``_id`` instead of
+        repeating literals. Returns one record per group with ``_id``,
+        ``name``, ``group_type`` (``address-group``/``ipv6-address-group``/
+        ``port-group``), and ``group_members`` (the list of CIDRs, IPs, or
+        ports).
+
+        Example: list_firewall_groups(controller="default")
+
+        Args:
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+        """
+        try:
+            backend = resolve_backend(registry, controller)
+            return format_json(await backend.list_firewall_groups())
+        except UniFiError as exc:
+            logger.exception("list_firewall_groups failed")
+            return err(str(exc))
+
+    @mcp.tool()
+    @audited("get_firewall_group_details")
+    async def get_firewall_group_details(group_id: str, controller: str = "default") -> str:
+        """Show one firewall group's full record by ``_id``.
+
+        Side effects: None (read-only). Call this before
+        ``update_firewall_group`` to see the current members you are about to
+        read-modify-write.
+
+        Returns the group record with ``_id``, ``name``, ``group_type``, and
+        ``group_members``, or an error envelope if no group matches.
+
+        Example: get_firewall_group_details(group_id="65f...")
+
+        Args:
+            group_id: The ``_id`` from ``list_firewall_groups``.
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+        """
+        try:
+            backend = resolve_backend(registry, controller)
+            groups = await backend.list_firewall_groups()
+        except UniFiError as exc:
+            logger.exception("get_firewall_group_details failed", extra={"group_id": group_id})
+            return err(str(exc))
+        target = next(
+            (g for g in groups if isinstance(g, dict) and g.get("_id") == group_id), None
+        )
+        if target is None:
+            return err(f"firewall group {group_id} not found")
+        return format_json(target)
+
+    @mcp.tool()
+    @audited("create_firewall_group")
+    async def create_firewall_group(
+        name: str,
+        group_type: str,
+        members: list[str],
+        controller: str = "default",
+        dry_run: bool = False,
+    ) -> str:
+        """Create a reusable firewall group of addresses, IPv6 addresses, or ports.
+
+        Side effects:
+        - Adds a new reusable object. It does nothing on its own until a
+          firewall rule or policy references it by ``_id``.
+        - Mutates controller state. Use dry_run=True to preview the change
+          without applying.
+
+        Example: create_firewall_group(name="IoT Subnets", group_type="address-group", members=["10.50.0.0/24", "10.60.0.0/24"])
+
+        Args:
+            name: Display name for the group (e.g. ``"IoT Subnets"``).
+            group_type: One of ``"address-group"`` (IPv4 CIDRs/IPs),
+                ``"ipv6-address-group"`` (IPv6 CIDRs/IPs), or ``"port-group"``
+                (TCP/UDP port numbers and ranges).
+            members: The group's members as strings. For address groups:
+                CIDRs or IPs (``"10.50.0.0/24"``). For IPv6 address groups:
+                IPv6 CIDRs/IPs. For port groups: ports or ranges
+                (``"443"``, ``"8000-8100"``).
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+            dry_run: Preview the change without applying it. Returns the
+                predicted change set.
+        """
+        gt = group_type.strip().lower()
+        if gt not in _FIREWALL_GROUP_TYPES:
+            return err(
+                f"invalid group_type {group_type!r}: use address-group, "
+                "ipv6-address-group, or port-group"
+            )
+        payload: dict[str, Any] = {
+            "name": name,
+            "group_type": gt,
+            "group_members": list(members),
+        }
+        if dry_run:
+            return format_json(
+                {
+                    "dry_run": True,
+                    "controller": controller,
+                    "would_create": {"firewall_group": payload},
+                    "summary": (
+                        f"Would create {gt} '{name}' with {len(members)} member(s)"
+                    ),
+                }
+            )
+        try:
+            backend = resolve_backend(registry, controller)
+            return format_json(await backend.create_firewall_group(payload))
+        except UniFiError as exc:
+            logger.exception("create_firewall_group failed", extra={"group_name": name})
+            return err(str(exc))
+
+    @mcp.tool()
+    @audited("update_firewall_group")
+    async def update_firewall_group(
+        group_id: str,
+        name: str = "",
+        members: list[str] | None = None,
+        controller: str = "default",
+        dry_run: bool = False,
+    ) -> str:
+        """Rename a firewall group or replace its members (read-modify-write).
+
+        Side effects:
+        - Replaces the group's name and/or members in place. The members list
+          is **replaced wholesale**, not merged, so pass the full desired set.
+          The group's ``group_type`` is preserved (it is read first and
+          written back unchanged); group type cannot be changed after
+          creation, only members.
+        - Every rule referencing this group immediately sees the new members.
+        - Mutates controller state. Use dry_run=True to preview the before/
+          after diff without applying.
+
+        Read first: call ``get_firewall_group_details`` to see the current
+        members.
+
+        Example: update_firewall_group(group_id="65f...", members=["10.50.0.0/24", "10.70.0.0/24"])
+
+        Args:
+            group_id: The ``_id`` from ``list_firewall_groups``.
+            name: New display name. Empty (default) keeps the current name.
+            members: New full member list (replaces the old one). ``None``
+                (default) keeps the current members.
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+            dry_run: Preview the before/after diff without applying it.
+        """
+        if not name and members is None:
+            return err("update_firewall_group requires at least one of name, members")
+        try:
+            backend = resolve_backend(registry, controller)
+            groups = await backend.list_firewall_groups()
+        except UniFiError as exc:
+            logger.exception(
+                "update_firewall_group lookup failed", extra={"group_id": group_id}
+            )
+            return err(str(exc))
+        existing = next(
+            (g for g in groups if isinstance(g, dict) and g.get("_id") == group_id), None
+        )
+        if existing is None:
+            return err(f"firewall group {group_id} not found")
+
+        # Full-PUT read-modify-write: send the whole record back with the
+        # requested fields changed so the controller doesn't drop untouched
+        # keys (group_type, site_id, etc.).
+        payload: dict[str, Any] = {k: v for k, v in existing.items() if k != "_id"}
+        before = {
+            "name": existing.get("name"),
+            "group_type": existing.get("group_type"),
+            "group_members": existing.get("group_members"),
+        }
+        if name:
+            payload["name"] = name
+        if members is not None:
+            payload["group_members"] = list(members)
+        after = {
+            "name": payload.get("name"),
+            "group_type": payload.get("group_type"),
+            "group_members": payload.get("group_members"),
+        }
+        if dry_run:
+            return format_json(
+                {
+                    "dry_run": True,
+                    "controller": controller,
+                    "would_update": {
+                        "group_id": group_id,
+                        "before": before,
+                        "after": after,
+                    },
+                    "summary": f"Would update firewall group {existing.get('name')!r}",
+                }
+            )
+        try:
+            updated = await backend.update_firewall_group(group_id, payload)
+            if updated is None:
+                return err(f"firewall group {group_id} not found")
+            return format_json(updated)
+        except UniFiError as exc:
+            logger.exception("update_firewall_group failed", extra={"group_id": group_id})
+            return err(str(exc))
+
+    @mcp.tool()
+    @audited("delete_firewall_group")
+    async def delete_firewall_group(
+        group_id: str,
+        controller: str = "default",
+        dry_run: bool = False,
+    ) -> str:
+        """Preview deletion of a firewall group.
+
+        This tool no longer deletes on its own. It returns a preview envelope
+        with a ``token``; call ``confirm_destructive_action(token)`` to commit
+        the delete. Tokens expire after 5 minutes.
+
+        Side effects:
+        - None until ``confirm_destructive_action`` runs against the token.
+        - On confirm: removes the group. **The controller rejects deletion of
+          a group still referenced by any firewall rule** — detach it from
+          every rule first.
+        - ``dry_run=True`` returns the legacy ``would_delete`` envelope with
+          no token — purely informational, no commit step possible.
+
+        Example: delete_firewall_group(group_id="65f...")
+
+        Args:
+            group_id: The ``_id`` from ``list_firewall_groups``.
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+            dry_run: ``True`` skips token generation and returns the legacy
+                ``{"dry_run": true, ...}`` envelope. ``False`` (default)
+                generates a preview token that must be confirmed.
+        """
+        if dry_run:
+            return format_json(
+                {
+                    "dry_run": True,
+                    "controller": controller,
+                    "would_delete": {"group_id": group_id},
+                    "summary": f"Would delete firewall group {group_id}",
+                }
+            )
+        try:
+            backend = resolve_backend(registry, controller)
+            groups = await backend.list_firewall_groups()
+        except UniFiError as exc:
+            logger.exception(
+                "delete_firewall_group preview lookup failed", extra={"group_id": group_id}
+            )
+            return err(str(exc))
+
+        target = next(
+            (g for g in groups if isinstance(g, dict) and g.get("_id") == group_id), None
+        )
+        if target is None:
+            return err(f"firewall group {group_id} not found")
+
+        resource = {
+            "_id": group_id,
+            "name": target.get("name"),
+            "group_type": target.get("group_type"),
+        }
+
+        async def _execute() -> str:
+            try:
+                ok = await backend.delete_firewall_group(group_id)
+                return format_json({"deleted": ok, "group_id": group_id})
+            except UniFiError as exc:
+                logger.exception("delete_firewall_group failed", extra={"group_id": group_id})
+                return err(str(exc))
+
+        pending = get_pending_actions().put(
+            action="delete_firewall_group",
             controller=controller,
             resource=resource,
             executor=_execute,

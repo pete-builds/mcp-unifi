@@ -107,6 +107,26 @@ def _assert_unchanged(before: dict[str, Any], state: StubState) -> None:
             "would_update",
         ),
         ("delete_firewall_rule", {"rule_id": "fw-x"}, "would_delete"),
+        # firewall groups
+        (
+            "create_firewall_group",
+            {"name": "IoT", "group_type": "address-group", "members": ["10.50.0.0/24"]},
+            "would_create",
+        ),
+        ("delete_firewall_group", {"group_id": "fg-x"}, "would_delete"),
+        # static routes
+        (
+            "create_route",
+            {"name": "Lab", "destination": "10.99.0.0/24", "next_hop": "192.168.1.254"},
+            "would_create",
+        ),
+        ("delete_route", {"route_id": "rt-x"}, "would_delete"),
+        # traffic rules (v2)
+        (
+            "create_traffic_rule",
+            {"rule": {"action": "BLOCK", "matching_target": "INTERNET"}},
+            "would_create",
+        ),
         # port profiles
         ("create_port_profile", {"name": "trunk-iot"}, "would_create"),
         (
