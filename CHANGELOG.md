@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-06-11
+
+### Added
+
+- **AP radio tuning and device management tools (5 new Network tools).**
+  All write tools read the live device record first, mutate only the
+  targeted radio's `radio_table` entry, and PUT the full table back
+  (`PUT /rest/device/<id>`, the same endpoint `set_port_state` already
+  uses) — untargeted radios and fields are preserved byte-for-byte.
+  Every response includes the `before`/`after` values for the changed
+  radio, and `dry_run=True` previews the exact diff without writing.
+  - `get_device_radios` — read-only per-radio view: channel, width,
+    `tx_power_mode`, `tx_power`, min-RSSI state, and the hardware
+    `min_txpower`/`max_txpower` bounds. The read-before-write companion
+    for the tools below.
+  - `set_radio_tx_power` — per-radio transmit power mode
+    (`auto`/`high`/`medium`/`low`/`custom` + exact dBm for custom,
+    validated against the radio's supported range).
+  - `set_radio_min_rssi` — enable/disable minimum RSSI per radio with a
+    threshold in dBm, for kicking sticky clients toward a closer AP.
+  - `set_radio_channel` — per-radio channel (`auto` or fixed) and/or
+    channel width (20/40/80/160/240/320 MHz).
+  - `rename_device` — set a device's display name.
+  - Bands are addressed as `2g`/`5g`/`6g` (raw UniFi ids `ng`/`na`/`6e`
+    also accepted).
+- Backend seam: `get_device_by_mac` + `update_device` on the `Backend`
+  protocol, both stub and real implementations.
+
+### Not added
+
+- A band-steering toggle was considered and dropped: probing a live
+  UCG-Fiber (UniFi Network 10.4.57, AP fw 6.7.41) found no
+  `bandsteering_mode` on device records and no per-WLAN steering toggle —
+  recent firmware handles band assignment automatically.
+
+## [0.12.0] - 2026-06-03
+
+### Fixed
+
+- **`list_alarms` uses the real alarm route on current firmware:**
+  `GET /api/s/<site>/list/alarm?archived=<bool>` (the v0.11.0
+  `POST /stat/alarm` form still 404'd against a live UCG-Fiber on
+  UniFi Network 10.4.57), plus a defensive client-side `archived` filter.
+- **`list_events` degrades gracefully on firmware with no event route:**
+  `/stat/event` is genuinely absent on UCG-Fiber / Network 10.4.57 (404),
+  so the client returns `[]` instead of erroring, and passes records
+  through unchanged if a future firmware restores the route.
+- `/health` echoes the running version in its JSON body.
+
 ## [0.11.0] - 2026-06-03
 
 ### Fixed

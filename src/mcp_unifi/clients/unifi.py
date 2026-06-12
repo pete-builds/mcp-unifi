@@ -110,9 +110,7 @@ class UniFiClient:
     async def _get(self, path: str) -> Any:
         return await self._request("GET", f"{self._site_path}{path}")
 
-    async def _get_optional(
-        self, path: str, params: dict[str, Any] | None = None
-    ) -> Any:
+    async def _get_optional(self, path: str, params: dict[str, Any] | None = None) -> Any:
         """GET that tolerates a route the firmware does not expose.
 
         Some legacy endpoints (notably ``/stat/event``) are absent on newer
@@ -131,8 +129,7 @@ class UniFiClient:
             text = str(exc)
             if " returned 404" in text or " returned 400" in text:
                 logger.info(
-                    "UniFi endpoint not available on this firmware; "
-                    "returning empty result",
+                    "UniFi endpoint not available on this firmware; returning empty result",
                     extra={"path": path, "error": text[:200]},
                 )
                 return []
@@ -325,6 +322,17 @@ class UniFiClient:
                 {"port_overrides": port_overrides},
             )
         )
+
+    async def update_device(self, device_id: str, payload: dict[str, Any]) -> UniFiRecord:
+        """Patch fields on a device config record.
+
+        UniFi merges the supplied keys into the stored record via
+        ``PUT /rest/device/<device_id>`` (the same endpoint
+        :meth:`set_port_state` uses for ``port_overrides``). Array-valued
+        fields like ``radio_table`` replace wholesale, so callers must send
+        the full read-modify-written array, never a partial one.
+        """
+        return self._first_record(await self._put(f"/rest/device/{device_id}", payload))
 
     async def get_device(self, device_id: str) -> UniFiRecord:
         result = await self._get(f"/stat/device/{device_id}")

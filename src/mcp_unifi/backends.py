@@ -34,6 +34,8 @@ class Backend(Protocol):
 
     # ----- Devices --------------------------------------------------------
     async def list_devices(self) -> list[UniFiRecord]: ...
+    async def get_device_by_mac(self, mac: str) -> UniFiRecord | None: ...
+    async def update_device(self, device_id: str, patch: dict[str, Any]) -> UniFiRecord | None: ...
     async def restart_device(self, mac: str) -> bool: ...
     async def locate_device(self, mac: str, on: bool) -> bool: ...
     async def set_port_state(
@@ -128,6 +130,12 @@ class StubBackend:
     # ----- Devices --------------------------------------------------------
     async def list_devices(self) -> list[UniFiRecord]:
         return self.state.list_devices()
+
+    async def get_device_by_mac(self, mac: str) -> UniFiRecord | None:
+        return self.state.find_device_by_mac(mac)
+
+    async def update_device(self, device_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        return self.state.update_device(device_id, patch)
 
     async def restart_device(self, mac: str) -> bool:
         return self.state.restart_device(mac)
@@ -299,6 +307,14 @@ class RealBackend:
     # ----- Devices --------------------------------------------------------
     async def list_devices(self) -> list[UniFiRecord]:
         return await self.client.list_devices()
+
+    async def get_device_by_mac(self, mac: str) -> UniFiRecord | None:
+        devices = await self.client.list_devices()
+        return next((d for d in devices if d.get("mac") == mac), None)
+
+    async def update_device(self, device_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        record = await self.client.update_device(device_id, patch)
+        return record or None
 
     async def restart_device(self, mac: str) -> bool:
         await self.client.restart_device(mac)

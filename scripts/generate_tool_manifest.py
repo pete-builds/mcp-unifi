@@ -60,9 +60,7 @@ TOOLS_DIR = DOCS_ROOT / "tools"
 # files under content/docs/. Keep it in docs/site/ alongside the rendered
 # pages so a future ``scripts/deploy-docs.sh`` can copy it out as a
 # top-level public asset if needed.)
-MANIFEST_JSON_PATH = (
-    REPO_ROOT / "docs" / "site" / "src" / "data" / "tool-manifest.json"
-)
+MANIFEST_JSON_PATH = REPO_ROOT / "docs" / "site" / "src" / "data" / "tool-manifest.json"
 
 # Crude module attribution. The dispatcher imports tools by package, so a
 # tool's module is one of two values. We classify by name prefix only when
@@ -197,9 +195,7 @@ def _render_parameters_table(schema: dict[str, Any] | None) -> str:
             continue
         type_label = _format_type(prop)
         req = "yes" if name in required else "no"
-        default = (
-            _format_default(prop["default"]) if "default" in prop else "—"
-        )
+        default = _format_default(prop["default"]) if "default" in prop else "—"
         desc = (prop.get("description") or "").strip().replace("\n", " ")
         # Pipe characters in descriptions would break the table; escape them.
         desc = desc.replace("|", r"\|")
@@ -270,9 +266,7 @@ def _render_index(tools: list[dict[str, Any]]) -> str:
     parts: list[str] = []
     parts.append("---")
     parts.append("title: Tool Manifest")
-    parts.append(
-        'description: "Auto-generated index of every MCP tool registered by mcp-unifi."'
-    )
+    parts.append('description: "Auto-generated index of every MCP tool registered by mcp-unifi."')
     parts.append("draft: false")
     parts.append("---")
     parts.append("")
@@ -444,10 +438,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         sys.stdout.write("Tool manifest is in sync.\n")
         return 0
-    sys.stdout.write(
-        f"Generated {len(tools)} tool pages. "
-        f"{result['written']} file(s) written.\n"
-    )
+    sys.stdout.write(f"Generated {len(tools)} tool pages. {result['written']} file(s) written.\n")
     return 0
 
 
