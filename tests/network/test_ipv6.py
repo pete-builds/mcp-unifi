@@ -407,12 +407,14 @@ async def test_set_lan_ipv6_pd_dry_run_shows_binding(
     result = await _call(
         stub_server,
         "set_lan_ipv6",
-        {"network_id": lan_id, "interface_type": "pd", "prefix_id": "0", "dry_run": True},
+        {"network_id": lan_id, "interface_type": "pd", "prefix_id": 0, "dry_run": True},
     )
     upd = result["would_update"]
     assert upd["after"]["ipv6_interface_type"] == "pd"
     assert upd["after"]["ipv6_pd_interface"] == "wan"
-    assert upd["after"]["ipv6_pd_prefixid"] == "0"
+    assert upd["after"]["ipv6_pd_prefixid"] == 0
+    # Pinning a prefix_id pins manual mode (so the controller honours the id).
+    assert upd["after"]["ipv6_setting_preference"] == "manual"
 
 
 async def test_set_lan_ipv6_prefix_id_requires_pd(
@@ -423,10 +425,92 @@ async def test_set_lan_ipv6_prefix_id_requires_pd(
     result = await _call(
         stub_server,
         "set_lan_ipv6",
-        {"network_id": lan_id, "ra_enabled": True, "prefix_id": "1"},
+        {"network_id": lan_id, "ra_enabled": True, "prefix_id": 1},
     )
     assert "error" in result
     assert "prefix_id" in result["error"]
+
+
+async def test_set_lan_ipv6_prefix_id_writes_prefixid_and_manual(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """Supplying ``prefix_id`` on a PD enable must write ``ipv6_pd_prefixid``
+    AND pin ``ipv6_setting_preference=manual``, and both must round-trip on a
+    re-read of the networkconf.
+
+    Regression for the live-firmware bug (probed 2026-06-14, fixed v0.15.4): a
+    second PD LAN in ``auto`` mode never carves its own /64 because the
+    controller only hands the primary slice (id 0) to one LAN. Pinning a
+    distinct sub-prefix id only takes effect in manual mode, so the tool must
+    set both fields together — and the strict read-modify-write / scaffold-fill
+    must not strip either.
+    """
+    lan_id = _lan_id(stub_state)
+    # Start the LAN in auto PD mode (as TRUSTED was live before the fix).
+    lan = next(n for n in stub_state.networks if n.get("_id") == lan_id)
+    lan["ipv6_setting_preference"] = "auto"
+
+    result = await _call(
+        stub_server,
+        "set_lan_ipv6",
+        {
+            "network_id": lan_id,
+            "interface_type": "pd",
+            "ra_enabled": True,
+            "address_assignment": "slaac",
+            "prefix_id": 1,
+        },
+    )
+    assert result["updated"] is True
+    # The applied after-view exposes both fields.
+    assert result["after"]["ipv6_pd_prefixid"] == 1
+    assert result["after"]["ipv6_setting_preference"] == "manual"
+
+    # Round-trip: a fresh read of the persisted record carries both fields.
+    lan = next(n for n in stub_state.networks if n.get("_id") == lan_id)
+    assert lan["ipv6_pd_prefixid"] == 1
+    assert lan["ipv6_setting_preference"] == "manual"
+    assert lan["ipv6_interface_type"] == "pd"
+    assert lan["ipv6_pd_interface"] == "wan"
+
+
+async def test_set_lan_ipv6_prefix_id_zero_is_distinct_from_unset(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """``prefix_id=0`` is a real, distinct sub-prefix id (NOT the unset
+    sentinel ``-1``): it must write ``ipv6_pd_prefixid=0`` and pin manual mode,
+    not fall through to the legacy auto path."""
+    lan_id = _lan_id(stub_state)
+    result = await _call(
+        stub_server,
+        "set_lan_ipv6",
+        {"network_id": lan_id, "interface_type": "pd", "prefix_id": 0},
+    )
+    assert result["updated"] is True
+    lan = next(n for n in stub_state.networks if n.get("_id") == lan_id)
+    assert lan["ipv6_pd_prefixid"] == 0
+    assert lan["ipv6_setting_preference"] == "manual"
+
+
+async def test_set_lan_ipv6_no_prefix_id_keeps_auto_carve(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """Omitting ``prefix_id`` (default sentinel) leaves the legacy auto behaviour
+    intact: no ``ipv6_pd_prefixid`` is written and a manual/blank LAN flips to
+    ``auto`` (back-compat for the primary MGMT/Default LAN)."""
+    lan_id = _lan_id(stub_state)
+    lan = next(n for n in stub_state.networks if n.get("_id") == lan_id)
+    lan["ipv6_setting_preference"] = "manual"
+
+    result = await _call(
+        stub_server,
+        "set_lan_ipv6",
+        {"network_id": lan_id, "interface_type": "pd"},
+    )
+    assert result["updated"] is True
+    lan = next(n for n in stub_state.networks if n.get("_id") == lan_id)
+    assert "ipv6_pd_prefixid" not in lan
+    assert lan["ipv6_setting_preference"] == "auto"
 
 
 async def test_set_lan_ipv6_explicit_dns(stub_server: FastMCP, stub_state: StubState) -> None:
@@ -566,8 +650,10 @@ async def test_real_set_lan_ipv6_pd_puts_wan_binding(real_server: FastMCP) -> No
 
 @respx.mock
 async def test_real_set_lan_ipv6_pd_with_prefix_id(real_server: FastMCP) -> None:
-    """An explicit ``prefix_id`` is forwarded as ``ipv6_pd_prefixid`` alongside
-    the WAN binding (for firmware that honours manual sub-prefix selection)."""
+    """An explicit ``prefix_id`` is forwarded as an integer ``ipv6_pd_prefixid``
+    alongside the WAN binding AND pins ``ipv6_setting_preference="manual"`` (the
+    only mode in which UniFi Network 10.4.57 honours a pinned sub-prefix, so a
+    second PD LAN carves its OWN /64). Verified live 2026-06-14 (v0.15.4)."""
     respx.get(f"{BASE}/rest/networkconf").mock(
         return_value=httpx.Response(
             200,
@@ -600,7 +686,7 @@ async def test_real_set_lan_ipv6_pd_with_prefix_id(real_server: FastMCP) -> None
     result = await _call(
         real_server,
         "set_lan_ipv6",
-        {"network_id": "lan1", "interface_type": "pd", "prefix_id": "1"},
+        {"network_id": "lan1", "interface_type": "pd", "prefix_id": 1},
     )
     assert result["updated"] is True
     import json as _json
@@ -609,8 +695,8 @@ async def test_real_set_lan_ipv6_pd_with_prefix_id(real_server: FastMCP) -> None
     assert body == {
         "ipv6_interface_type": "pd",
         "ipv6_pd_interface": "wan",
-        "ipv6_pd_prefixid": "1",
-        "ipv6_setting_preference": "auto",
+        "ipv6_pd_prefixid": 1,
+        "ipv6_setting_preference": "manual",
         "ipv6_pd_start": "::2",
         "ipv6_pd_stop": "::7d1",
         "dhcpdv6_start": "::2",

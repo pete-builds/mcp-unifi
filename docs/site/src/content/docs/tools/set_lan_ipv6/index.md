@@ -41,6 +41,18 @@ window, ``ipv6_ra_priority=high``, RA lifetimes) — but ONLY for keys the
 live record lacks and the caller did not set explicitly, so an
 already-configured PD LAN keeps its own window untouched.
 
+Carving a DISTINCT /64 for a SECOND PD LAN (``prefix_id``): on UniFi
+Network 10.4.57 the controller's ``auto`` IPv6 mode hands the primary
+sub-prefix (id 0) to ONE LAN (the Default/MGMT LAN) and leaves a second
+auto PD LAN with an empty ``ipv6_subnets`` — it never carves its own /64
+(probed live 2026-06-14). To give a second LAN its own slice, pass an
+explicit ``prefix_id`` (e.g. ``1``). When ``prefix_id`` is supplied the
+tool writes ``ipv6_pd_prefixid=<id>`` AND pins
+``ipv6_setting_preference="manual"`` (it does NOT flip to ``auto``),
+because only manual mode honours an operator-pinned sub-prefix. Both keys
+survive the strict read-modify-write and the scaffold-fill. Omitting
+``prefix_id`` keeps the legacy ``auto`` behaviour unchanged.
+
 Read first: call ``list_networks`` to find the ``network_id`` and see
 the current ``ipv6_*`` state (now surfaced inline).
 
@@ -60,7 +72,7 @@ set_lan_ipv6(network_id="65f...", interface_type="pd", ra_enabled=True, dry_run=
 | `address_assignment` | `string` | no | "" | ``"slaac"`` or ``"dhcpv6"``. Empty leaves it unchanged. |
 | `dns_auto` | `boolean | null` | no | null | ``True`` to advertise the gateway as DNS, ``False`` to use explicit servers from ``dns_servers``. ``None`` leaves it unchanged. |
 | `dns_servers` | `array | null` | no | null | Up to four IPv6 DNS server addresses, applied as ``dhcpdv6_dns_1..4`` when ``dns_auto=False``. ``None`` leaves them unchanged. |
-| `prefix_id` | `string` | no | "" | Optional hex sub-prefix id (e.g. ``"0"``, ``"1"``) selecting which /64 to carve from the delegated /56, so multiple PD LANs don't collide. Only sent when ``interface_type="pd"``. Empty (default) lets the controller auto-carve a sub-prefix. Note: on UniFi Network 10.4.57 the controller auto-assigns the sub-prefix and ignores this value; it is accepted for forward/ cross-firmware compatibility. |
+| `prefix_id` | `integer` | no | -1 | Sub-prefix id (e.g. ``0``, ``1``) selecting which /64 to carve from the delegated /56, so multiple PD LANs don't collide. Only valid with ``interface_type="pd"``. Default ``-1`` means "not supplied" — the LAN keeps the controller-managed ``auto`` carve (only the primary LAN gets a /64). Supplying a value (``0`` and up) writes ``ipv6_pd_prefixid`` AND pins ``ipv6_setting_preference="manual"`` so the controller honours the pinned sub-prefix and the LAN carves its OWN /64. The Default/MGMT LAN already holds id ``0``, so a second LAN needs a distinct id (``1``, ``2``, ...). |
 | `controller` | `string` | no | "default" | Name of the UniFi controller to target. Defaults to ``"default"``. |
 | `dry_run` | `boolean` | no | false | Preview the before/after diff without applying it. |
 
