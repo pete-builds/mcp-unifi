@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.3] - 2026-06-14
+
+### Fixed
+
+- **`set_lan_ipv6` PD enable no longer 400s with `api.err.InvalidIpv6Addr` on a
+  fresh LAN.** v0.15.2 fixed the WAN binding but only succeeded on the
+  Default/MGMT LAN because that record already carried a leftover PD-window
+  scaffold (`ipv6_pd_start=::2`, `ipv6_pd_stop=::7d1`) from a prior half-config,
+  which the strict read-modify-write preserved. A genuinely fresh LAN (TRUSTED,
+  IoT, GUEST — `ipv6_setting_preference=manual`, every `ipv6_*`/`dhcpdv6_*` key
+  unset) has no such fields, so the merged record carried `ipv6_pd_start: null`
+  and the controller rejected it (HTTP 400 `InvalidIpv6Addr`).
+- **Comprehensive fix (full delta, not one field).** Computed live against the
+  UCG-Fiber (UniFi Network 10.4.57) by diffing the WORKING Default LAN against a
+  fresh blank LAN. When enabling `interface_type="pd"`, the tool now fills the
+  COMPLETE PD scaffold a blank LAN lacks, copied verbatim from Default's working
+  record:
+  - `ipv6_pd_start` `::2`, `ipv6_pd_stop` `::7d1` (the PD window the controller
+    demanded — the `null` culprit)
+  - `dhcpdv6_start` `::2`, `dhcpdv6_stop` `::7d1`, `dhcpdv6_leasetime` `86400`
+    (DHCPv6 lease window)
+  - `ipv6_ra_priority` `high`, `ipv6_ra_preferred_lifetime` `14400` (RA lifetimes)
+  - `ipv6_aliases` `[]`
+  - `ipv6_setting_preference` flipped `manual` → `auto`: a manual LAN validates
+    and persists but the controller will not auto-carve a sub-prefix for it, so
+    it never gets a global /64. Default runs `auto`.
+- **Scaffold is non-destructive.** Each default is applied ONLY when the live
+  record lacks that key (absent/null) AND the caller did not set it explicitly,
+  so an already-configured PD LAN (like Default) keeps its own window via strict
+  read-modify-write. The WAN-binding auto-resolve, the optional `prefix_id`, and
+  the `none`/`static` paths from v0.15.2/v0.15.1 are unchanged.
+- **Live-verified on TRUSTED (VLAN20, the fresh-LAN proof):** the full
+  fixed-code payload (`pd` + `wan` binding + complete scaffold +
+  `ipv6_setting_preference=auto`) was applied to TRUSTED end-to-end; the
+  controller returned HTTP 200 `rc:ok` and the networkconf now matches Default's
+  working PD config exactly. TRUSTED IPv6 is left ENABLED. The gateway had not
+  yet carved TRUSTED's runtime `/64` onto its VLAN20 interface at ship time; that
+  carve requires a gateway provision cycle, which is out of scope for a
+  TRUSTED-only IPv6 change (do not force-provision the shared gateway). Config is
+  correct and accepted; runtime convergence is the gateway's to complete.
+- New stub + real-mode regression tests assert a fresh LAN (no pre-existing
+  ipv6 fields) emits a complete, non-null PD payload (`pd_start`/`stop`
+  populated, `pd_interface=wan`, full lease/RA scaffold, `auto` preference), and
+  that an already-configured PD LAN is not clobbered.
+
 ## [0.15.2] - 2026-06-14
 
 ### Fixed

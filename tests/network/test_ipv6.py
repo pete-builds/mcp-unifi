@@ -289,6 +289,116 @@ async def test_set_lan_ipv6_applies(stub_server: FastMCP, stub_state: StubState)
     assert lan["ipv6_pd_interface"] == "wan"
 
 
+async def test_set_lan_ipv6_pd_fresh_lan_fills_complete_scaffold(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """Enabling PD on a fresh LAN (no pre-existing ipv6 PD fields) must emit a
+    COMPLETE, non-null PD payload, not just ``ipv6_interface_type=pd``.
+
+    Regression for HTTP 400 ``api.err.InvalidIpv6Addr`` / ``ipv6_pd_start: null``
+    (probed live 2026-06-14): the stub LAN mirrors a fresh blank LAN — it has
+    ``ipv6_interface_type=none`` and NO ``ipv6_pd_start``/``ipv6_pd_stop``,
+    DHCPv6 lease window, or RA lifetimes. The fix fills the full scaffold from
+    Default's working values so the controller accepts the record.
+    """
+    lan_id = _lan_id(stub_state)
+    # Precondition: the stub LAN genuinely lacks the PD scaffold (a fresh LAN).
+    lan_before = next(n for n in stub_state.networks if n.get("_id") == lan_id)
+    assert "ipv6_pd_start" not in lan_before
+    assert "ipv6_pd_stop" not in lan_before
+
+    result = await _call(
+        stub_server,
+        "set_lan_ipv6",
+        {"network_id": lan_id, "interface_type": "pd", "ra_enabled": True},
+    )
+    assert result["updated"] is True
+    lan = next(n for n in stub_state.networks if n.get("_id") == lan_id)
+    # The mandatory PD bits.
+    assert lan["ipv6_interface_type"] == "pd"
+    assert lan["ipv6_pd_interface"] == "wan"
+    # The PD window the controller demanded — populated, non-null.
+    assert lan["ipv6_pd_start"] == "::2"
+    assert lan["ipv6_pd_stop"] == "::7d1"
+    assert lan["ipv6_pd_start"] is not None
+    # The complete supporting scaffold (DHCPv6 lease window + RA lifetimes).
+    assert lan["dhcpdv6_start"] == "::2"
+    assert lan["dhcpdv6_stop"] == "::7d1"
+    assert lan["dhcpdv6_leasetime"] == 86400
+    assert lan["ipv6_ra_priority"] == "high"
+    assert lan["ipv6_ra_preferred_lifetime"] == 14400
+    assert lan["ipv6_aliases"] == []
+
+
+async def test_set_lan_ipv6_pd_flips_manual_preference_to_auto(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """A fresh LAN sits at ``ipv6_setting_preference=manual``; in that mode the
+    controller will not auto-carve a sub-prefix, so the LAN never gets a global
+    /64. Enabling PD must flip manual → auto (matching the working Default LAN).
+
+    Verified live 2026-06-14: TRUSTED stayed at manual after the first apply and
+    its ``ipv6_subnets`` stayed empty; Default runs ``auto`` and carries a /64.
+    """
+    lan_id = _lan_id(stub_state)
+    lan = next(n for n in stub_state.networks if n.get("_id") == lan_id)
+    lan["ipv6_setting_preference"] = "manual"
+
+    result = await _call(
+        stub_server,
+        "set_lan_ipv6",
+        {"network_id": lan_id, "interface_type": "pd"},
+    )
+    assert result["updated"] is True
+    lan = next(n for n in stub_state.networks if n.get("_id") == lan_id)
+    assert lan["ipv6_setting_preference"] == "auto"
+
+
+async def test_set_lan_ipv6_pd_leaves_auto_preference_untouched(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """An already-``auto`` LAN keeps ``auto``; the flip only fires for manual."""
+    lan_id = _lan_id(stub_state)
+    lan = next(n for n in stub_state.networks if n.get("_id") == lan_id)
+    lan["ipv6_setting_preference"] = "auto"
+    result = await _call(
+        stub_server,
+        "set_lan_ipv6",
+        {"network_id": lan_id, "interface_type": "pd"},
+    )
+    assert result["updated"] is True
+    lan = next(n for n in stub_state.networks if n.get("_id") == lan_id)
+    assert lan["ipv6_setting_preference"] == "auto"
+
+
+async def test_set_lan_ipv6_pd_preserves_existing_pd_window(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """An already-configured PD LAN keeps its OWN window — the scaffold defaults
+    only fill MISSING keys, never clobber a live value (strict read-modify-write).
+    """
+    lan_id = _lan_id(stub_state)
+    lan = next(n for n in stub_state.networks if n.get("_id") == lan_id)
+    # Simulate a LAN that already carries a custom PD window.
+    lan["ipv6_pd_start"] = "::a"
+    lan["ipv6_pd_stop"] = "::ff"
+    lan["ipv6_ra_priority"] = "medium"
+
+    result = await _call(
+        stub_server,
+        "set_lan_ipv6",
+        {"network_id": lan_id, "interface_type": "pd"},
+    )
+    assert result["updated"] is True
+    lan = next(n for n in stub_state.networks if n.get("_id") == lan_id)
+    # Existing values preserved, not overwritten by the scaffold defaults.
+    assert lan["ipv6_pd_start"] == "::a"
+    assert lan["ipv6_pd_stop"] == "::ff"
+    assert lan["ipv6_ra_priority"] == "medium"
+    # Still-missing scaffold keys get filled.
+    assert lan["dhcpdv6_start"] == "::2"
+
+
 async def test_set_lan_ipv6_pd_dry_run_shows_binding(
     stub_server: FastMCP, stub_state: StubState
 ) -> None:
@@ -435,11 +545,22 @@ async def test_real_set_lan_ipv6_pd_puts_wan_binding(real_server: FastMCP) -> No
 
     body = _json.loads(sent.content)
     # Strict read-modify-write: only IPv6 keys in the patch, no ip_subnet etc.
-    # The PD path adds the mandatory WAN binding (auto-resolved from the WAN).
+    # The PD path adds the mandatory WAN binding (auto-resolved from the WAN)
+    # PLUS the complete PD scaffold a fresh LAN lacks (this mock record has none
+    # of the PD-window / lease / RA-lifetime keys, so all defaults are filled).
     assert body == {
         "ipv6_interface_type": "pd",
         "ipv6_ra_enabled": True,
         "ipv6_pd_interface": "wan",
+        "ipv6_setting_preference": "auto",
+        "ipv6_pd_start": "::2",
+        "ipv6_pd_stop": "::7d1",
+        "dhcpdv6_start": "::2",
+        "dhcpdv6_stop": "::7d1",
+        "dhcpdv6_leasetime": 86400,
+        "ipv6_ra_priority": "high",
+        "ipv6_ra_preferred_lifetime": 14400,
+        "ipv6_aliases": [],
     }
 
 
@@ -489,6 +610,81 @@ async def test_real_set_lan_ipv6_pd_with_prefix_id(real_server: FastMCP) -> None
         "ipv6_interface_type": "pd",
         "ipv6_pd_interface": "wan",
         "ipv6_pd_prefixid": "1",
+        "ipv6_setting_preference": "auto",
+        "ipv6_pd_start": "::2",
+        "ipv6_pd_stop": "::7d1",
+        "dhcpdv6_start": "::2",
+        "dhcpdv6_stop": "::7d1",
+        "dhcpdv6_leasetime": 86400,
+        "ipv6_ra_priority": "high",
+        "ipv6_ra_preferred_lifetime": 14400,
+        "ipv6_aliases": [],
+    }
+
+
+@respx.mock
+async def test_real_set_lan_ipv6_pd_existing_window_not_clobbered(real_server: FastMCP) -> None:
+    """A LAN that already carries a PD window (like the live Default LAN) keeps
+    its own values; the scaffold only fills genuinely-missing keys.
+
+    Mirrors the live Default record (``ipv6_pd_start=::2``/``ipv6_pd_stop=::7d1``
+    already present): the PUT must NOT re-send those (read-modify-write would
+    preserve them anyway), only the caller's change + the WAN binding + any
+    still-missing scaffold key.
+    """
+    import json as _json
+
+    respx.get(f"{BASE}/rest/networkconf").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "_id": "lan1",
+                        "name": "Default",
+                        "purpose": "corporate",
+                        "ipv6_interface_type": "pd",
+                        "ipv6_pd_interface": "wan",
+                        "ipv6_setting_preference": "auto",
+                        "ipv6_pd_start": "::2",
+                        "ipv6_pd_stop": "::7d1",
+                        "dhcpdv6_start": "::2",
+                        "dhcpdv6_stop": "::7d1",
+                        "dhcpdv6_leasetime": 86400,
+                        "ipv6_ra_priority": "high",
+                        "ipv6_ra_preferred_lifetime": 14400,
+                        "ipv6_aliases": [],
+                    },
+                    {
+                        "_id": "wan1",
+                        "name": "Internet 1",
+                        "purpose": "wan",
+                        "wan_networkgroup": "WAN",
+                        "wan_type_v6": "dhcpv6",
+                        "ipv6_wan_delegation_type": "pd",
+                    },
+                ]
+            },
+        )
+    )
+    put_route = respx.put(f"{BASE}/rest/networkconf/lan1").mock(
+        return_value=httpx.Response(
+            200, json={"data": [{"_id": "lan1", "ipv6_interface_type": "pd"}]}
+        )
+    )
+    result = await _call(
+        real_server,
+        "set_lan_ipv6",
+        {"network_id": "lan1", "interface_type": "pd", "ra_enabled": True},
+    )
+    assert result["updated"] is True
+    body = _json.loads(put_route.calls[0].request.content)
+    # Only the caller's change + the WAN binding. No scaffold keys: every one
+    # already exists on the record, so nothing is re-sent (and nothing clobbered).
+    assert body == {
+        "ipv6_interface_type": "pd",
+        "ipv6_ra_enabled": True,
+        "ipv6_pd_interface": "wan",
     }
 
 
