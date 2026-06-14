@@ -30,13 +30,20 @@ LAN record (``purpose in {"corporate", "guest"}``):
                                        (probed live 2026-06-14). Adding
                                        ``ipv6_pd_interface="wan"`` → HTTP 200 and
                                        the LAN receives a global /64.
-    ``ipv6_pd_prefixid``               str  — hex sub-prefix id selecting which /64
-                                       to carve from the delegated /56. Accepted on
-                                       the PUT but **not persisted** on UniFi
-                                       Network 10.4.57 (the controller auto-carves
-                                       the sub-prefix; probed live 2026-06-14). Sent
-                                       only when the caller pins one, for forward/
-                                       cross-firmware compatibility.
+    ``ipv6_pd_prefixid``               int  — sub-prefix id selecting which /64
+                                       to carve from the delegated /56. **Persists
+                                       and carves a distinct /64 ONLY in MANUAL
+                                       mode** (``ipv6_setting_preference=manual``).
+                                       In ``auto`` mode the controller manages the
+                                       carve itself and only the primary LAN
+                                       (id 0) gets a slice; a second auto PD LAN
+                                       stays empty (probed live 2026-06-14:
+                                       Default=auto/id0 carved ``4ad::/64``, TRUSTED
+                                       =auto/no-id stayed ``ipv6_subnets=[]``). So
+                                       to give a SECOND LAN its own /64 the tool
+                                       writes BOTH ``ipv6_pd_prefixid`` AND
+                                       ``ipv6_setting_preference=manual`` (verified
+                                       live 2026-06-14, v0.15.4).
     ``ipv6_client_address_assignment`` slaac / dhcpv6
     ``ipv6_ra_enabled``                bool — router advertisements
     ``dhcpdv6_dns_auto``               bool
@@ -418,7 +425,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         address_assignment: str = "",
         dns_auto: bool | None = None,
         dns_servers: list[str] | None = None,
-        prefix_id: str = "",
+        prefix_id: int = -1,
         controller: str = "default",
         dry_run: bool = False,
     ) -> str:
@@ -457,6 +464,18 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         live record lacks and the caller did not set explicitly, so an
         already-configured PD LAN keeps its own window untouched.
 
+        Carving a DISTINCT /64 for a SECOND PD LAN (``prefix_id``): on UniFi
+        Network 10.4.57 the controller's ``auto`` IPv6 mode hands the primary
+        sub-prefix (id 0) to ONE LAN (the Default/MGMT LAN) and leaves a second
+        auto PD LAN with an empty ``ipv6_subnets`` — it never carves its own /64
+        (probed live 2026-06-14). To give a second LAN its own slice, pass an
+        explicit ``prefix_id`` (e.g. ``1``). When ``prefix_id`` is supplied the
+        tool writes ``ipv6_pd_prefixid=<id>`` AND pins
+        ``ipv6_setting_preference="manual"`` (it does NOT flip to ``auto``),
+        because only manual mode honours an operator-pinned sub-prefix. Both keys
+        survive the strict read-modify-write and the scaffold-fill. Omitting
+        ``prefix_id`` keeps the legacy ``auto`` behaviour unchanged.
+
         Read first: call ``list_networks`` to find the ``network_id`` and see
         the current ``ipv6_*`` state (now surfaced inline).
 
@@ -478,13 +497,16 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             dns_servers: Up to four IPv6 DNS server addresses, applied as
                 ``dhcpdv6_dns_1..4`` when ``dns_auto=False``. ``None`` leaves
                 them unchanged.
-            prefix_id: Optional hex sub-prefix id (e.g. ``"0"``, ``"1"``)
-                selecting which /64 to carve from the delegated /56, so multiple
-                PD LANs don't collide. Only sent when ``interface_type="pd"``.
-                Empty (default) lets the controller auto-carve a sub-prefix.
-                Note: on UniFi Network 10.4.57 the controller auto-assigns the
-                sub-prefix and ignores this value; it is accepted for forward/
-                cross-firmware compatibility.
+            prefix_id: Sub-prefix id (e.g. ``0``, ``1``) selecting which /64 to
+                carve from the delegated /56, so multiple PD LANs don't collide.
+                Only valid with ``interface_type="pd"``. Default ``-1`` means
+                "not supplied" — the LAN keeps the controller-managed ``auto``
+                carve (only the primary LAN gets a /64). Supplying a value (``0``
+                and up) writes ``ipv6_pd_prefixid`` AND pins
+                ``ipv6_setting_preference="manual"`` so the controller honours the
+                pinned sub-prefix and the LAN carves its OWN /64. The
+                Default/MGMT LAN already holds id ``0``, so a second LAN needs a
+                distinct id (``1``, ``2``, ...).
             controller: Name of the UniFi controller to target. Defaults to
                 ``"default"``.
             dry_run: Preview the before/after diff without applying it.
@@ -497,8 +519,10 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(f"invalid address_assignment {address_assignment!r}: use slaac or dhcpv6")
         if dns_servers is not None and len(dns_servers) > 4:
             return err("dns_servers accepts at most 4 addresses")
-        pid = prefix_id.strip().lower()
-        if pid and it != "pd":
+        # prefix_id is an int; the sentinel -1 means "not supplied" so that 0
+        # (a legitimate, distinct sub-prefix id) is preserved as a real value.
+        pid_supplied = prefix_id >= 0
+        if pid_supplied and it != "pd":
             return err("prefix_id is only valid when interface_type='pd'")
 
         patch: dict[str, Any] = {}
@@ -551,19 +575,30 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                     "prefix_delegation='prefix-delegation')."
                 )
             patch["ipv6_pd_interface"] = binding
-            if pid:
-                patch["ipv6_pd_prefixid"] = pid
 
-            # A fresh LAN sits at ``ipv6_setting_preference=manual`` (the UI's
-            # "Manual" IPv6 mode). In that mode the controller will NOT auto-carve
-            # a sub-prefix from the delegated /56 for this LAN, so even though the
-            # record validates and persists, the gateway never assigns the LAN a
-            # global /64. The working Default LAN runs ``auto`` (verified live
-            # 2026-06-14: Default=auto carves a /64; a manual LAN does not). When
-            # enabling PD we flip a manual/absent preference to ``auto`` so the
-            # controller manages the sub-prefix carve, matching Default. An
-            # already-``auto`` LAN is left untouched.
-            if found.get("ipv6_setting_preference") in (None, "", "manual"):
+            if pid_supplied:
+                # Operator pinned a distinct sub-prefix. UniFi Network 10.4.57
+                # only honours a pinned ``ipv6_pd_prefixid`` in MANUAL mode: in
+                # ``auto`` mode the controller manages the carve and hands the
+                # primary slice (id 0) to ONE LAN, leaving any second auto PD LAN
+                # with an empty ``ipv6_subnets``. So when a prefix_id is supplied
+                # we write it AND pin ``ipv6_setting_preference=manual`` so this
+                # LAN carves its OWN /64. We do NOT flip to ``auto`` in this branch
+                # (that would discard the pinned id). Both keys are added to the
+                # patch and therefore preserved through the read-modify-write and
+                # protected from the scaffold-fill below (which only fills keys
+                # absent from the patch).
+                patch["ipv6_pd_prefixid"] = prefix_id
+                patch["ipv6_setting_preference"] = "manual"
+            elif found.get("ipv6_setting_preference") in (None, "", "manual"):
+                # Legacy auto path (no prefix_id): a fresh LAN sits at
+                # ``ipv6_setting_preference=manual``; in that mode the controller
+                # will NOT auto-carve a sub-prefix, so the LAN never gets a global
+                # /64. The working Default LAN runs ``auto`` (verified live
+                # 2026-06-14: Default=auto carves a /64; a manual LAN with no
+                # pinned id does not). Flip manual/absent → ``auto`` so the
+                # controller manages the carve, matching Default. An already-
+                # ``auto`` LAN is left untouched.
                 patch["ipv6_setting_preference"] = "auto"
 
             # Fill the COMPLETE PD scaffold a fresh (blank) LAN lacks. A LAN with

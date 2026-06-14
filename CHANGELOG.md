@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.4] - 2026-06-14
+
+### Fixed
+
+- **`set_lan_ipv6` `prefix_id` now actually carves a distinct /64 for a SECOND
+  PD LAN.** v0.15.2 added an optional `prefix_id` (typed `str`) that wrote
+  `ipv6_pd_prefixid` but ALSO flipped `ipv6_setting_preference` to `auto` on
+  every PD enable. On UniFi Network 10.4.57 the controller's `auto` mode manages
+  the sub-prefix carve itself and hands the primary slice (id 0) to ONE LAN (the
+  Default/MGMT LAN), leaving a second auto PD LAN with an empty `ipv6_subnets` —
+  so a pinned `prefix_id` was effectively ignored. Probed live 2026-06-14:
+  Default = auto / id 0 -> `2606:380:2000:4ad::/64`; TRUSTED = auto / no id ->
+  `ipv6_subnets=[]`.
+- **The fix:** when `prefix_id` is supplied with `interface_type="pd"`, the tool
+  now writes `ipv6_pd_prefixid=<id>` AND pins `ipv6_setting_preference="manual"`
+  (it no longer flips to `auto` in this branch), because only manual mode honours
+  an operator-pinned sub-prefix. Both keys are added to the patch, so the strict
+  read-modify-write and the PD scaffold-fill preserve them. Verified live: TRUSTED
+  (VLAN20) with `prefix_id=1` persisted both fields and carved its own distinct
+  /64 from Empire's /56.
+
+### Changed
+
+- **`prefix_id` is now `int` (was `str`).** Default sentinel `-1` means "not
+  supplied" (so `0`, a real distinct sub-prefix id, is preserved as a value).
+  Omitting `prefix_id` keeps the legacy `auto` carve unchanged (back-compat for
+  the primary MGMT/Default LAN). The tool manifest schema now exposes
+  `prefix_id` as `type: integer`.
+
 ## [0.15.3] - 2026-06-14
 
 ### Fixed
