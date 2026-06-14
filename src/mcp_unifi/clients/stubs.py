@@ -149,9 +149,16 @@ def _seed_networks() -> list[UniFiRecord]:
             "attr_no_delete": True,
             "site_id": "default",
             "enabled": True,
-            # IPv6 keys mirror a real UCG-Fiber WAN networkconf record.
-            "wan_type_v6": "disabled",
-            "ipv6_wan_delegation_type": "none",
+            # IPv6 keys mirror a real UCG-Fiber WAN networkconf record with
+            # DHCPv6 prefix delegation enabled (the live gateway state). A LAN
+            # can only enable PD when a WAN actually delegates a prefix, so the
+            # stub WAN advertises PD so stub-mode PD-enable exercises the binding.
+            "wan_networkgroup": "WAN",
+            "wan_type_v6": "dhcpv6",
+            "ipv6_wan_delegation_type": "pd",
+            # No explicit size key: mirrors the live record's
+            # auto=false-with-no-size inconsistency the set_wan_ipv6 fix
+            # normalises. The PD-LAN binding only needs delegation_type=="pd".
             "wan_dhcpv6_pd_size_auto": False,
             "wan_ipv6_dns_preference": "auto",
             "ipv6_setting_preference": "auto",

@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.2] - 2026-06-14
+
+### Fixed
+
+- **`set_lan_ipv6` PD enable path no longer 400s with
+  `api.err.PdRequiresAssignedDhcpv6Wan`.** Enabling prefix delegation on a LAN
+  (`interface_type="pd"`) was rejected by the controller on every apply. Root
+  cause, fixed and verified live against the UCG-Fiber (UniFi Network 10.4.57):
+  - **Missing WAN-uplink binding.** A PD LAN networkconf must reference which
+    DHCPv6 WAN's delegation it draws from via `ipv6_pd_interface` (the WAN's
+    networkgroup, lowercased — `"wan"` on this gateway). The tool emitted only
+    `ipv6_interface_type="pd"` and omitted the binding, so the controller
+    rejected the merged record. Probed live: `ipv6_interface_type=pd` alone →
+    HTTP 400 `PdRequiresAssignedDhcpv6Wan`; adding `ipv6_pd_interface="wan"` →
+    HTTP 200 and the LAN receives a global /64.
+  - The fix auto-resolves the binding from the WAN that actually has DHCPv6-PD
+    enabled (`ipv6_wan_delegation_type=="pd"` + non-disabled `wan_type_v6`) and
+    injects `ipv6_pd_interface` into the patch. When no WAN delegates a prefix,
+    the tool returns a clear error pointing at `set_wan_ipv6` instead of letting
+    the controller 400.
+  - **New optional `prefix_id` param.** A hex sub-prefix id selecting which /64
+    to carve from the delegated /56, sent as `ipv6_pd_prefixid` (only with
+    `interface_type="pd"`). On UniFi Network 10.4.57 the controller auto-carves
+    the sub-prefix and ignores this value; it is accepted for forward/
+    cross-firmware compatibility.
+  - Strict read-modify-write for all non-IPv6 keys and the `none`/`static`
+    paths are unchanged. Added stub + real-mode regression tests pinning the
+    WAN-binding payload, the `prefix_id` forwarding, and the no-delegation
+    error.
+  - **Live-verified:** the Default/MGMT LAN was enabled end-to-end through the
+    fixed code path. The gateway carved `2606:380:2000:4ad::/64` from the
+    delegated `2606:380:2000::/56` (gateway LAN address
+    `2606:380:2000:4ad::1`) and a real client picked up the global address
+    `2606:380:2000:4ad:a6bb:6dff:feac:287c`. Default IPv6 is left enabled.
+
 ## [0.15.1] - 2026-06-14
 
 ### Fixed

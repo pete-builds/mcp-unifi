@@ -2691,7 +2691,7 @@
       "name": "set_camera_recording_mode"
     },
     {
-      "description": "Set the IPv6 configuration of one LAN/VLAN network.\n\nSide effects:\n- Changes how this network gets and advertises IPv6. Turning on\n  ``interface_type=\"pd\"`` plus ``ra_enabled=True`` is what makes the\n  LAN's clients receive global IPv6 addresses from the prefix\n  delegated by the WAN. Toggling router advertisements\n  (``ra_enabled``) or the address-assignment mode causes clients on\n  this network to re-acquire IPv6; IPv4 is unaffected.\n- Only the IPv6 keys you supply change; every other field on the\n  network record is read first and written back unchanged (strict\n  read-modify-write).\n- Mutates controller state. Use dry_run=True to preview the before/\n  after diff without applying.\n\nRead first: call ``list_networks`` to find the ``network_id`` and see\nthe current ``ipv6_*`` state (now surfaced inline).\n\nExample: set_lan_ipv6(network_id=\"65f...\", interface_type=\"pd\", ra_enabled=True, dry_run=True)",
+      "description": "Set the IPv6 configuration of one LAN/VLAN network.\n\nSide effects:\n- Changes how this network gets and advertises IPv6. Turning on\n  ``interface_type=\"pd\"`` plus ``ra_enabled=True`` is what makes the\n  LAN's clients receive global IPv6 addresses from the prefix\n  delegated by the WAN. Toggling router advertisements\n  (``ra_enabled``) or the address-assignment mode causes clients on\n  this network to re-acquire IPv6; IPv4 is unaffected.\n- Only the IPv6 keys you supply change; every other field on the\n  network record is read first and written back unchanged (strict\n  read-modify-write).\n- Mutates controller state. Use dry_run=True to preview the before/\n  after diff without applying.\n\nPrefix-delegation binding: when ``interface_type=\"pd\"`` the controller\nREQUIRES the LAN to reference which DHCPv6 WAN's delegation to draw\nfrom. ``ipv6_interface_type=pd`` on its own returns HTTP 400\n``api.err.PdRequiresAssignedDhcpv6Wan``. This tool auto-binds the LAN to\nthe WAN that actually has DHCPv6-PD enabled (on a single-uplink gateway\nthat is the only internet uplink) by emitting ``ipv6_pd_interface`` =\nthat WAN's networkgroup (e.g. ``\"wan\"``). No WAN with PD enabled \u2192 a\nclear error instead of a controller 400.\n\nRead first: call ``list_networks`` to find the ``network_id`` and see\nthe current ``ipv6_*`` state (now surfaced inline).\n\nExample: set_lan_ipv6(network_id=\"65f...\", interface_type=\"pd\", ra_enabled=True, dry_run=True)",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -2739,11 +2739,16 @@
           },
           "interface_type": {
             "default": "",
-            "description": "``\"none\"``, ``\"pd\"`` (use the WAN-delegated\nprefix), or ``\"static\"``. Empty leaves it unchanged.",
+            "description": "``\"none\"``, ``\"pd\"`` (use the WAN-delegated\nprefix), or ``\"static\"``. Empty leaves it unchanged. When set to\n``\"pd\"`` the WAN binding is added automatically.",
             "type": "string"
           },
           "network_id": {
             "description": "The ``_id`` from ``list_networks`` (a LAN/VLAN, not a\nWAN).",
+            "type": "string"
+          },
+          "prefix_id": {
+            "default": "",
+            "description": "Optional hex sub-prefix id (e.g. ``\"0\"``, ``\"1\"``)\nselecting which /64 to carve from the delegated /56, so multiple\nPD LANs don't collide. Only sent when ``interface_type=\"pd\"``.\nEmpty (default) lets the controller auto-carve a sub-prefix.\nNote: on UniFi Network 10.4.57 the controller auto-assigns the\nsub-prefix and ignores this value; it is accepted for forward/\ncross-firmware compatibility.",
             "type": "string"
           },
           "ra_enabled": {
