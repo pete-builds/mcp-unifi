@@ -39,8 +39,9 @@ async def test_get_wan_ipv6_returns_keys(stub_server: FastMCP) -> None:
     assert len(wans) == 1
     wan = wans[0]
     assert wan["name"] == "Internet 1"
-    assert wan["wan_type_v6"] == "disabled"
-    assert wan["ipv6_wan_delegation_type"] == "none"
+    # The stub WAN mirrors the live UCG-Fiber: DHCPv6 with prefix delegation on.
+    assert wan["wan_type_v6"] == "dhcpv6"
+    assert wan["ipv6_wan_delegation_type"] == "pd"
     assert "_id" in wan
 
 
@@ -74,7 +75,9 @@ async def test_set_wan_ipv6_dry_run_diff(stub_server: FastMCP, stub_state: StubS
     assert result["dry_run"] is True
     upd = result["would_update"]
     assert upd["action"] == "set_wan_ipv6"
-    assert upd["before"]["wan_type_v6"] == "disabled"
+    # Stub WAN starts DHCPv6+PD (mirrors the live gateway); the dry-run shows the
+    # would-be after-state with a consistent PD-size pair.
+    assert upd["before"]["wan_type_v6"] == "dhcpv6"
     assert upd["after"]["wan_type_v6"] == "dhcpv6"
     # The "prefix-delegation" alias normalises to the controller's wire value "pd".
     assert upd["after"]["ipv6_wan_delegation_type"] == "pd"
@@ -280,7 +283,40 @@ async def test_set_lan_ipv6_applies(stub_server: FastMCP, stub_state: StubState)
     )
     assert result["updated"] is True
     assert result["after"]["ipv6_interface_type"] == "pd"
-    assert result["after"]["ipv6_client_address_assignment"] == "dhcpv6"
+    # PD enable auto-binds to the DHCPv6-PD WAN (mandatory or the controller 400s).
+    assert result["after"]["ipv6_pd_interface"] == "wan"
+    lan = next(n for n in stub_state.networks if n.get("_id") == lan_id)
+    assert lan["ipv6_pd_interface"] == "wan"
+
+
+async def test_set_lan_ipv6_pd_dry_run_shows_binding(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """Dry-run of a PD enable must surface the WAN binding in the after-state."""
+    lan_id = _lan_id(stub_state)
+    result = await _call(
+        stub_server,
+        "set_lan_ipv6",
+        {"network_id": lan_id, "interface_type": "pd", "prefix_id": "0", "dry_run": True},
+    )
+    upd = result["would_update"]
+    assert upd["after"]["ipv6_interface_type"] == "pd"
+    assert upd["after"]["ipv6_pd_interface"] == "wan"
+    assert upd["after"]["ipv6_pd_prefixid"] == "0"
+
+
+async def test_set_lan_ipv6_prefix_id_requires_pd(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """``prefix_id`` is only meaningful when enabling PD; reject it otherwise."""
+    lan_id = _lan_id(stub_state)
+    result = await _call(
+        stub_server,
+        "set_lan_ipv6",
+        {"network_id": lan_id, "ra_enabled": True, "prefix_id": "1"},
+    )
+    assert "error" in result
+    assert "prefix_id" in result["error"]
 
 
 async def test_set_lan_ipv6_explicit_dns(stub_server: FastMCP, stub_state: StubState) -> None:
@@ -338,7 +374,15 @@ async def test_set_lan_ipv6_rejects_bad_interface_type(
 
 
 @respx.mock
-async def test_real_set_lan_ipv6_puts_only_ipv6_keys(real_server: FastMCP) -> None:
+async def test_real_set_lan_ipv6_pd_puts_wan_binding(real_server: FastMCP) -> None:
+    """Enabling PD on a LAN must emit the ``ipv6_pd_interface`` WAN binding.
+
+    Regression for ``api.err.PdRequiresAssignedDhcpv6Wan`` (probed live
+    2026-06-14): ``ipv6_interface_type=pd`` alone is rejected; the controller
+    requires the LAN to reference the DHCPv6-PD WAN via ``ipv6_pd_interface``
+    (the WAN's networkgroup, lowercased — ``"wan"``). The tool auto-resolves it
+    from the PD-enabled WAN.
+    """
     respx.get(f"{BASE}/rest/networkconf").mock(
         return_value=httpx.Response(
             200,
@@ -351,7 +395,15 @@ async def test_real_set_lan_ipv6_puts_only_ipv6_keys(real_server: FastMCP) -> No
                         "ip_subnet": "192.168.1.1/24",
                         "ipv6_interface_type": "none",
                         "ipv6_ra_enabled": False,
-                    }
+                    },
+                    {
+                        "_id": "wan1",
+                        "name": "Internet 1",
+                        "purpose": "wan",
+                        "wan_networkgroup": "WAN",
+                        "wan_type_v6": "dhcpv6",
+                        "ipv6_wan_delegation_type": "pd",
+                    },
                 ]
             },
         )
@@ -359,7 +411,16 @@ async def test_real_set_lan_ipv6_puts_only_ipv6_keys(real_server: FastMCP) -> No
     put_route = respx.put(f"{BASE}/rest/networkconf/lan1").mock(
         return_value=httpx.Response(
             200,
-            json={"data": [{"_id": "lan1", "ipv6_interface_type": "pd", "ipv6_ra_enabled": True}]},
+            json={
+                "data": [
+                    {
+                        "_id": "lan1",
+                        "ipv6_interface_type": "pd",
+                        "ipv6_pd_interface": "wan",
+                        "ipv6_ra_enabled": True,
+                    }
+                ]
+            },
         )
     )
     result = await _call(
@@ -374,7 +435,102 @@ async def test_real_set_lan_ipv6_puts_only_ipv6_keys(real_server: FastMCP) -> No
 
     body = _json.loads(sent.content)
     # Strict read-modify-write: only IPv6 keys in the patch, no ip_subnet etc.
-    assert body == {"ipv6_interface_type": "pd", "ipv6_ra_enabled": True}
+    # The PD path adds the mandatory WAN binding (auto-resolved from the WAN).
+    assert body == {
+        "ipv6_interface_type": "pd",
+        "ipv6_ra_enabled": True,
+        "ipv6_pd_interface": "wan",
+    }
+
+
+@respx.mock
+async def test_real_set_lan_ipv6_pd_with_prefix_id(real_server: FastMCP) -> None:
+    """An explicit ``prefix_id`` is forwarded as ``ipv6_pd_prefixid`` alongside
+    the WAN binding (for firmware that honours manual sub-prefix selection)."""
+    respx.get(f"{BASE}/rest/networkconf").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "_id": "lan1",
+                        "name": "TRUSTED",
+                        "purpose": "corporate",
+                        "ipv6_interface_type": "none",
+                    },
+                    {
+                        "_id": "wan1",
+                        "name": "Internet 1",
+                        "purpose": "wan",
+                        "wan_networkgroup": "WAN",
+                        "wan_type_v6": "dhcpv6",
+                        "ipv6_wan_delegation_type": "pd",
+                    },
+                ]
+            },
+        )
+    )
+    put_route = respx.put(f"{BASE}/rest/networkconf/lan1").mock(
+        return_value=httpx.Response(
+            200,
+            json={"data": [{"_id": "lan1", "ipv6_interface_type": "pd"}]},
+        )
+    )
+    result = await _call(
+        real_server,
+        "set_lan_ipv6",
+        {"network_id": "lan1", "interface_type": "pd", "prefix_id": "1"},
+    )
+    assert result["updated"] is True
+    import json as _json
+
+    body = _json.loads(put_route.calls[0].request.content)
+    assert body == {
+        "ipv6_interface_type": "pd",
+        "ipv6_pd_interface": "wan",
+        "ipv6_pd_prefixid": "1",
+    }
+
+
+@respx.mock
+async def test_real_set_lan_ipv6_pd_no_wan_delegation_errors(real_server: FastMCP) -> None:
+    """When no WAN has DHCPv6-PD enabled, enabling PD on a LAN returns a clear
+    error instead of letting the controller reject it with a 400."""
+    respx.get(f"{BASE}/rest/networkconf").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "_id": "lan1",
+                        "name": "Default",
+                        "purpose": "corporate",
+                        "ipv6_interface_type": "none",
+                    },
+                    {
+                        "_id": "wan1",
+                        "name": "Internet 1",
+                        "purpose": "wan",
+                        "wan_networkgroup": "WAN",
+                        "wan_type_v6": "disabled",
+                        "ipv6_wan_delegation_type": "none",
+                    },
+                ]
+            },
+        )
+    )
+    put_route = respx.put(f"{BASE}/rest/networkconf/lan1").mock(
+        return_value=httpx.Response(200, json={"data": []})
+    )
+    result = await _call(
+        real_server,
+        "set_lan_ipv6",
+        {"network_id": "lan1", "interface_type": "pd"},
+    )
+    assert "error" in result
+    assert "delegation" in result["error"].lower()
+    # Nothing was written.
+    assert not put_route.called
 
 
 @respx.mock

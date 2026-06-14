@@ -21,6 +21,22 @@ WAN record (``purpose == "wan"``):
 
 LAN record (``purpose in {"corporate", "guest"}``):
     ``ipv6_interface_type``            none / pd / static
+    ``ipv6_pd_interface``              str  — the WAN networkgroup whose DHCPv6-PD
+                                       delegation this LAN draws from (wire value
+                                       ``"wan"`` on a single-uplink gateway). **A
+                                       PD LAN is REJECTED without this binding**:
+                                       ``ipv6_interface_type=pd`` alone returns
+                                       HTTP 400 ``api.err.PdRequiresAssignedDhcpv6Wan``
+                                       (probed live 2026-06-14). Adding
+                                       ``ipv6_pd_interface="wan"`` → HTTP 200 and
+                                       the LAN receives a global /64.
+    ``ipv6_pd_prefixid``               str  — hex sub-prefix id selecting which /64
+                                       to carve from the delegated /56. Accepted on
+                                       the PUT but **not persisted** on UniFi
+                                       Network 10.4.57 (the controller auto-carves
+                                       the sub-prefix; probed live 2026-06-14). Sent
+                                       only when the caller pins one, for forward/
+                                       cross-firmware compatibility.
     ``ipv6_client_address_assignment`` slaac / dhcpv6
     ``ipv6_ra_enabled``                bool — router advertisements
     ``dhcpdv6_dns_auto``               bool
@@ -95,6 +111,33 @@ _PD_SIZE_MAX = 64
 def _ipv6_view(record: UniFiRecord, keys: tuple[str, ...]) -> dict[str, Any]:
     """Project the IPv6-relevant keys out of a networkconf record."""
     return {k: record.get(k) for k in keys if k in record}
+
+
+def _pd_wan_binding(networks: list[UniFiRecord]) -> str | None:
+    """Return the ``ipv6_pd_interface`` wire value for the PD-enabled WAN.
+
+    A PD LAN must reference WHICH DHCPv6 WAN's delegation it draws from via
+    ``ipv6_pd_interface`` (the WAN's networkgroup, lowercased — e.g. ``"wan"``).
+    We auto-target the WAN that actually has prefix-delegation turned on
+    (``ipv6_wan_delegation_type == "pd"`` and a non-disabled
+    ``wan_type_v6``); on a single-uplink gateway that is "Internet 1" with
+    ``wan_networkgroup == "WAN"`` → ``"wan"``.
+
+    Returns the lowercased networkgroup, or ``None`` when no WAN has DHCPv6-PD
+    enabled (in which case enabling PD on a LAN would 400 anyway and the caller
+    surfaces a clear error instead of letting the controller reject it).
+    """
+    for wan in networks:
+        if not isinstance(wan, dict) or wan.get("purpose") != "wan":
+            continue
+        if wan.get("ipv6_wan_delegation_type") != "pd":
+            continue
+        if wan.get("wan_type_v6") in (None, "", "disabled"):
+            continue
+        group = wan.get("wan_networkgroup")
+        if isinstance(group, str) and group:
+            return group.lower()
+    return None
 
 
 def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> None:
@@ -337,6 +380,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         address_assignment: str = "",
         dns_auto: bool | None = None,
         dns_servers: list[str] | None = None,
+        prefix_id: str = "",
         controller: str = "default",
         dry_run: bool = False,
     ) -> str:
@@ -355,6 +399,15 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         - Mutates controller state. Use dry_run=True to preview the before/
           after diff without applying.
 
+        Prefix-delegation binding: when ``interface_type="pd"`` the controller
+        REQUIRES the LAN to reference which DHCPv6 WAN's delegation to draw
+        from. ``ipv6_interface_type=pd`` on its own returns HTTP 400
+        ``api.err.PdRequiresAssignedDhcpv6Wan``. This tool auto-binds the LAN to
+        the WAN that actually has DHCPv6-PD enabled (on a single-uplink gateway
+        that is the only internet uplink) by emitting ``ipv6_pd_interface`` =
+        that WAN's networkgroup (e.g. ``"wan"``). No WAN with PD enabled → a
+        clear error instead of a controller 400.
+
         Read first: call ``list_networks`` to find the ``network_id`` and see
         the current ``ipv6_*`` state (now surfaced inline).
 
@@ -364,7 +417,8 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             network_id: The ``_id`` from ``list_networks`` (a LAN/VLAN, not a
                 WAN).
             interface_type: ``"none"``, ``"pd"`` (use the WAN-delegated
-                prefix), or ``"static"``. Empty leaves it unchanged.
+                prefix), or ``"static"``. Empty leaves it unchanged. When set to
+                ``"pd"`` the WAN binding is added automatically.
             ra_enabled: ``True``/``False`` to toggle IPv6 Router
                 Advertisements (SLAAC). ``None`` (default) leaves it unchanged.
             address_assignment: ``"slaac"`` or ``"dhcpv6"``. Empty leaves it
@@ -375,6 +429,13 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             dns_servers: Up to four IPv6 DNS server addresses, applied as
                 ``dhcpdv6_dns_1..4`` when ``dns_auto=False``. ``None`` leaves
                 them unchanged.
+            prefix_id: Optional hex sub-prefix id (e.g. ``"0"``, ``"1"``)
+                selecting which /64 to carve from the delegated /56, so multiple
+                PD LANs don't collide. Only sent when ``interface_type="pd"``.
+                Empty (default) lets the controller auto-carve a sub-prefix.
+                Note: on UniFi Network 10.4.57 the controller auto-assigns the
+                sub-prefix and ignores this value; it is accepted for forward/
+                cross-firmware compatibility.
             controller: Name of the UniFi controller to target. Defaults to
                 ``"default"``.
             dry_run: Preview the before/after diff without applying it.
@@ -387,6 +448,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(f"invalid address_assignment {address_assignment!r}: use slaac or dhcpv6")
         if dns_servers is not None and len(dns_servers) > 4:
             return err("dns_servers accepts at most 4 addresses")
+        pid = prefix_id.strip().lower()
+        if pid and it != "pd":
+            return err("prefix_id is only valid when interface_type='pd'")
 
         patch: dict[str, Any] = {}
         if it:
@@ -408,12 +472,37 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 "address_assignment, dns_auto, dns_servers"
             )
 
+        try:
+            backend = resolve_backend(registry, controller)
+            networks = await backend.list_networks()
+        except UniFiError as exc:
+            logger.exception("set_lan_ipv6 failed", extra={"network_id": network_id})
+            return err(str(exc))
+
+        # Enabling PD on a LAN requires the WAN-uplink binding + (optionally) a
+        # prefix-id, or the controller rejects the record with
+        # ``api.err.PdRequiresAssignedDhcpv6Wan``. Resolve the binding from the
+        # PD-enabled WAN and inject it into the patch.
+        if it == "pd":
+            binding = _pd_wan_binding(networks)
+            if binding is None:
+                return err(
+                    "cannot enable PD on this LAN: no WAN has DHCPv6 prefix "
+                    "delegation enabled. Enable it on the WAN first with "
+                    "set_wan_ipv6(connection_type='dhcpv6', "
+                    "prefix_delegation='prefix-delegation')."
+                )
+            patch["ipv6_pd_interface"] = binding
+            if pid:
+                patch["ipv6_pd_prefixid"] = pid
+
         # Tracked keys for the before/after view: the patch keys plus the
         # stable identifiers callers expect to see move.
         view_keys = tuple(
             dict.fromkeys(
                 (
                     "ipv6_interface_type",
+                    "ipv6_pd_interface",
                     "ipv6_ra_enabled",
                     "ipv6_client_address_assignment",
                     "dhcpdv6_dns_auto",
@@ -422,10 +511,12 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             )
         )
         try:
-            backend = resolve_backend(registry, controller)
-            found = await _find_network(backend, network_id=network_id)
-            if isinstance(found, str):
-                return err(found)
+            found = next(
+                (n for n in networks if isinstance(n, dict) and n.get("_id") == network_id),
+                None,
+            )
+            if found is None:
+                return err(f"network {network_id} not found")
             if found.get("purpose") == "wan":
                 return err(f"network {network_id} is a WAN; use set_wan_ipv6 for WAN IPv6")
             before = _ipv6_view(found, view_keys)

@@ -21,6 +21,15 @@ Side effects:
 - Mutates controller state. Use dry_run=True to preview the before/
   after diff without applying.
 
+Prefix-delegation binding: when ``interface_type="pd"`` the controller
+REQUIRES the LAN to reference which DHCPv6 WAN's delegation to draw
+from. ``ipv6_interface_type=pd`` on its own returns HTTP 400
+``api.err.PdRequiresAssignedDhcpv6Wan``. This tool auto-binds the LAN to
+the WAN that actually has DHCPv6-PD enabled (on a single-uplink gateway
+that is the only internet uplink) by emitting ``ipv6_pd_interface`` =
+that WAN's networkgroup (e.g. ``"wan"``). No WAN with PD enabled → a
+clear error instead of a controller 400.
+
 Read first: call ``list_networks`` to find the ``network_id`` and see
 the current ``ipv6_*`` state (now surfaced inline).
 
@@ -35,11 +44,12 @@ set_lan_ipv6(network_id="65f...", interface_type="pd", ra_enabled=True, dry_run=
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `network_id` | `string` | yes | — | The ``_id`` from ``list_networks`` (a LAN/VLAN, not a WAN). |
-| `interface_type` | `string` | no | "" | ``"none"``, ``"pd"`` (use the WAN-delegated prefix), or ``"static"``. Empty leaves it unchanged. |
+| `interface_type` | `string` | no | "" | ``"none"``, ``"pd"`` (use the WAN-delegated prefix), or ``"static"``. Empty leaves it unchanged. When set to ``"pd"`` the WAN binding is added automatically. |
 | `ra_enabled` | `boolean | null` | no | null | ``True``/``False`` to toggle IPv6 Router Advertisements (SLAAC). ``None`` (default) leaves it unchanged. |
 | `address_assignment` | `string` | no | "" | ``"slaac"`` or ``"dhcpv6"``. Empty leaves it unchanged. |
 | `dns_auto` | `boolean | null` | no | null | ``True`` to advertise the gateway as DNS, ``False`` to use explicit servers from ``dns_servers``. ``None`` leaves it unchanged. |
 | `dns_servers` | `array | null` | no | null | Up to four IPv6 DNS server addresses, applied as ``dhcpdv6_dns_1..4`` when ``dns_auto=False``. ``None`` leaves them unchanged. |
+| `prefix_id` | `string` | no | "" | Optional hex sub-prefix id (e.g. ``"0"``, ``"1"``) selecting which /64 to carve from the delegated /56, so multiple PD LANs don't collide. Only sent when ``interface_type="pd"``. Empty (default) lets the controller auto-carve a sub-prefix. Note: on UniFi Network 10.4.57 the controller auto-assigns the sub-prefix and ignores this value; it is accepted for forward/ cross-firmware compatibility. |
 | `controller` | `string` | no | "default" | Name of the UniFi controller to target. Defaults to ``"default"``. |
 | `dry_run` | `boolean` | no | false | Preview the before/after diff without applying it. |
 
