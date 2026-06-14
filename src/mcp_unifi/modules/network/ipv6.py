@@ -107,6 +107,44 @@ _WAN_V6_KEYS: tuple[str, ...] = (
 _PD_SIZE_MIN = 48
 _PD_SIZE_MAX = 64
 
+#: Complete PD-scaffold field set a LAN networkconf needs to be a VALID
+#: DHCPv6-PD network on UniFi Network 10.4.57. Probed live 2026-06-14 by
+#: diffing the WORKING Default LAN (PD enabled, carries a real global /64) against
+#: a fresh ``ipv6_setting_preference=manual`` LAN (TRUSTED/IoT/GUEST) that has
+#: every ``ipv6_*``/``dhcpdv6_*`` key unset.
+#:
+#: A fresh LAN is REJECTED with HTTP 400 ``api.err.InvalidIpv6Addr`` when PD is
+#: enabled without these: the read-modify-write preserves nothing (the keys are
+#: absent), so the merged record carries ``ipv6_pd_start: null`` and the
+#: controller rejects it. Default succeeded earlier ONLY because it carried a
+#: leftover PD-window scaffold (``ipv6_pd_start=::2``/``ipv6_pd_stop=::7d1``) from
+#: a prior half-config that the strict read-modify-write preserved.
+#:
+#: These values are copied verbatim from Default's live working record:
+#:   ipv6_pd_start "::2"               first /64 host offset of the PD window
+#:   ipv6_pd_stop  "::7d1"             last  /64 host offset (2001 hosts)
+#:   dhcpdv6_start "::2"               DHCPv6 lease-pool start (mirrors PD window)
+#:   dhcpdv6_stop  "::7d1"             DHCPv6 lease-pool stop
+#:   dhcpdv6_leasetime 86400          24h DHCPv6 lease
+#:   ipv6_ra_priority "high"          Router Advertisement router preference
+#:   ipv6_ra_preferred_lifetime 14400 RA preferred lifetime (seconds)
+#:   ipv6_aliases []                  empty alias list (the UI always materialises it)
+#:
+#: Applied ONLY when enabling PD, ONLY for keys the live record lacks (so an
+#: already-configured LAN like Default is never clobbered), and NEVER over a
+#: value the caller set explicitly. This keeps strict read-modify-write intact
+#: while making a blank LAN a complete, controller-valid PD network in one call.
+_PD_SCAFFOLD_DEFAULTS: dict[str, Any] = {
+    "ipv6_pd_start": "::2",
+    "ipv6_pd_stop": "::7d1",
+    "dhcpdv6_start": "::2",
+    "dhcpdv6_stop": "::7d1",
+    "dhcpdv6_leasetime": 86400,
+    "ipv6_ra_priority": "high",
+    "ipv6_ra_preferred_lifetime": 14400,
+    "ipv6_aliases": [],
+}
+
 
 def _ipv6_view(record: UniFiRecord, keys: tuple[str, ...]) -> dict[str, Any]:
     """Project the IPv6-relevant keys out of a networkconf record."""
@@ -408,6 +446,17 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         that WAN's networkgroup (e.g. ``"wan"``). No WAN with PD enabled → a
         clear error instead of a controller 400.
 
+        Fresh-LAN PD scaffold: a brand-new LAN
+        (``ipv6_setting_preference=manual``, every ipv6 key unset) has no PD
+        window, DHCPv6 lease window, or RA lifetimes. Enabling PD on it without
+        those returns HTTP 400 ``api.err.InvalidIpv6Addr`` (the merged record
+        carries ``ipv6_pd_start: null``). When enabling PD, this tool fills the
+        COMPLETE required scaffold with the controller's standard defaults
+        (``ipv6_pd_start=::2``, ``ipv6_pd_stop=::7d1``, matching DHCPv6 lease
+        window, ``ipv6_ra_priority=high``, RA lifetimes) — but ONLY for keys the
+        live record lacks and the caller did not set explicitly, so an
+        already-configured PD LAN keeps its own window untouched.
+
         Read first: call ``list_networks`` to find the ``network_id`` and see
         the current ``ipv6_*`` state (now surfaced inline).
 
@@ -479,6 +528,15 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("set_lan_ipv6 failed", extra={"network_id": network_id})
             return err(str(exc))
 
+        found = next(
+            (n for n in networks if isinstance(n, dict) and n.get("_id") == network_id),
+            None,
+        )
+        if found is None:
+            return err(f"network {network_id} not found")
+        if found.get("purpose") == "wan":
+            return err(f"network {network_id} is a WAN; use set_wan_ipv6 for WAN IPv6")
+
         # Enabling PD on a LAN requires the WAN-uplink binding + (optionally) a
         # prefix-id, or the controller rejects the record with
         # ``api.err.PdRequiresAssignedDhcpv6Wan``. Resolve the binding from the
@@ -496,6 +554,35 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             if pid:
                 patch["ipv6_pd_prefixid"] = pid
 
+            # A fresh LAN sits at ``ipv6_setting_preference=manual`` (the UI's
+            # "Manual" IPv6 mode). In that mode the controller will NOT auto-carve
+            # a sub-prefix from the delegated /56 for this LAN, so even though the
+            # record validates and persists, the gateway never assigns the LAN a
+            # global /64. The working Default LAN runs ``auto`` (verified live
+            # 2026-06-14: Default=auto carves a /64; a manual LAN does not). When
+            # enabling PD we flip a manual/absent preference to ``auto`` so the
+            # controller manages the sub-prefix carve, matching Default. An
+            # already-``auto`` LAN is left untouched.
+            if found.get("ipv6_setting_preference") in (None, "", "manual"):
+                patch["ipv6_setting_preference"] = "auto"
+
+            # Fill the COMPLETE PD scaffold a fresh (blank) LAN lacks. A LAN with
+            # ``ipv6_setting_preference=manual`` and all ipv6 keys unset has no
+            # ``ipv6_pd_start``/``ipv6_pd_stop`` (and no DHCPv6 lease window or RA
+            # lifetimes), so the merged record carries ``ipv6_pd_start: null`` and
+            # the controller rejects it with HTTP 400 ``api.err.InvalidIpv6Addr``.
+            # We add each scaffold default ONLY when:
+            #   1. the caller did not already set that key in this patch, AND
+            #   2. the live record does not already carry a non-null value
+            #      (so an already-configured PD LAN like Default keeps its own
+            #      window via strict read-modify-write — we never clobber it).
+            for key, default in _PD_SCAFFOLD_DEFAULTS.items():
+                if key in patch:
+                    continue
+                existing = found.get(key)
+                if existing in (None, ""):
+                    patch[key] = default
+
         # Tracked keys for the before/after view: the patch keys plus the
         # stable identifiers callers expect to see move.
         view_keys = tuple(
@@ -511,14 +598,6 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             )
         )
         try:
-            found = next(
-                (n for n in networks if isinstance(n, dict) and n.get("_id") == network_id),
-                None,
-            )
-            if found is None:
-                return err(f"network {network_id} not found")
-            if found.get("purpose") == "wan":
-                return err(f"network {network_id} is a WAN; use set_wan_ipv6 for WAN IPv6")
             before = _ipv6_view(found, view_keys)
             after = {**before, **patch}
             if dry_run:

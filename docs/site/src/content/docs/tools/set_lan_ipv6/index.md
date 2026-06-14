@@ -30,6 +30,17 @@ that is the only internet uplink) by emitting ``ipv6_pd_interface`` =
 that WAN's networkgroup (e.g. ``"wan"``). No WAN with PD enabled → a
 clear error instead of a controller 400.
 
+Fresh-LAN PD scaffold: a brand-new LAN
+(``ipv6_setting_preference=manual``, every ipv6 key unset) has no PD
+window, DHCPv6 lease window, or RA lifetimes. Enabling PD on it without
+those returns HTTP 400 ``api.err.InvalidIpv6Addr`` (the merged record
+carries ``ipv6_pd_start: null``). When enabling PD, this tool fills the
+COMPLETE required scaffold with the controller's standard defaults
+(``ipv6_pd_start=::2``, ``ipv6_pd_stop=::7d1``, matching DHCPv6 lease
+window, ``ipv6_ra_priority=high``, RA lifetimes) — but ONLY for keys the
+live record lacks and the caller did not set explicitly, so an
+already-configured PD LAN keeps its own window untouched.
+
 Read first: call ``list_networks`` to find the ``network_id`` and see
 the current ``ipv6_*`` state (now surfaced inline).
 
