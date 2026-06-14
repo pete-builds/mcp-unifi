@@ -95,6 +95,16 @@ the WAN that actually has DHCPv6-PD enabled (on a single-uplink gateway
 that is the only internet uplink) by emitting <code dir="auto">ipv6_pd_interface</code> =
 that WAN’s networkgroup (e.g. <code dir="auto">"wan"</code>). No WAN with PD enabled → a
 clear error instead of a controller 400.</p>
+<p>Fresh-LAN PD scaffold: a brand-new LAN
+(<code dir="auto">ipv6_setting_preference=manual</code>, every ipv6 key unset) has no PD
+window, DHCPv6 lease window, or RA lifetimes. Enabling PD on it without
+those returns HTTP 400 <code dir="auto">api.err.InvalidIpv6Addr</code> (the merged record
+carries <code dir="auto">ipv6_pd_start: null</code>). When enabling PD, this tool fills the
+COMPLETE required scaffold with the controller’s standard defaults
+(<code dir="auto">ipv6_pd_start=::2</code>, <code dir="auto">ipv6_pd_stop=::7d1</code>, matching DHCPv6 lease
+window, <code dir="auto">ipv6_ra_priority=high</code>, RA lifetimes) — but ONLY for keys the
+live record lacks and the caller did not set explicitly, so an
+already-configured PD LAN keeps its own window untouched.</p>
 <p>Read first: call <code dir="auto">list_networks</code> to find the <code dir="auto">network_id</code> and see
 the current <code dir="auto">ipv6_*</code> state (now surfaced inline).</p>
 <div class="sl-heading-wrapper level-h2"><h2 id="example">Example</h2><a class="sl-anchor-link" href="#example"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24"><path fill="currentcolor" d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 0 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 1 0-1.42-1.42Zm8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 0 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 1 0 1.42 1.42l3.88-3.89a4.49 4.49 0 0 0 0-6.33ZM8.83 15.17a1 1 0 0 0 1.1.22 1 1 0 0 0 .32-.22l4.92-4.92a1 1 0 0 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42Z"></path></svg></span><span class="sr-only" data-pagefind-ignore="">Section titled “Example”</span></a></div>
