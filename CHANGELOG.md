@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-06-14
+
+### Fixed
+
+- **`set_wan_ipv6` enable path no longer 400s with `api.err.InvalidValue`.**
+  Enabling DHCPv6-PD on the WAN (`connection_type="dhcpv6"` +
+  `prefix_delegation="prefix-delegation"`) was rejected by the controller on
+  every apply. Two root causes, both fixed and verified live against the
+  UCG-Fiber (UniFi Network 10.4.57):
+  - **Wrong delegation enum value.** The controller stores/accepts
+    `ipv6_wan_delegation_type: "pd"`, not `"prefix-delegation"` (the literal
+    `"prefix-delegation"` is rejected with `InvalidValue`). The tool now accepts
+    the descriptive `"prefix-delegation"` alias (and the raw `"pd"`) and
+    normalises it to the `"pd"` wire value before the PUT.
+  - **Inconsistent PD-size pair.** The live WAN record carries
+    `wan_dhcpv6_pd_size_auto: false` with no `wan_dhcpv6_pd_size` key. When
+    enabling delegation the tool now always emits a self-consistent pair: an
+    explicit `pd_size` pins `wan_dhcpv6_pd_size_auto=false` + that size;
+    enabling delegation with no explicit size pins
+    `wan_dhcpv6_pd_size_auto=true` so the controller auto-sizes.
+  - The strict read-modify-write for all non-IPv6 keys, the disable path, and
+    dual-WAN targeting are unchanged. Added stub + real-mode regression tests
+    pinning the exact accepted payload.
+
 ## [0.15.0] - 2026-06-12
 
 ### Added

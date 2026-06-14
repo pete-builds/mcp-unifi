@@ -9,7 +9,9 @@ Writable keys confirmed on this firmware:
 
 WAN record (``purpose == "wan"``):
     ``wan_type_v6``               connection type: disabled/dhcpv6/pppoe/static
-    ``ipv6_wan_delegation_type``  none / prefix-delegation
+    ``ipv6_wan_delegation_type``  wire values ``none`` / ``pd`` (the tool also
+                                  accepts the ``"prefix-delegation"`` alias and
+                                  normalises it to ``"pd"``)
     ``wan_dhcpv6_pd_size_auto``   bool — auto-size the delegated prefix
     ``wan_dhcpv6_pd_size``        int  — PD size (only when PD + not auto;
                                   absent from the record until PD is enabled,
@@ -53,8 +55,21 @@ logger = logging.getLogger("mcp_unifi.network.ipv6")
 
 #: Accepted WAN IPv6 connection types (``wan_type_v6``).
 _WAN_V6_TYPES: frozenset[str] = frozenset({"disabled", "dhcpv6", "pppoe", "static"})
-#: Accepted WAN prefix-delegation modes (``ipv6_wan_delegation_type``).
-_WAN_DELEGATION_TYPES: frozenset[str] = frozenset({"none", "prefix-delegation"})
+#: WAN prefix-delegation modes the caller may pass, mapped to the **wire value**
+#: the controller actually accepts. UniFi Network 10.4.57 stores the
+#: prefix-delegation mode as ``ipv6_wan_delegation_type: "pd"`` (NOT
+#: ``"prefix-delegation"`` — that literal is rejected with
+#: ``api.err.InvalidValue``). We accept the descriptive ``"prefix-delegation"``
+#: alias for ergonomics and normalise it to ``"pd"`` before the PUT. Probed live
+#: 2026-06-14: ``ipv6_wan_delegation_type: "pd"`` → HTTP 200;
+#: ``"prefix-delegation"`` → HTTP 400 InvalidValue.
+_WAN_DELEGATION_ALIASES: dict[str, str] = {
+    "none": "none",
+    "pd": "pd",
+    "prefix-delegation": "pd",
+}
+#: The wire values the controller stores/accepts for ``ipv6_wan_delegation_type``.
+_WAN_DELEGATION_WIRE: frozenset[str] = frozenset({"none", "pd"})
 #: Accepted LAN interface types (``ipv6_interface_type``).
 _LAN_V6_INTERFACE_TYPES: frozenset[str] = frozenset({"none", "pd", "static"})
 #: Accepted LAN client address-assignment modes.
@@ -132,8 +147,8 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
 
         Returns one record per WAN interface with ``name``, ``_id``, and the
         IPv6 keys: ``wan_type_v6`` (connection type: ``disabled``/``dhcpv6``/
-        ``pppoe``/``static``), ``ipv6_wan_delegation_type`` (``none`` or
-        ``prefix-delegation``), ``wan_dhcpv6_pd_size_auto``,
+        ``pppoe``/``static``), ``ipv6_wan_delegation_type`` (``none`` or ``pd``),
+        ``wan_dhcpv6_pd_size_auto``,
         ``wan_dhcpv6_pd_size`` (present only when PD is configured),
         ``wan_ipv6_dns_preference``, and ``ipv6_setting_preference``.
 
@@ -201,12 +216,19 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             connection_type: ``"disabled"``, ``"dhcpv6"``, ``"pppoe"``, or
                 ``"static"``. Empty leaves it unchanged. Most ISPs that hand
                 out IPv6 (incl. Empire Access) use ``"dhcpv6"``.
-            prefix_delegation: ``"none"`` or ``"prefix-delegation"``. Empty
-                leaves it unchanged. ``"prefix-delegation"`` is required for
-                your LANs to receive IPv6 subnets.
-            pd_size: DHCPv6-PD prefix size (48-64), e.g. ``56``. Only sent when
-                non-zero; sending it also pins ``wan_dhcpv6_pd_size_auto`` to
-                ``false``. Leave 0 to keep the controller's auto sizing.
+            prefix_delegation: ``"none"`` or ``"prefix-delegation"`` (alias for
+                the controller's wire value ``"pd"``; ``"pd"`` is also accepted).
+                Empty leaves it unchanged. Prefix delegation is required for your
+                LANs to receive IPv6 subnets.
+            pd_size: DHCPv6-PD prefix size (48-64), e.g. ``56``. When enabling
+                delegation, the controller requires a consistent
+                ``wan_dhcpv6_pd_size_auto`` / ``wan_dhcpv6_pd_size`` pair: a
+                non-zero ``pd_size`` pins ``wan_dhcpv6_pd_size_auto=false`` and
+                sends that size; ``pd_size=0`` while enabling delegation pins
+                ``wan_dhcpv6_pd_size_auto=true`` (controller auto-sizes). Leaving
+                an inconsistent pair on the record is what triggers
+                ``api.err.InvalidValue``, so the tool always emits a consistent
+                pair when delegation is turned on.
             dns_preference: ``"auto"`` or ``"manual"`` for IPv6 DNS. Empty
                 leaves it unchanged.
             wan_name: Display name of the WAN to target (e.g. ``"Internet 1"``).
@@ -222,11 +244,13 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 f"invalid connection_type {connection_type!r}: "
                 "use disabled, dhcpv6, pppoe, or static"
             )
-        pd = prefix_delegation.strip().lower()
-        if pd and pd not in _WAN_DELEGATION_TYPES:
+        pd_input = prefix_delegation.strip().lower()
+        if pd_input and pd_input not in _WAN_DELEGATION_ALIASES:
             return err(
                 f"invalid prefix_delegation {prefix_delegation!r}: use none or prefix-delegation"
             )
+        # Normalise the caller-facing alias to the controller's wire value.
+        pd = _WAN_DELEGATION_ALIASES.get(pd_input, "") if pd_input else ""
         dns = dns_preference.strip().lower()
         if dns and dns not in _PREFERENCE:
             return err(f"invalid dns_preference {dns_preference!r}: use auto or manual")
@@ -238,9 +262,18 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             patch["wan_type_v6"] = ct
         if pd:
             patch["ipv6_wan_delegation_type"] = pd
+        # The live WAN record can carry an inconsistent ``wan_dhcpv6_pd_size_auto:
+        # false`` with no ``wan_dhcpv6_pd_size`` key. When we turn delegation ON
+        # (``pd == "pd"``) we must emit a self-consistent auto/size pair or the
+        # controller rejects the merged record with ``api.err.InvalidValue``.
+        # An explicit ``pd_size`` always pins ``pd_size_auto=false`` + that size;
+        # otherwise (enabling delegation with no explicit size) pin
+        # ``pd_size_auto=true`` so the controller auto-sizes.
         if pd_size:
             patch["wan_dhcpv6_pd_size"] = pd_size
             patch["wan_dhcpv6_pd_size_auto"] = False
+        elif pd == "pd":
+            patch["wan_dhcpv6_pd_size_auto"] = True
         if dns:
             patch["wan_ipv6_dns_preference"] = dns
         if not patch:
