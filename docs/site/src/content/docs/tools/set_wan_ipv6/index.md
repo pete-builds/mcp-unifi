@@ -39,8 +39,8 @@ set_wan_ipv6(connection_type="dhcpv6", prefix_delegation="prefix-delegation", dr
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `connection_type` | `string` | no | "" | ``"disabled"``, ``"dhcpv6"``, ``"pppoe"``, or ``"static"``. Empty leaves it unchanged. Most ISPs that hand out IPv6 (incl. Empire Access) use ``"dhcpv6"``. |
-| `prefix_delegation` | `string` | no | "" | ``"none"`` or ``"prefix-delegation"``. Empty leaves it unchanged. ``"prefix-delegation"`` is required for your LANs to receive IPv6 subnets. |
-| `pd_size` | `integer` | no | 0 | DHCPv6-PD prefix size (48-64), e.g. ``56``. Only sent when non-zero; sending it also pins ``wan_dhcpv6_pd_size_auto`` to ``false``. Leave 0 to keep the controller's auto sizing. |
+| `prefix_delegation` | `string` | no | "" | ``"none"`` or ``"prefix-delegation"`` (alias for the controller's wire value ``"pd"``; ``"pd"`` is also accepted). Empty leaves it unchanged. Prefix delegation is required for your LANs to receive IPv6 subnets. |
+| `pd_size` | `integer` | no | 0 | DHCPv6-PD prefix size (48-64), e.g. ``56``. When enabling delegation, the controller requires a consistent ``wan_dhcpv6_pd_size_auto`` / ``wan_dhcpv6_pd_size`` pair: a non-zero ``pd_size`` pins ``wan_dhcpv6_pd_size_auto=false`` and sends that size; ``pd_size=0`` while enabling delegation pins ``wan_dhcpv6_pd_size_auto=true`` (controller auto-sizes). Leaving an inconsistent pair on the record is what triggers ``api.err.InvalidValue``, so the tool always emits a consistent pair when delegation is turned on. |
 | `dns_preference` | `string` | no | "" | ``"auto"`` or ``"manual"`` for IPv6 DNS. Empty leaves it unchanged. |
 | `wan_name` | `string` | no | "" | Display name of the WAN to target (e.g. ``"Internet 1"``). Required only on multi-WAN gateways; single-WAN gateways match automatically. |
 | `controller` | `string` | no | "default" | Name of the UniFi controller to target. Defaults to ``"default"``. |

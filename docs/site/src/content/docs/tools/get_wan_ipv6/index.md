@@ -13,8 +13,8 @@ see exactly what you are about to change.
 
 Returns one record per WAN interface with ``name``, ``_id``, and the
 IPv6 keys: ``wan_type_v6`` (connection type: ``disabled``/``dhcpv6``/
-``pppoe``/``static``), ``ipv6_wan_delegation_type`` (``none`` or
-``prefix-delegation``), ``wan_dhcpv6_pd_size_auto``,
+``pppoe``/``static``), ``ipv6_wan_delegation_type`` (``none`` or ``pd``),
+``wan_dhcpv6_pd_size_auto``,
 ``wan_dhcpv6_pd_size`` (present only when PD is configured),
 ``wan_ipv6_dns_preference``, and ``ipv6_setting_preference``.
 

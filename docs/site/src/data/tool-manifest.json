@@ -1709,7 +1709,7 @@
       "name": "get_visitor"
     },
     {
-      "description": "Show the current IPv6 configuration of the WAN uplink(s).\n\nSide effects: None (read-only). Call this before ``set_wan_ipv6`` to\nsee exactly what you are about to change.\n\nReturns one record per WAN interface with ``name``, ``_id``, and the\nIPv6 keys: ``wan_type_v6`` (connection type: ``disabled``/``dhcpv6``/\n``pppoe``/``static``), ``ipv6_wan_delegation_type`` (``none`` or\n``prefix-delegation``), ``wan_dhcpv6_pd_size_auto``,\n``wan_dhcpv6_pd_size`` (present only when PD is configured),\n``wan_ipv6_dns_preference``, and ``ipv6_setting_preference``.\n\nExample: get_wan_ipv6(controller=\"default\")",
+      "description": "Show the current IPv6 configuration of the WAN uplink(s).\n\nSide effects: None (read-only). Call this before ``set_wan_ipv6`` to\nsee exactly what you are about to change.\n\nReturns one record per WAN interface with ``name``, ``_id``, and the\nIPv6 keys: ``wan_type_v6`` (connection type: ``disabled``/``dhcpv6``/\n``pppoe``/``static``), ``ipv6_wan_delegation_type`` (``none`` or ``pd``),\n``wan_dhcpv6_pd_size_auto``,\n``wan_dhcpv6_pd_size`` (present only when PD is configured),\n``wan_ipv6_dns_preference``, and ``ipv6_setting_preference``.\n\nExample: get_wan_ipv6(controller=\"default\")",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -3079,12 +3079,12 @@
           },
           "pd_size": {
             "default": 0,
-            "description": "DHCPv6-PD prefix size (48-64), e.g. ``56``. Only sent when\nnon-zero; sending it also pins ``wan_dhcpv6_pd_size_auto`` to\n``false``. Leave 0 to keep the controller's auto sizing.",
+            "description": "DHCPv6-PD prefix size (48-64), e.g. ``56``. When enabling\ndelegation, the controller requires a consistent\n``wan_dhcpv6_pd_size_auto`` / ``wan_dhcpv6_pd_size`` pair: a\nnon-zero ``pd_size`` pins ``wan_dhcpv6_pd_size_auto=false`` and\nsends that size; ``pd_size=0`` while enabling delegation pins\n``wan_dhcpv6_pd_size_auto=true`` (controller auto-sizes). Leaving\nan inconsistent pair on the record is what triggers\n``api.err.InvalidValue``, so the tool always emits a consistent\npair when delegation is turned on.",
             "type": "integer"
           },
           "prefix_delegation": {
             "default": "",
-            "description": "``\"none\"`` or ``\"prefix-delegation\"``. Empty\nleaves it unchanged. ``\"prefix-delegation\"`` is required for\nyour LANs to receive IPv6 subnets.",
+            "description": "``\"none\"`` or ``\"prefix-delegation\"`` (alias for\nthe controller's wire value ``\"pd\"``; ``\"pd\"`` is also accepted).\nEmpty leaves it unchanged. Prefix delegation is required for your\nLANs to receive IPv6 subnets.",
             "type": "string"
           },
           "wan_name": {

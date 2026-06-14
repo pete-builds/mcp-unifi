@@ -76,7 +76,8 @@ async def test_set_wan_ipv6_dry_run_diff(stub_server: FastMCP, stub_state: StubS
     assert upd["action"] == "set_wan_ipv6"
     assert upd["before"]["wan_type_v6"] == "disabled"
     assert upd["after"]["wan_type_v6"] == "dhcpv6"
-    assert upd["after"]["ipv6_wan_delegation_type"] == "prefix-delegation"
+    # The "prefix-delegation" alias normalises to the controller's wire value "pd".
+    assert upd["after"]["ipv6_wan_delegation_type"] == "pd"
     assert upd["after"]["wan_dhcpv6_pd_size"] == 56
     assert upd["after"]["wan_dhcpv6_pd_size_auto"] is False
     assert "blast_radius" in result
@@ -111,6 +112,141 @@ async def test_set_wan_ipv6_rejects_bad_type(stub_server: FastMCP) -> None:
 async def test_set_wan_ipv6_rejects_bad_pd_size(stub_server: FastMCP) -> None:
     result = await _call(stub_server, "set_wan_ipv6", {"pd_size": 32})
     assert "error" in result
+
+
+async def test_set_wan_ipv6_alias_normalises_to_pd(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """The friendly ``"prefix-delegation"`` alias must hit the wire value ``"pd"``.
+
+    Regression: UniFi Network 10.4.57 rejects ``ipv6_wan_delegation_type:
+    "prefix-delegation"`` with ``api.err.InvalidValue``; the only accepted value
+    is ``"pd"``.
+    """
+    result = await _call(
+        stub_server,
+        "set_wan_ipv6",
+        {"connection_type": "dhcpv6", "prefix_delegation": "prefix-delegation"},
+    )
+    assert result["updated"] is True
+    wan = next(n for n in stub_state.networks if n.get("purpose") == "wan")
+    assert wan["ipv6_wan_delegation_type"] == "pd"
+
+
+async def test_set_wan_ipv6_accepts_pd_wire_value(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """Passing the raw wire value ``"pd"`` works too."""
+    result = await _call(
+        stub_server,
+        "set_wan_ipv6",
+        {"connection_type": "dhcpv6", "prefix_delegation": "pd"},
+    )
+    assert result["updated"] is True
+    wan = next(n for n in stub_state.networks if n.get("purpose") == "wan")
+    assert wan["ipv6_wan_delegation_type"] == "pd"
+
+
+async def test_set_wan_ipv6_enable_pd_without_size_pins_auto_true(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """Enabling delegation with no explicit ``pd_size`` must emit a consistent
+    auto/size pair: ``wan_dhcpv6_pd_size_auto=True`` (controller auto-sizes).
+
+    Regression for the ``api.err.InvalidValue`` 400: the live WAN record carries
+    ``wan_dhcpv6_pd_size_auto: false`` with NO ``wan_dhcpv6_pd_size`` key. Turning
+    delegation on without normalising that pair produces an internally
+    inconsistent record the controller rejects.
+    """
+    result = await _call(
+        stub_server,
+        "set_wan_ipv6",
+        {"connection_type": "dhcpv6", "prefix_delegation": "prefix-delegation"},
+    )
+    assert result["updated"] is True
+    wan = next(n for n in stub_state.networks if n.get("purpose") == "wan")
+    assert wan["wan_dhcpv6_pd_size_auto"] is True
+    # No explicit size is sent when auto-sizing.
+    assert "wan_dhcpv6_pd_size" not in wan
+
+
+async def test_set_wan_ipv6_enable_pd_with_size_pins_auto_false(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """An explicit ``pd_size`` pins ``wan_dhcpv6_pd_size_auto=False`` + that size,
+    a self-consistent pair the controller accepts."""
+    result = await _call(
+        stub_server,
+        "set_wan_ipv6",
+        {"connection_type": "dhcpv6", "prefix_delegation": "prefix-delegation", "pd_size": 56},
+    )
+    assert result["updated"] is True
+    wan = next(n for n in stub_state.networks if n.get("purpose") == "wan")
+    assert wan["wan_dhcpv6_pd_size_auto"] is False
+    assert wan["wan_dhcpv6_pd_size"] == 56
+
+
+@respx.mock
+async def test_real_set_wan_ipv6_enable_pd_puts_consistent_payload(
+    real_server: FastMCP,
+) -> None:
+    """The live PUT body the controller accepts: delegation wire value ``"pd"``
+    plus a consistent ``wan_dhcpv6_pd_size_auto``/``wan_dhcpv6_pd_size`` pair.
+
+    This pins the exact payload shape that fixed the ``api.err.InvalidValue``
+    400. The starting record reproduces the live inconsistency
+    (``wan_dhcpv6_pd_size_auto: False`` with no size key).
+    """
+    import json as _json
+
+    respx.get(f"{BASE}/rest/networkconf").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "_id": "wan1",
+                        "name": "Internet 1",
+                        "purpose": "wan",
+                        "wan_type_v6": "disabled",
+                        "ipv6_wan_delegation_type": "none",
+                        "wan_dhcpv6_pd_size_auto": False,
+                    }
+                ]
+            },
+        )
+    )
+    put_route = respx.put(f"{BASE}/rest/networkconf/wan1").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "_id": "wan1",
+                        "wan_type_v6": "dhcpv6",
+                        "ipv6_wan_delegation_type": "pd",
+                        "wan_dhcpv6_pd_size_auto": False,
+                        "wan_dhcpv6_pd_size": 56,
+                    }
+                ]
+            },
+        )
+    )
+    result = await _call(
+        real_server,
+        "set_wan_ipv6",
+        {"connection_type": "dhcpv6", "prefix_delegation": "prefix-delegation", "pd_size": 56},
+    )
+    assert result["updated"] is True
+    assert put_route.called
+    body = _json.loads(put_route.calls[0].request.content)
+    # Exact payload the live controller accepts (probed 2026-06-14):
+    assert body == {
+        "wan_type_v6": "dhcpv6",
+        "ipv6_wan_delegation_type": "pd",
+        "wan_dhcpv6_pd_size": 56,
+        "wan_dhcpv6_pd_size_auto": False,
+    }
 
 
 # ---------------------------------------------------------------------------
