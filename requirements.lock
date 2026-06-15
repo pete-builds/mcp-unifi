@@ -236,13 +236,13 @@ exceptiongroup==1.3.1 \
     --hash=sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219 \
     --hash=sha256:a7a39a3bd276781e98394987d3a5701d0c4edffb633bb7a5144577f82c773598
     # via fastmcp-slim
-fastmcp==3.4.0 \
-    --hash=sha256:29055fb6816f4862c615aabaf0112ae8feb8b469740db13403a0ce5b799ec1dc \
-    --hash=sha256:34523083d6149400a0655a8aa769eb34f85b1ce6dac6d66efb07503ebbe5f44b
+fastmcp==3.4.2 \
+    --hash=sha256:b468722946fc467c3796a6572f7a14d93d48c014cf8fea12910245220cbbe4e1 \
+    --hash=sha256:c87a62b029f0c5400ada85f683629345d2466c39169f0cb853e487b2f7308c08
     # via -r requirements.in
-fastmcp-slim==3.4.0 \
-    --hash=sha256:17cd0a1535972d3748d8c2416f0826dfc86c18df7a6cbc38602373277d44baa6 \
-    --hash=sha256:faa0ccf16e85ec4b9f79c006fed3546b866d7e6dba3f60cd32cd98e84753a496
+fastmcp-slim==3.4.2 \
+    --hash=sha256:290646e0955a516235a317151034559aa48336cb843d3f006131aedad8759bb4 \
+    --hash=sha256:bdc72492212681ca502755fa8acc0457f559295da1fc3dfc0599adc1c04b82f3
     # via fastmcp
 griffelib==2.0.2 \
     --hash=sha256:3cf20b3bc470e83763ffbf236e0076b1211bac1bc67de13daf494640f2de707e \
@@ -755,10 +755,11 @@ sse-starlette==3.4.1 \
     --hash=sha256:6b43cf21f1d574d582a6e1b0cfbde1c94dc86a32a701a7168c99c4475c6bd1d0 \
     --hash=sha256:f780bebcf6c8997fe514e3bd8e8c648d8284976b391c8bed0bcb1f611632b555
     # via mcp
-starlette==1.0.0 \
-    --hash=sha256:6a4beaf1f81bb472fd19ea9b918b50dc3a77a6f2e190a12954b25e6ed5eea149 \
-    --hash=sha256:d3ec55e0bb321692d275455ddfd3df75fff145d009685eb40dc91fc66b03d38b
+starlette==1.3.1 \
+    --hash=sha256:05d0213193f2fbaae60e2ecb593b4add4262ad4e46536b54abe36f11a71724e0 \
+    --hash=sha256:c7372aae11c3c3f26a42df7bd626cec2f47d03483d261d369516a615a53714c6
     # via
+    #   fastmcp-slim
     #   mcp
     #   sse-starlette
 typing-extensions==4.15.0 \
