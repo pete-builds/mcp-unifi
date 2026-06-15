@@ -18,6 +18,13 @@ from mcp_unifi.clients.access import AccessClient
 from mcp_unifi.clients.access_stubs import AccessStubState
 from mcp_unifi.clients.protect import ProtectClient
 from mcp_unifi.clients.protect_stubs import ProtectStubState
+from mcp_unifi.clients.stats_shape import (
+    shape_client_stats,
+    shape_device_stats,
+    shape_gateway_stats,
+    shape_session,
+    shape_system_info,
+)
 from mcp_unifi.clients.stubs import StubState
 from mcp_unifi.clients.unifi import UniFiClient, UniFiError
 from mcp_unifi.models import UniFiRecord
@@ -34,6 +41,8 @@ class Backend(Protocol):
 
     # ----- Devices --------------------------------------------------------
     async def list_devices(self) -> list[UniFiRecord]: ...
+    async def get_device_by_mac(self, mac: str) -> UniFiRecord | None: ...
+    async def update_device(self, device_id: str, patch: dict[str, Any]) -> UniFiRecord | None: ...
     async def restart_device(self, mac: str) -> bool: ...
     async def locate_device(self, mac: str, on: bool) -> bool: ...
     async def set_port_state(
@@ -67,6 +76,48 @@ class Backend(Protocol):
         self, rule_id: str, patch: dict[str, Any]
     ) -> UniFiRecord | None: ...
     async def delete_firewall_rule(self, rule_id: str) -> bool: ...
+
+    # ----- Firewall groups ------------------------------------------------
+    async def list_firewall_groups(self) -> list[UniFiRecord]: ...
+    async def create_firewall_group(self, payload: dict[str, Any]) -> UniFiRecord: ...
+    async def update_firewall_group(
+        self, group_id: str, payload: dict[str, Any]
+    ) -> UniFiRecord | None: ...
+    async def delete_firewall_group(self, group_id: str) -> bool: ...
+
+    # ----- Static routes --------------------------------------------------
+    async def list_routes(self) -> list[UniFiRecord]: ...
+    async def create_route(self, payload: dict[str, Any]) -> UniFiRecord: ...
+    async def update_route(self, route_id: str, patch: dict[str, Any]) -> UniFiRecord | None: ...
+    async def delete_route(self, route_id: str) -> bool: ...
+
+    # ----- Traffic rules (v2) ---------------------------------------------
+    async def list_traffic_rules(self) -> list[UniFiRecord]: ...
+    async def create_traffic_rule(self, payload: dict[str, Any]) -> UniFiRecord: ...
+    async def update_traffic_rule(
+        self, rule_id: str, patch: dict[str, Any]
+    ) -> UniFiRecord | None: ...
+
+    # ----- Traffic routes (v2) --------------------------------------------
+    async def list_traffic_routes(self) -> list[UniFiRecord]: ...
+    async def update_traffic_route(
+        self, route_id: str, patch: dict[str, Any]
+    ) -> UniFiRecord | None: ...
+
+    # ----- Content filtering (v2 DNS) -------------------------------------
+    async def list_content_filters(self) -> list[UniFiRecord]: ...
+    async def update_content_filter(
+        self, filter_id: str, patch: dict[str, Any]
+    ) -> UniFiRecord | None: ...
+    async def delete_content_filter(self, filter_id: str) -> bool: ...
+
+    # ----- Dynamic DNS ----------------------------------------------------
+    async def list_dynamic_dns(self) -> list[UniFiRecord]: ...
+    async def create_dynamic_dns(self, payload: dict[str, Any]) -> UniFiRecord: ...
+    async def update_dynamic_dns(
+        self, ddns_id: str, patch: dict[str, Any]
+    ) -> UniFiRecord | None: ...
+    async def delete_dynamic_dns(self, ddns_id: str) -> bool: ...
 
     # ----- Port profiles --------------------------------------------------
     async def list_port_profiles(self) -> list[UniFiRecord]: ...
@@ -109,6 +160,16 @@ class Backend(Protocol):
     async def trigger_speedtest(self) -> UniFiRecord: ...
     async def get_speedtest_results(self, limit: int) -> list[UniFiRecord]: ...
 
+    # ----- Stats & insights (read-only — Wave C) --------------------------
+    async def get_system_info(self) -> UniFiRecord: ...
+    async def get_gateway_stats(self) -> UniFiRecord: ...
+    async def get_device_stats(self, mac: str) -> UniFiRecord | None: ...
+    async def get_client_stats(self, mac: str) -> UniFiRecord | None: ...
+    async def get_client_sessions(
+        self, mac: str, start: int, end: int, limit: int
+    ) -> list[UniFiRecord]: ...
+    async def get_anomalies(self) -> list[UniFiRecord]: ...
+
     # ----- Site settings (Threat Mgmt, Honeypot, Teleport) ---------------
     async def get_setting(self, key: str) -> UniFiRecord: ...
     async def set_setting(self, key: str, patch: dict[str, Any]) -> UniFiRecord: ...
@@ -128,6 +189,12 @@ class StubBackend:
     # ----- Devices --------------------------------------------------------
     async def list_devices(self) -> list[UniFiRecord]:
         return self.state.list_devices()
+
+    async def get_device_by_mac(self, mac: str) -> UniFiRecord | None:
+        return self.state.find_device_by_mac(mac)
+
+    async def update_device(self, device_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        return self.state.update_device(device_id, patch)
 
     async def restart_device(self, mac: str) -> bool:
         return self.state.restart_device(mac)
@@ -190,6 +257,78 @@ class StubBackend:
 
     async def delete_firewall_rule(self, rule_id: str) -> bool:
         return self.state.delete_firewall_rule(rule_id)
+
+    # ----- Firewall groups ------------------------------------------------
+    async def list_firewall_groups(self) -> list[UniFiRecord]:
+        return self.state.list_firewall_groups()
+
+    async def create_firewall_group(self, payload: dict[str, Any]) -> UniFiRecord:
+        return self.state.create_firewall_group(payload)
+
+    async def update_firewall_group(
+        self, group_id: str, payload: dict[str, Any]
+    ) -> UniFiRecord | None:
+        return self.state.update_firewall_group(group_id, payload)
+
+    async def delete_firewall_group(self, group_id: str) -> bool:
+        return self.state.delete_firewall_group(group_id)
+
+    # ----- Static routes --------------------------------------------------
+    async def list_routes(self) -> list[UniFiRecord]:
+        return self.state.list_routes()
+
+    async def create_route(self, payload: dict[str, Any]) -> UniFiRecord:
+        return self.state.create_route(payload)
+
+    async def update_route(self, route_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        return self.state.update_route(route_id, patch)
+
+    async def delete_route(self, route_id: str) -> bool:
+        return self.state.delete_route(route_id)
+
+    # ----- Traffic rules (v2) ---------------------------------------------
+    async def list_traffic_rules(self) -> list[UniFiRecord]:
+        return self.state.list_traffic_rules()
+
+    async def create_traffic_rule(self, payload: dict[str, Any]) -> UniFiRecord:
+        return self.state.create_traffic_rule(payload)
+
+    async def update_traffic_rule(self, rule_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        return self.state.update_traffic_rule(rule_id, patch)
+
+    # ----- Traffic routes (v2) --------------------------------------------
+    async def list_traffic_routes(self) -> list[UniFiRecord]:
+        return self.state.list_traffic_routes()
+
+    async def update_traffic_route(
+        self, route_id: str, patch: dict[str, Any]
+    ) -> UniFiRecord | None:
+        return self.state.update_traffic_route(route_id, patch)
+
+    # ----- Content filtering (v2 DNS) -------------------------------------
+    async def list_content_filters(self) -> list[UniFiRecord]:
+        return self.state.list_content_filters()
+
+    async def update_content_filter(
+        self, filter_id: str, patch: dict[str, Any]
+    ) -> UniFiRecord | None:
+        return self.state.update_content_filter(filter_id, patch)
+
+    async def delete_content_filter(self, filter_id: str) -> bool:
+        return self.state.delete_content_filter(filter_id)
+
+    # ----- Dynamic DNS ----------------------------------------------------
+    async def list_dynamic_dns(self) -> list[UniFiRecord]:
+        return self.state.list_dynamic_dns()
+
+    async def create_dynamic_dns(self, payload: dict[str, Any]) -> UniFiRecord:
+        return self.state.create_dynamic_dns(payload)
+
+    async def update_dynamic_dns(self, ddns_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        return self.state.update_dynamic_dns(ddns_id, patch)
+
+    async def delete_dynamic_dns(self, ddns_id: str) -> bool:
+        return self.state.delete_dynamic_dns(ddns_id)
 
     # ----- Port profiles --------------------------------------------------
     async def list_port_profiles(self) -> list[UniFiRecord]:
@@ -276,6 +415,41 @@ class StubBackend:
     async def get_speedtest_results(self, limit: int) -> list[UniFiRecord]:
         return self.state.get_speedtest_results(limit)
 
+    # ----- Stats & insights (read-only — Wave C) --------------------------
+    async def get_system_info(self) -> UniFiRecord:
+        return shape_system_info(self.state.get_system_info())
+
+    async def get_gateway_stats(self) -> UniFiRecord:
+        gateway = self.state.get_gateway_record()
+        if gateway is None:
+            return {}
+        return shape_gateway_stats(gateway)
+
+    async def get_device_stats(self, mac: str) -> UniFiRecord | None:
+        target = mac.lower()
+        record = next(
+            (d for d in self.state.list_devices() if str(d.get("mac", "")).lower() == target),
+            None,
+        )
+        if record is None:
+            return None
+        return shape_device_stats(record)
+
+    async def get_client_stats(self, mac: str) -> UniFiRecord | None:
+        record = self.state.find_client_by_mac(mac)
+        if record is None:
+            return None
+        return shape_client_stats(record)
+
+    async def get_client_sessions(
+        self, mac: str, start: int, end: int, limit: int
+    ) -> list[UniFiRecord]:
+        records = self.state.get_client_sessions(mac, start, end, limit)
+        return [shape_session(r) for r in records]
+
+    async def get_anomalies(self) -> list[UniFiRecord]:
+        return self.state.get_anomalies()
+
     # ----- Site settings --------------------------------------------------
     async def get_setting(self, key: str) -> UniFiRecord:
         return self.state.get_setting(key)
@@ -299,6 +473,14 @@ class RealBackend:
     # ----- Devices --------------------------------------------------------
     async def list_devices(self) -> list[UniFiRecord]:
         return await self.client.list_devices()
+
+    async def get_device_by_mac(self, mac: str) -> UniFiRecord | None:
+        devices = await self.client.list_devices()
+        return next((d for d in devices if d.get("mac") == mac), None)
+
+    async def update_device(self, device_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        record = await self.client.update_device(device_id, patch)
+        return record or None
 
     async def restart_device(self, mac: str) -> bool:
         await self.client.restart_device(mac)
@@ -374,6 +556,78 @@ class RealBackend:
 
     async def delete_firewall_rule(self, rule_id: str) -> bool:
         return await self.client.delete_firewall_rule(rule_id)
+
+    # ----- Firewall groups ------------------------------------------------
+    async def list_firewall_groups(self) -> list[UniFiRecord]:
+        return await self.client.list_firewall_groups()
+
+    async def create_firewall_group(self, payload: dict[str, Any]) -> UniFiRecord:
+        return await self.client.create_firewall_group(payload)
+
+    async def update_firewall_group(
+        self, group_id: str, payload: dict[str, Any]
+    ) -> UniFiRecord | None:
+        return await self.client.update_firewall_group(group_id, payload)
+
+    async def delete_firewall_group(self, group_id: str) -> bool:
+        return await self.client.delete_firewall_group(group_id)
+
+    # ----- Static routes --------------------------------------------------
+    async def list_routes(self) -> list[UniFiRecord]:
+        return await self.client.list_routes()
+
+    async def create_route(self, payload: dict[str, Any]) -> UniFiRecord:
+        return await self.client.create_route(payload)
+
+    async def update_route(self, route_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        return await self.client.update_route(route_id, patch)
+
+    async def delete_route(self, route_id: str) -> bool:
+        return await self.client.delete_route(route_id)
+
+    # ----- Traffic rules (v2) ---------------------------------------------
+    async def list_traffic_rules(self) -> list[UniFiRecord]:
+        return await self.client.list_traffic_rules()
+
+    async def create_traffic_rule(self, payload: dict[str, Any]) -> UniFiRecord:
+        return await self.client.create_traffic_rule(payload)
+
+    async def update_traffic_rule(self, rule_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        return await self.client.update_traffic_rule(rule_id, patch)
+
+    # ----- Traffic routes (v2) --------------------------------------------
+    async def list_traffic_routes(self) -> list[UniFiRecord]:
+        return await self.client.list_traffic_routes()
+
+    async def update_traffic_route(
+        self, route_id: str, patch: dict[str, Any]
+    ) -> UniFiRecord | None:
+        return await self.client.update_traffic_route(route_id, patch)
+
+    # ----- Content filtering (v2 DNS) -------------------------------------
+    async def list_content_filters(self) -> list[UniFiRecord]:
+        return await self.client.list_content_filters()
+
+    async def update_content_filter(
+        self, filter_id: str, patch: dict[str, Any]
+    ) -> UniFiRecord | None:
+        return await self.client.update_content_filter(filter_id, patch)
+
+    async def delete_content_filter(self, filter_id: str) -> bool:
+        return await self.client.delete_content_filter(filter_id)
+
+    # ----- Dynamic DNS ----------------------------------------------------
+    async def list_dynamic_dns(self) -> list[UniFiRecord]:
+        return await self.client.list_dynamic_dns()
+
+    async def create_dynamic_dns(self, payload: dict[str, Any]) -> UniFiRecord:
+        return await self.client.create_dynamic_dns(payload)
+
+    async def update_dynamic_dns(self, ddns_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        return await self.client.update_dynamic_dns(ddns_id, patch)
+
+    async def delete_dynamic_dns(self, ddns_id: str) -> bool:
+        return await self.client.delete_dynamic_dns(ddns_id)
 
     # ----- Port profiles --------------------------------------------------
     async def list_port_profiles(self) -> list[UniFiRecord]:
@@ -464,6 +718,46 @@ class RealBackend:
 
     async def get_speedtest_results(self, limit: int) -> list[UniFiRecord]:
         return await self.client.get_speedtest_results(limit)
+
+    # ----- Stats & insights (read-only — Wave C) --------------------------
+    async def get_system_info(self) -> UniFiRecord:
+        return shape_system_info(await self.client.get_system_info())
+
+    async def get_gateway_stats(self) -> UniFiRecord:
+        devices = await self.client.list_devices()
+        gateway = next(
+            (d for d in devices if isinstance(d, dict) and d.get("type") in ("ugw", "udm")),
+            None,
+        )
+        if gateway is None:
+            return {}
+        return shape_gateway_stats(gateway)
+
+    async def get_device_stats(self, mac: str) -> UniFiRecord | None:
+        devices = await self.client.list_devices()
+        target = mac.lower()
+        record = next(
+            (d for d in devices if isinstance(d, dict) and str(d.get("mac", "")).lower() == target),
+            None,
+        )
+        if record is None:
+            return None
+        return shape_device_stats(record)
+
+    async def get_client_stats(self, mac: str) -> UniFiRecord | None:
+        record = await self.client.get_client_by_mac(mac)
+        if record is None:
+            return None
+        return shape_client_stats(record)
+
+    async def get_client_sessions(
+        self, mac: str, start: int, end: int, limit: int
+    ) -> list[UniFiRecord]:
+        records = await self.client.get_client_sessions(mac, start, end, limit)
+        return [shape_session(r) for r in records]
+
+    async def get_anomalies(self) -> list[UniFiRecord]:
+        return await self.client.get_anomalies()
 
     # ----- Site settings --------------------------------------------------
     async def get_setting(self, key: str) -> UniFiRecord:

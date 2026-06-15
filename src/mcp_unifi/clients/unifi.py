@@ -107,8 +107,81 @@ class UniFiClient:
         # Defensive — the loop above should always return or raise.
         raise UniFiError(f"UniFi request exhausted retries: {last_exc}")  # pragma: no cover
 
+    async def _v2_request(
+        self,
+        method: str,
+        path: str,
+        json: dict[str, Any] | None = None,
+    ) -> Any:
+        """Issue a request against the v2 controller API and normalise the body.
+
+        The v2 surface (``/proxy/network/v2/api/site/<site>/...``) sits at a
+        different prefix than the legacy ``/api/s/<site>/...`` paths and returns
+        a **bare** JSON array or object rather than the legacy
+        ``{"meta", "data"}`` envelope. Verified read-only against a UCG-Fiber on
+        UniFi Network 10.4.57 (2026-06-12): ``GET .../trafficrules`` and
+        ``GET .../trafficroutes`` both answer HTTP 200 with a bare list.
+
+        ``path`` is the portion after ``/v2/api/site/<site>`` (e.g.
+        ``"/trafficrules"`` or ``"/trafficrules/<id>"``). Returns the parsed
+        body unchanged (list or dict), or ``None`` on an empty response.
+        """
+        url = f"{self._base}/v2/api/site/{self.site}{path}"
+        last_exc: Exception | None = None
+        for attempt in range(2):
+            try:
+                resp = await self._client.request(method, url, json=json)
+            except (httpx.ConnectError, httpx.RemoteProtocolError) as exc:
+                last_exc = exc
+                if attempt == 0:
+                    logger.warning(
+                        "UniFi v2 connection error, retrying once",
+                        extra={"method": method, "path": path, "error": str(exc)},
+                    )
+                    continue
+                raise UniFiError(f"UniFi connection failed: {exc}") from exc
+            except httpx.HTTPError as exc:
+                raise UniFiError(f"UniFi transport error: {exc}") from exc
+
+            if resp.status_code >= 400:
+                raise UniFiError(
+                    f"UniFi {method} (v2) {path} returned {resp.status_code}: {resp.text[:300]}"
+                )
+            if not resp.content:
+                return None
+            return resp.json()
+
+        raise UniFiError(  # pragma: no cover
+            f"UniFi v2 request exhausted retries: {last_exc}"
+        )
+
     async def _get(self, path: str) -> Any:
         return await self._request("GET", f"{self._site_path}{path}")
+
+    async def _get_optional(self, path: str, params: dict[str, Any] | None = None) -> Any:
+        """GET that tolerates a route the firmware does not expose.
+
+        Some legacy endpoints (notably ``/stat/event``) are absent on newer
+        UniFi Network firmware and answer 404 (``api.err.NotFound``) or 400
+        (``api.err.InvalidObject``). For read-only observability calls that have
+        no working alternative on this gateway, we treat those as "no records"
+        rather than surfacing an error, while still raising on genuine transport
+        or auth failures.
+        """
+        query = ""
+        if params:
+            query = "?" + "&".join(f"{k}={v}" for k, v in params.items())
+        try:
+            return await self._request("GET", f"{self._site_path}{path}{query}")
+        except UniFiError as exc:
+            text = str(exc)
+            if " returned 404" in text or " returned 400" in text:
+                logger.info(
+                    "UniFi endpoint not available on this firmware; returning empty result",
+                    extra={"path": path, "error": text[:200]},
+                )
+                return []
+            raise
 
     async def _post(self, path: str, payload: dict[str, Any]) -> Any:
         return await self._request("POST", f"{self._site_path}{path}", json=payload)
@@ -240,6 +313,144 @@ class UniFiClient:
         return self._first_record(await self._put(f"/rest/firewallrule/{rule_id}", payload))
 
     # ------------------------------------------------------------------
+    # Firewall groups (reusable address/port objects via /rest/firewallgroup)
+    # ------------------------------------------------------------------
+
+    async def list_firewall_groups(self) -> list[UniFiRecord]:
+        """List reusable firewall groups (address-group / ipv6-address-group / port-group).
+
+        Probed live read-only against a UCG-Fiber on UniFi Network 10.4.57
+        (2026-06-12): ``GET /rest/firewallgroup`` answers HTTP 200 with the
+        standard ``{"meta", "data"}`` envelope (empty on a fresh gateway).
+        """
+        return await self._get("/rest/firewallgroup") or []
+
+    async def create_firewall_group(self, payload: dict[str, Any]) -> UniFiRecord:
+        return self._first_record(await self._post("/rest/firewallgroup", payload))
+
+    async def update_firewall_group(self, group_id: str, payload: dict[str, Any]) -> UniFiRecord:
+        return self._first_record(await self._put(f"/rest/firewallgroup/{group_id}", payload))
+
+    async def delete_firewall_group(self, group_id: str) -> bool:
+        await self._delete(f"/rest/firewallgroup/{group_id}")
+        return True
+
+    # ------------------------------------------------------------------
+    # Static routes (policy-free next-hop routing via /rest/routing)
+    # ------------------------------------------------------------------
+
+    async def list_routes(self) -> list[UniFiRecord]:
+        """List user-defined static routes.
+
+        Probed live read-only against a UCG-Fiber on UniFi Network 10.4.57
+        (2026-06-12): ``GET /rest/routing`` answers HTTP 200 with the standard
+        ``{"meta", "data"}`` envelope (empty on a fresh gateway).
+        """
+        return await self._get("/rest/routing") or []
+
+    async def create_route(self, payload: dict[str, Any]) -> UniFiRecord:
+        return self._first_record(await self._post("/rest/routing", payload))
+
+    async def update_route(self, route_id: str, payload: dict[str, Any]) -> UniFiRecord:
+        return self._first_record(await self._put(f"/rest/routing/{route_id}", payload))
+
+    async def delete_route(self, route_id: str) -> bool:
+        await self._delete(f"/rest/routing/{route_id}")
+        return True
+
+    # ------------------------------------------------------------------
+    # Traffic rules (v2 policy engine via /v2/api/site/<site>/trafficrules)
+    # ------------------------------------------------------------------
+
+    async def list_traffic_rules(self) -> list[UniFiRecord]:
+        """List v2 traffic rules (app/domain/IP-based allow/block policies).
+
+        Probed live read-only against a UCG-Fiber on UniFi Network 10.4.57
+        (2026-06-12): ``GET .../trafficrules`` answers HTTP 200 with a bare
+        JSON list (no legacy envelope).
+        """
+        result = await self._v2_request("GET", "/trafficrules")
+        return result if isinstance(result, list) else []
+
+    async def create_traffic_rule(self, payload: dict[str, Any]) -> UniFiRecord:
+        result = await self._v2_request("POST", "/trafficrules", json=payload)
+        return self._first_record(result)
+
+    async def update_traffic_rule(self, rule_id: str, payload: dict[str, Any]) -> UniFiRecord:
+        result = await self._v2_request("PUT", f"/trafficrules/{rule_id}", json=payload)
+        return self._first_record(result)
+
+    # ------------------------------------------------------------------
+    # Traffic routes (v2 policy-based routing via .../trafficroutes)
+    # ------------------------------------------------------------------
+
+    async def list_traffic_routes(self) -> list[UniFiRecord]:
+        """List v2 traffic routes (policy-based routing, e.g. VPN client routes).
+
+        Probed live read-only against a UCG-Fiber on UniFi Network 10.4.57
+        (2026-06-12): ``GET .../trafficroutes`` answers HTTP 200 with a bare
+        JSON list (no legacy envelope).
+        """
+        result = await self._v2_request("GET", "/trafficroutes")
+        return result if isinstance(result, list) else []
+
+    async def update_traffic_route(self, route_id: str, payload: dict[str, Any]) -> UniFiRecord:
+        result = await self._v2_request("PUT", f"/trafficroutes/{route_id}", json=payload)
+        return self._first_record(result)
+
+    # ------------------------------------------------------------------
+    # Content filtering (v2 DNS-category blocking via .../content-filtering)
+    # ------------------------------------------------------------------
+
+    async def list_content_filters(self) -> list[UniFiRecord]:
+        """List DNS content-filtering profiles.
+
+        Probed live read-only against a UCG-Fiber on UniFi Network 10.4.57
+        (2026-06-12): ``GET .../content-filtering`` answers HTTP 200 with a
+        bare JSON list (no legacy envelope). A profile carries ``_id``,
+        ``name``, ``enabled``, ``categories`` (blocked DNS category enum list),
+        ``allow_list`` / ``block_list`` (per-domain overrides), ``client_macs``
+        and ``network_ids`` (scope), ``safe_search``, and a ``schedule`` block.
+        """
+        result = await self._v2_request("GET", "/content-filtering")
+        return result if isinstance(result, list) else []
+
+    async def update_content_filter(self, filter_id: str, payload: dict[str, Any]) -> UniFiRecord:
+        result = await self._v2_request("PUT", f"/content-filtering/{filter_id}", json=payload)
+        return self._first_record(result)
+
+    async def delete_content_filter(self, filter_id: str) -> bool:
+        await self._v2_request("DELETE", f"/content-filtering/{filter_id}")
+        return True
+
+    # ------------------------------------------------------------------
+    # Dynamic DNS (legacy /rest/dynamicdns)
+    # ------------------------------------------------------------------
+
+    async def list_dynamic_dns(self) -> list[UniFiRecord]:
+        """List Dynamic DNS update configurations.
+
+        Probed live read-only against a UCG-Fiber on UniFi Network 10.4.57
+        (2026-06-12): ``GET /rest/dynamicdns`` answers HTTP 200 with the
+        standard ``{"meta", "data"}`` envelope (empty on this gateway). A
+        record carries ``service`` (provider), ``host_name`` (the FQDN to
+        update), ``login`` / ``x_password`` (provider credentials),
+        ``server`` (optional custom update URL), and ``interface`` (WAN to
+        track, e.g. ``"wan"``).
+        """
+        return await self._get("/rest/dynamicdns") or []
+
+    async def create_dynamic_dns(self, payload: dict[str, Any]) -> UniFiRecord:
+        return self._first_record(await self._post("/rest/dynamicdns", payload))
+
+    async def update_dynamic_dns(self, ddns_id: str, payload: dict[str, Any]) -> UniFiRecord:
+        return self._first_record(await self._put(f"/rest/dynamicdns/{ddns_id}", payload))
+
+    async def delete_dynamic_dns(self, ddns_id: str) -> bool:
+        await self._delete(f"/rest/dynamicdns/{ddns_id}")
+        return True
+
+    # ------------------------------------------------------------------
     # Port profiles (create/update/delete)
     # ------------------------------------------------------------------
 
@@ -297,6 +508,17 @@ class UniFiClient:
                 {"port_overrides": port_overrides},
             )
         )
+
+    async def update_device(self, device_id: str, payload: dict[str, Any]) -> UniFiRecord:
+        """Patch fields on a device config record.
+
+        UniFi merges the supplied keys into the stored record via
+        ``PUT /rest/device/<device_id>`` (the same endpoint
+        :meth:`set_port_state` uses for ``port_overrides``). Array-valued
+        fields like ``radio_table`` replace wholesale, so callers must send
+        the full read-modify-written array, never a partial one.
+        """
+        return self._first_record(await self._put(f"/rest/device/{device_id}", payload))
 
     async def get_device(self, device_id: str) -> UniFiRecord:
         result = await self._get(f"/stat/device/{device_id}")
@@ -363,36 +585,46 @@ class UniFiClient:
     async def list_events(self, limit: int) -> list[UniFiRecord]:
         """Return recent controller events, newest first.
 
-        UniFi OS gateways (UCG-Fiber, UDM) on UniFi Network 9.x reject the
-        legacy ``GET /stat/event?_limit=...`` form with HTTP 404
-        (``api.err.NotFound``). The modern contract is a ``POST`` to
-        ``/stat/event`` with a JSON body carrying ``_limit`` and ``_sort``
-        (same pattern as ``get_speedtest_results``). Verified against the
-        unpoller/unifi reference client, which posts
-        ``{"_limit": N, "within": H, "_sort": "-time"}`` to this path.
-        We omit ``within`` so the controller returns the most recent events
-        regardless of age, then let the caller's ``limit`` bound the set.
+        Probed live against a UCG-Fiber on UniFi Network 10.4.57 (2026-06-03):
+        the legacy event log route is **not exposed** on this firmware via the
+        local API-key surface. ``GET``/``POST /stat/event`` both return HTTP 404
+        (``api.err.NotFound``), the v2 (``/v2/api/site/default/...``) tree has no
+        event path, and the official Integration API (``/integration/v1/...``)
+        has no events resource. ``/rest/event`` answers 400
+        (``api.err.InvalidObject``) — it is a config collection, not a log
+        reader. The 404 is route-absence, not a scope gate: sibling ``stat/*``
+        routes (``stat/sta``, ``stat/rogueap``, ``stat/health``) all return 200
+        with the same key.
+
+        We attempt the legacy ``GET /stat/event`` for forward compatibility (a
+        future firmware may restore it) and, on the expected NOT_FOUND, return
+        an empty list rather than raising. Alarms (``list_alarms``) remain the
+        working observability surface on this gateway.
         """
-        payload: dict[str, Any] = {"_limit": limit, "_sort": "-time"}
-        records = await self._post("/stat/event", payload) or []
+        records = await self._get_optional(
+            "/stat/event", params={"_limit": limit, "_sort": "-time"}
+        )
         return records if isinstance(records, list) else []
 
     async def list_alarms(self, limit: int, archived: bool) -> list[UniFiRecord]:
         """Return controller alarms, active or archived, newest first.
 
-        Same modern-controller contract as ``list_events``: UniFi Network 9.x
-        404s the legacy ``GET /stat/alarm?archived=...&_limit=...`` form. We
-        ``POST`` to ``/stat/alarm`` with ``{"_limit", "_sort"}`` and filter on
-        the ``archived`` flag client-side, because the controller's server-side
-        ``archived`` body filter is inconsistent across firmware revisions.
-        Alarm records carry the originating client MAC (``user`` / ``sta``),
-        AP MAC (``ap``), ``ssid``, ``subsystem``, ``key``, ``msg``, and
-        ``time`` / ``datetime`` fields, which pass straight through to callers.
+        Probed live against a UCG-Fiber on UniFi Network 10.4.57 (2026-06-03):
+        the working route is ``GET /proxy/network/api/s/{site}/list/alarm``,
+        which returns HTTP 200 with the standard ``{"meta", "data"}`` envelope
+        and honours a server-side ``?archived=<bool>`` filter. The previously
+        shipped ``POST /stat/alarm`` form returns HTTP 404 on this firmware and
+        is abandoned.
+
+        We pass ``archived`` through as the server-side query filter and also
+        apply a defensive client-side filter, then bound the result to
+        ``limit``. Alarm records carry the originating client MAC
+        (``user`` / ``sta``), AP MAC (``ap``), ``ssid``, ``subsystem``,
+        ``key``, ``msg``, and ``time`` / ``datetime`` fields, which pass
+        straight through to callers.
         """
-        # Over-fetch so client-side archived filtering still yields up to
-        # ``limit`` matching records.
-        payload: dict[str, Any] = {"_limit": max(limit * 4, limit), "_sort": "-time"}
-        records = await self._post("/stat/alarm", payload) or []
+        archived_flag = "true" if archived else "false"
+        records = await self._get(f"/list/alarm?archived={archived_flag}") or []
         if not isinstance(records, list):
             return []
         filtered = [
@@ -436,6 +668,86 @@ class UniFiClient:
         # DPI by-station report; aggregated bytes per client.
         results = await self._get("/stat/sitedpi") or []
         return results[:limit] if isinstance(results, list) else []
+
+    # ------------------------------------------------------------------
+    # Stats & insights (read-only observability — Wave C)
+    # ------------------------------------------------------------------
+
+    async def get_system_info(self) -> UniFiRecord:
+        """Return controller/system info from ``/stat/sysinfo``.
+
+        Probed live read-only against a UCG-Fiber on UniFi Network 10.4.57
+        (2026-06-12): ``GET /stat/sysinfo`` answers HTTP 200 with the standard
+        ``{"meta", "data"}`` envelope wrapping a single record carrying
+        ``version``, ``build``, ``previous_version``, ``hostname``, ``name``,
+        ``uptime``, ``ubnt_device_type``, ``udm_version``,
+        ``console_display_version``, ``update_available`` and ``timezone``.
+        Returns ``{}`` if the controller answers with no record.
+        """
+        result = await self._get("/stat/sysinfo")
+        if isinstance(result, list) and result:
+            first = result[0]
+            return first if isinstance(first, dict) else {}
+        return result if isinstance(result, dict) else {}
+
+    async def get_client_by_mac(self, mac: str) -> UniFiRecord | None:
+        """Return a single active client record by MAC from ``/stat/sta``.
+
+        Probed live (2026-06-12): a client record carries ``signal``,
+        ``rssi``, ``satisfaction``/``satisfaction_avg``, ``uptime``,
+        ``tx_bytes``/``rx_bytes``, ``tx_rate``/``rx_rate``, ``tx_retries``,
+        ``anomalies``, ``wifi_tx_attempts`` (wireless) and ``wired-tx_bytes``
+        / ``wired_rate_mbps`` (wired). Returns ``None`` when the client is
+        not currently connected.
+        """
+        clients = await self._get("/stat/sta") or []
+        if not isinstance(clients, list):
+            return None
+        target = mac.lower()
+        for client in clients:
+            if isinstance(client, dict) and str(client.get("mac", "")).lower() == target:
+                return client
+        return None
+
+    async def get_client_sessions(
+        self, mac: str, start: int, end: int, limit: int
+    ) -> list[UniFiRecord]:
+        """Return recent client connection sessions from ``POST /stat/session``.
+
+        Probed live (2026-06-12): ``POST /stat/session`` with a JSON body of
+        ``{"type": "all", "start": <epoch_s>, "end": <epoch_s>}`` (plus an
+        optional ``"mac"`` filter) answers HTTP 200 with the standard
+        ``{"meta", "data"}`` envelope. Each session carries ``mac``,
+        ``hostname``, ``name``, ``ip``, ``assoc_time``, ``duration`` (seconds),
+        ``rx_bytes``/``tx_bytes``, ``is_wired``, ``is_guest``, ``ap_mac``,
+        ``satisfaction`` and ``roaming_sessions``. ``start``/``end`` are epoch
+        **seconds**. Results are sorted newest-first by ``assoc_time`` and
+        bounded to ``limit``.
+        """
+        body: dict[str, Any] = {"type": "all", "start": start, "end": end}
+        if mac:
+            body["mac"] = mac.lower()
+        records = await self._post("/stat/session", body) or []
+        if not isinstance(records, list):
+            return []
+        ordered = sorted(
+            (r for r in records if isinstance(r, dict)),
+            key=lambda r: r.get("assoc_time", 0),
+            reverse=True,
+        )
+        return ordered[:limit]
+
+    async def get_anomalies(self) -> list[UniFiRecord]:
+        """Return client-impacting anomalies from ``/stat/anomalies``.
+
+        Probed live (2026-06-12): ``GET /stat/anomalies`` answers HTTP 200
+        with the standard ``{"meta", "data"}`` envelope. Each record carries
+        ``anomaly`` (an enum string such as ``USER_HIGH_TCP_LATENCY``),
+        ``mac`` (the affected client), and ``timestamps`` (a list of epoch-ms
+        occurrence times). Returns an empty list on a clean network.
+        """
+        result = await self._get("/stat/anomalies") or []
+        return result if isinstance(result, list) else []
 
     # ------------------------------------------------------------------
     # Site settings (Threat Management, Honeypot, Teleport)

@@ -53,6 +53,18 @@ def _seed_devices() -> list[UniFiRecord]:
             "num_sta": 12,
             "satisfaction": 99,
             "locating": False,
+            # Stats fields mirror a live UCG-Fiber gateway record so the Wave C
+            # read-only stats tools have plausible state to shape offline.
+            "tx_bytes": 9_900_000_000,
+            "rx_bytes": 42_000_000_000,
+            "last_wan_ip": "203.0.113.42",
+            "speedtest-status": "Idle",
+            "system-stats": {"cpu": "11.7", "mem": "82.3", "uptime": "482311"},
+            "temperatures": [
+                {"name": "Local", "type": "board", "value": 48.5},
+                {"name": "CPU", "type": "cpu", "value": 51.8},
+                {"name": "PMIC", "type": "board", "value": 54.6},
+            ],
         },
         {
             "_id": _oid(),
@@ -73,6 +85,17 @@ def _seed_devices() -> list[UniFiRecord]:
                 {"radio": "na", "channel": 36, "ht": 80, "tx_power": 26},
                 {"radio": "6e", "channel": 37, "ht": 160, "tx_power": 24},
             ],
+            # Stats fields for the Wave C read-only device-stats tool.
+            "tx_bytes": 204_000_000_000,
+            "rx_bytes": 40_000_000_000,
+            "system-stats": {"cpu": "6.4", "mem": "44.0", "uptime": "482010"},
+            "stat": {
+                "ap": {
+                    "tx_packets": 184_899_174,
+                    "rx_packets": 76_426_931,
+                    "tx_retries": 185_271_001,
+                }
+            },
         },
         {
             "_id": _oid(),
@@ -111,6 +134,34 @@ def _seed_networks() -> list[UniFiRecord]:
             "domain_name": "localdomain",
             "site_id": "default",
             "enabled": True,
+            # IPv6 keys mirror a real UCG-Fiber LAN networkconf record so the
+            # IPv6 tools have plausible state to read-modify-write offline.
+            "ipv6_interface_type": "none",
+            "ipv6_client_address_assignment": "slaac",
+            "ipv6_ra_enabled": True,
+            "ipv6_setting_preference": "auto",
+            "dhcpdv6_dns_auto": True,
+        },
+        {
+            "_id": _oid(),
+            "name": "Internet 1",
+            "purpose": "wan",
+            "attr_no_delete": True,
+            "site_id": "default",
+            "enabled": True,
+            # IPv6 keys mirror a real UCG-Fiber WAN networkconf record with
+            # DHCPv6 prefix delegation enabled (the live gateway state). A LAN
+            # can only enable PD when a WAN actually delegates a prefix, so the
+            # stub WAN advertises PD so stub-mode PD-enable exercises the binding.
+            "wan_networkgroup": "WAN",
+            "wan_type_v6": "dhcpv6",
+            "ipv6_wan_delegation_type": "pd",
+            # No explicit size key: mirrors the live record's
+            # auto=false-with-no-size inconsistency the set_wan_ipv6 fix
+            # normalises. The PD-LAN binding only needs delegation_type=="pd".
+            "wan_dhcpv6_pd_size_auto": False,
+            "wan_ipv6_dns_preference": "auto",
+            "ipv6_setting_preference": "auto",
         },
     ]
 
@@ -146,6 +197,132 @@ def _seed_firewall_rules() -> list[UniFiRecord]:
             "state_related": True,
         },
     ]
+
+
+def _seed_firewall_groups() -> list[UniFiRecord]:
+    """Seed one reusable firewall group of each common type.
+
+    Mirrors the ``/rest/firewallgroup`` record shape: a ``group_type`` of
+    ``address-group`` / ``ipv6-address-group`` / ``port-group`` and a
+    ``group_members`` string list. Real gateways start empty; the seed gives
+    the read/update/delete tools plausible state to round-trip offline.
+    """
+    return [
+        {
+            "_id": _oid(),
+            "name": "RFC1918",
+            "group_type": "address-group",
+            "group_members": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
+            "site_id": "default",
+        },
+        {
+            "_id": _oid(),
+            "name": "Web Ports",
+            "group_type": "port-group",
+            "group_members": ["80", "443"],
+            "site_id": "default",
+        },
+    ]
+
+
+def _seed_routes() -> list[UniFiRecord]:
+    """Seed one static (next-hop) route.
+
+    Mirrors the ``/rest/routing`` record shape: a static route carries a
+    ``type`` of ``static-route``, the destination CIDR in
+    ``static-route_network``, the next hop in ``static-route_nexthop``, and an
+    administrative ``static-route_distance``.
+    """
+    return [
+        {
+            "_id": _oid(),
+            "name": "Lab subnet via firewall",
+            "type": "static-route",
+            "static-route_network": "10.99.0.0/24",
+            "static-route_nexthop": "192.168.1.254",
+            "static-route_distance": 1,
+            "static-route_type": "nexthop-route",
+            "enabled": True,
+            "site_id": "default",
+        },
+    ]
+
+
+def _seed_traffic_rules() -> list[UniFiRecord]:
+    """Seed one v2 traffic rule.
+
+    Mirrors the ``/v2/api/site/<site>/trafficrules`` record shape: an
+    ``action`` (``BLOCK``/``ALLOW``), a ``matching_target``, and an
+    ``enabled`` flag. The v2 surface returns a bare list, not the legacy
+    envelope.
+    """
+    return [
+        {
+            "_id": _oid(),
+            "action": "BLOCK",
+            "matching_target": "INTERNET",
+            "target_devices": [],
+            "enabled": True,
+            "description": "Block guest devices from the internet (sample)",
+        },
+    ]
+
+
+def _seed_traffic_routes() -> list[UniFiRecord]:
+    """Seed one v2 traffic route (policy-based routing).
+
+    Mirrors the ``/v2/api/site/<site>/trafficroutes`` record shape: a
+    ``next_hop`` / interface selection, a ``matching_target``, a
+    ``kill_switch_enabled`` flag (present on VPN-client routes), and
+    ``enabled``.
+    """
+    return [
+        {
+            "_id": _oid(),
+            "matching_target": "DOMAIN",
+            "domains": [{"domain": "example.com", "port_ranges": [], "ports": []}],
+            "next_hop": "",
+            "network_id": "",
+            "kill_switch_enabled": False,
+            "enabled": True,
+        },
+    ]
+
+
+def _seed_content_filters(network_id: str) -> list[UniFiRecord]:
+    """Seed one DNS content-filtering profile.
+
+    Mirrors the ``/v2/api/site/<site>/content-filtering`` record shape probed
+    live on a UCG-Fiber (UniFi Network 10.4.57, 2026-06-12): a ``name``, an
+    ``enabled`` flag, a ``categories`` list (blocked DNS-category enum values),
+    per-domain ``allow_list`` / ``block_list`` overrides, ``client_macs`` and
+    ``network_ids`` scope, a ``safe_search`` list, and a ``schedule`` block.
+    The v2 surface returns a bare list, not the legacy envelope.
+    """
+    return [
+        {
+            "_id": _oid(),
+            "name": "adblock",
+            "enabled": True,
+            "categories": ["ADVERTISEMENT"],
+            "allow_list": [],
+            "block_list": [],
+            "client_macs": [],
+            "network_ids": [network_id],
+            "safe_search": [],
+            "schedule": {"mode": "ALWAYS"},
+        },
+    ]
+
+
+def _seed_dynamic_dns() -> list[UniFiRecord]:
+    """Seed Dynamic DNS as empty.
+
+    Mirrors the ``/rest/dynamicdns`` collection, which is empty on this
+    gateway (probed live 2026-06-12). Tests exercise the create/update/delete
+    round-trip from an empty starting point, matching production reality.
+    """
+    return []
 
 
 def _seed_ap_groups() -> list[UniFiRecord]:
@@ -441,6 +618,90 @@ def _seed_speedtest_results() -> list[UniFiRecord]:
     ]
 
 
+def _seed_sysinfo() -> UniFiRecord:
+    """Seed a ``/stat/sysinfo`` record.
+
+    Mirrors the shape probed live on a UCG-Fiber (UniFi Network 10.4.57,
+    2026-06-12): controller version/build, hostname, uptime, device type, and
+    update-availability flags.
+    """
+    return {
+        "version": "10.4.57",
+        "previous_version": "10.3.58",
+        "build": "atag_10.4.57_34628",
+        "hostname": "Cloud-Gateway-Fiber",
+        "name": "Cloud Gateway Fiber",
+        "uptime": 420934,
+        "timezone": "America/New_York",
+        "ubnt_device_type": "UDMA6A8",
+        "udm_version": "UCGF.ipq9574.v5.1.15",
+        "console_display_version": "5.1.15",
+        "update_available": False,
+        "update_downloaded": False,
+        "is_cloud_console": False,
+    }
+
+
+def _seed_anomalies() -> list[UniFiRecord]:
+    """Seed one client anomaly.
+
+    Mirrors the ``/stat/anomalies`` record shape probed live (2026-06-12): an
+    ``anomaly`` enum string, the affected client ``mac``, and a list of
+    epoch-ms ``timestamps``.
+    """
+    now_ms = _ts() * 1000
+    return [
+        {
+            "anomaly": "USER_HIGH_TCP_LATENCY",
+            "mac": "aa:bb:cc:00:00:04",
+            "timestamps": [now_ms - 3_600_000, now_ms - 1_800_000, now_ms - 300_000],
+        },
+    ]
+
+
+def _seed_sessions() -> list[UniFiRecord]:
+    """Seed recent client connection sessions.
+
+    Mirrors the ``POST /stat/session`` record shape probed live (2026-06-12):
+    one row per association with ``assoc_time`` (epoch seconds), ``duration``,
+    throughput counters, and client identity. Spread across the past day so
+    callers can test the newest-first ordering and time-window filter.
+    """
+    now = _ts()
+    return [
+        {
+            "_id": _oid(),
+            "mac": "aa:bb:cc:00:00:01",
+            "hostname": "petes-laptop",
+            "name": "Pete's MacBook",
+            "ip": "192.168.1.101",
+            "assoc_time": now - 3600,
+            "duration": 3600,
+            "rx_bytes": 8_400_000_000,
+            "tx_bytes": 1_200_000_000,
+            "is_wired": False,
+            "is_guest": False,
+            "ap_mac": "f4:e2:c6:00:00:02",
+            "satisfaction": 96,
+        },
+        {
+            "_id": _oid(),
+            "mac": "aa:bb:cc:00:00:02",
+            "hostname": "iphone-15",
+            "name": "iPhone 15",
+            "ip": "192.168.1.102",
+            "assoc_time": now - 86400,
+            "duration": 7200,
+            "rx_bytes": 1_900_000_000,
+            "tx_bytes": 240_000_000,
+            "is_wired": False,
+            "is_guest": False,
+            "ap_mac": "f4:e2:c6:00:00:02",
+            "satisfaction": 88,
+        },
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Stub state container
 # ---------------------------------------------------------------------------
@@ -460,6 +721,12 @@ class StubState:
         default_net_id: str = self.networks[0]["_id"]
         self.wlans: list[UniFiRecord] = _seed_wlans(default_net_id)
         self.firewall_rules: list[UniFiRecord] = _seed_firewall_rules()
+        self.firewall_groups: list[UniFiRecord] = _seed_firewall_groups()
+        self.routes: list[UniFiRecord] = _seed_routes()
+        self.traffic_rules: list[UniFiRecord] = _seed_traffic_rules()
+        self.traffic_routes: list[UniFiRecord] = _seed_traffic_routes()
+        self.content_filters: list[UniFiRecord] = _seed_content_filters(default_net_id)
+        self.dynamic_dns: list[UniFiRecord] = _seed_dynamic_dns()
         self.port_profiles: list[UniFiRecord] = _seed_port_profiles()
         self.ap_groups: list[UniFiRecord] = _seed_ap_groups()
         self.clients: list[UniFiRecord] = _seed_clients()
@@ -469,6 +736,9 @@ class StubState:
         self.alarms: list[UniFiRecord] = _seed_alarms()
         self.health: list[UniFiRecord] = _seed_health()
         self.speedtest_results: list[UniFiRecord] = _seed_speedtest_results()
+        self.sysinfo: UniFiRecord = _seed_sysinfo()
+        self.anomalies: list[UniFiRecord] = _seed_anomalies()
+        self.sessions: list[UniFiRecord] = _seed_sessions()
         self.settings: dict[str, UniFiRecord] = _seed_settings(default_net_id)
         self.audit_log: list[UniFiRecord] = []  # records of block/unblock/reconnect/etc.
         # Failure-injection queue: maps method name to a FIFO deque of
@@ -506,6 +776,22 @@ class StubState:
         for d in self.devices:
             if d.get("mac") == mac:
                 return d
+        return None
+
+    def update_device(self, device_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        """Merge ``patch`` into the device record matching ``device_id``."""
+        for dev in self.devices:
+            if dev.get("_id") == device_id:
+                dev.update(patch)
+                self.audit_log.append(
+                    {
+                        "action": "update_device",
+                        "device_id": device_id,
+                        "fields": sorted(patch),
+                        "ts": _ts(),
+                    }
+                )
+                return dev
         return None
 
     def restart_device(self, mac: str) -> bool:
@@ -634,6 +920,120 @@ class StubState:
         before = len(self.firewall_rules)
         self.firewall_rules = [r for r in self.firewall_rules if r.get("_id") != rule_id]
         return len(self.firewall_rules) < before
+
+    # ----- Firewall groups ------------------------------------------------
+    def list_firewall_groups(self) -> list[UniFiRecord]:
+        return self.firewall_groups
+
+    def create_firewall_group(self, payload: dict[str, Any]) -> UniFiRecord:
+        self._check_failure("create_firewall_group")
+        record: UniFiRecord = {"_id": _oid(), "site_id": "default", **payload}
+        self.firewall_groups.append(record)
+        return record
+
+    def update_firewall_group(self, group_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        for group in self.firewall_groups:
+            if group.get("_id") == group_id:
+                group.update(patch)
+                return group
+        return None
+
+    def delete_firewall_group(self, group_id: str) -> bool:
+        self._check_failure("delete_firewall_group")
+        before = len(self.firewall_groups)
+        self.firewall_groups = [g for g in self.firewall_groups if g.get("_id") != group_id]
+        return len(self.firewall_groups) < before
+
+    # ----- Static routes --------------------------------------------------
+    def list_routes(self) -> list[UniFiRecord]:
+        return self.routes
+
+    def create_route(self, payload: dict[str, Any]) -> UniFiRecord:
+        self._check_failure("create_route")
+        record: UniFiRecord = {"_id": _oid(), "site_id": "default", "enabled": True, **payload}
+        self.routes.append(record)
+        return record
+
+    def update_route(self, route_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        for route in self.routes:
+            if route.get("_id") == route_id:
+                route.update(patch)
+                return route
+        return None
+
+    def delete_route(self, route_id: str) -> bool:
+        self._check_failure("delete_route")
+        before = len(self.routes)
+        self.routes = [r for r in self.routes if r.get("_id") != route_id]
+        return len(self.routes) < before
+
+    # ----- Traffic rules (v2) ---------------------------------------------
+    def list_traffic_rules(self) -> list[UniFiRecord]:
+        return self.traffic_rules
+
+    def create_traffic_rule(self, payload: dict[str, Any]) -> UniFiRecord:
+        self._check_failure("create_traffic_rule")
+        record: UniFiRecord = {"_id": _oid(), "enabled": True, **payload}
+        self.traffic_rules.append(record)
+        return record
+
+    def update_traffic_rule(self, rule_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        for rule in self.traffic_rules:
+            if rule.get("_id") == rule_id:
+                rule.update(patch)
+                return rule
+        return None
+
+    # ----- Traffic routes (v2) --------------------------------------------
+    def list_traffic_routes(self) -> list[UniFiRecord]:
+        return self.traffic_routes
+
+    def update_traffic_route(self, route_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        for route in self.traffic_routes:
+            if route.get("_id") == route_id:
+                route.update(patch)
+                return route
+        return None
+
+    # ----- Content filtering (v2 DNS) -------------------------------------
+    def list_content_filters(self) -> list[UniFiRecord]:
+        return self.content_filters
+
+    def update_content_filter(self, filter_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        for prof in self.content_filters:
+            if prof.get("_id") == filter_id:
+                prof.update(patch)
+                return prof
+        return None
+
+    def delete_content_filter(self, filter_id: str) -> bool:
+        self._check_failure("delete_content_filter")
+        before = len(self.content_filters)
+        self.content_filters = [c for c in self.content_filters if c.get("_id") != filter_id]
+        return len(self.content_filters) < before
+
+    # ----- Dynamic DNS ----------------------------------------------------
+    def list_dynamic_dns(self) -> list[UniFiRecord]:
+        return self.dynamic_dns
+
+    def create_dynamic_dns(self, payload: dict[str, Any]) -> UniFiRecord:
+        self._check_failure("create_dynamic_dns")
+        record: UniFiRecord = {"_id": _oid(), "site_id": "default", **payload}
+        self.dynamic_dns.append(record)
+        return record
+
+    def update_dynamic_dns(self, ddns_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        for entry in self.dynamic_dns:
+            if entry.get("_id") == ddns_id:
+                entry.update(patch)
+                return entry
+        return None
+
+    def delete_dynamic_dns(self, ddns_id: str) -> bool:
+        self._check_failure("delete_dynamic_dns")
+        before = len(self.dynamic_dns)
+        self.dynamic_dns = [d for d in self.dynamic_dns if d.get("_id") != ddns_id]
+        return len(self.dynamic_dns) < before
 
     # ----- Port profiles --------------------------------------------------
     def list_port_profiles(self) -> list[UniFiRecord]:
@@ -818,6 +1218,37 @@ class StubState:
 
     def get_speedtest_results(self, limit: int) -> list[UniFiRecord]:
         return self.speedtest_results[:limit]
+
+    # ----- Stats & insights (read-only — Wave C) --------------------------
+    def get_system_info(self) -> UniFiRecord:
+        return dict(self.sysinfo)
+
+    def get_gateway_record(self) -> UniFiRecord | None:
+        for dev in self.devices:
+            if dev.get("type") in ("ugw", "udm"):
+                return dev
+        return None
+
+    def find_client_by_mac(self, mac: str) -> UniFiRecord | None:
+        target = mac.lower()
+        for client in self.clients:
+            if str(client.get("mac", "")).lower() == target:
+                return client
+        return None
+
+    def get_client_sessions(self, mac: str, start: int, end: int, limit: int) -> list[UniFiRecord]:
+        target = mac.lower()
+        rows = [
+            s
+            for s in self.sessions
+            if start <= s.get("assoc_time", 0) <= end
+            and (not target or str(s.get("mac", "")).lower() == target)
+        ]
+        rows.sort(key=lambda s: s.get("assoc_time", 0), reverse=True)
+        return rows[:limit]
+
+    def get_anomalies(self) -> list[UniFiRecord]:
+        return self.anomalies
 
     # ----- Site settings (Threat Management, Honeypot, Teleport) ----------
     def get_setting(self, key: str) -> UniFiRecord:

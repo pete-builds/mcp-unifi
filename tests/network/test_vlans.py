@@ -44,7 +44,8 @@ async def test_create_vlan_uses_default_dhcp_range(
     assert result["dhcpd_start"] == "10.0.50.100"
     assert result["dhcpd_stop"] == "10.0.50.200"
     assert result["vlan"] == 50
-    assert len(stub_state.list_networks()) == 2
+    # Seed (LAN + WAN) + the created VLAN.
+    assert len(stub_state.list_networks()) == 3
 
 
 async def test_create_vlan_normalizes_network_form_subnet(stub_server: FastMCP) -> None:

@@ -10,7 +10,12 @@ from mcp_unifi.clients.stubs import StubState
 def test_seed_data_present(stub_state: StubState) -> None:
     # v0.3.0 added a switch (USW24PoE) so port-state tools have a target.
     assert len(stub_state.list_devices()) == 3
-    assert len(stub_state.list_networks()) == 1
+    # v0.14.0 added a seeded WAN networkconf record (purpose="wan") so the
+    # IPv6 tools have a WAN to read-modify-write offline: 1 LAN + 1 WAN.
+    nets = stub_state.list_networks()
+    assert len(nets) == 2
+    assert sum(1 for n in nets if n.get("purpose") == "wan") == 1
+    assert sum(1 for n in nets if n.get("purpose") == "corporate") == 1
     assert len(stub_state.list_wlans()) == 1
     assert len(stub_state.list_firewall_rules()) == 1
     assert len(stub_state.list_port_profiles()) == 2
@@ -23,8 +28,9 @@ def test_each_instance_is_independent() -> None:
     a = StubState()
     b = StubState()
     a.create_network({"name": "T1", "vlan": 5, "ip_subnet": "10.0.5.0/24"})
-    assert len(a.list_networks()) == 2
-    assert len(b.list_networks()) == 1
+    # Seed is 2 networks (LAN + WAN); creating one on ``a`` leaves ``b`` at seed.
+    assert len(a.list_networks()) == 3
+    assert len(b.list_networks()) == 2
 
 
 def test_devices_have_expected_shape(stub_state: StubState) -> None:
@@ -45,7 +51,8 @@ def test_create_network_assigns_id(stub_state: StubState) -> None:
     assert "_id" in rec
     assert rec["name"] == "IoT"
     assert rec["enabled"] is True
-    assert len(stub_state.list_networks()) == 2
+    # Seed (LAN + WAN) + the newly created network.
+    assert len(stub_state.list_networks()) == 3
 
 
 def test_update_network_patches_existing(stub_state: StubState) -> None:

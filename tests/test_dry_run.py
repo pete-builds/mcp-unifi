@@ -50,6 +50,8 @@ def _state_snapshot(state: StubState) -> dict[str, Any]:
         "clients": copy.deepcopy(state.clients),
         "dhcp_leases": copy.deepcopy(state.dhcp_leases),
         "port_forwards": copy.deepcopy(state.port_forwards),
+        "content_filters": copy.deepcopy(state.content_filters),
+        "dynamic_dns": copy.deepcopy(state.dynamic_dns),
         "audit_log": copy.deepcopy(state.audit_log),
     }
 
@@ -107,6 +109,45 @@ def _assert_unchanged(before: dict[str, Any], state: StubState) -> None:
             "would_update",
         ),
         ("delete_firewall_rule", {"rule_id": "fw-x"}, "would_delete"),
+        # firewall groups
+        (
+            "create_firewall_group",
+            {"name": "IoT", "group_type": "address-group", "members": ["10.50.0.0/24"]},
+            "would_create",
+        ),
+        ("delete_firewall_group", {"group_id": "fg-x"}, "would_delete"),
+        # static routes
+        (
+            "create_route",
+            {"name": "Lab", "destination": "10.99.0.0/24", "next_hop": "192.168.1.254"},
+            "would_create",
+        ),
+        ("delete_route", {"route_id": "rt-x"}, "would_delete"),
+        # traffic rules (v2)
+        (
+            "create_traffic_rule",
+            {"rule": {"action": "BLOCK", "matching_target": "INTERNET"}},
+            "would_create",
+        ),
+        # content filtering (v2 DNS) — delete short-circuits before lookup
+        ("delete_content_filter", {"filter_id": "cf-x"}, "would_delete"),
+        # dynamic DNS
+        (
+            "create_dynamic_dns",
+            {
+                "service": "namecheap",
+                "host_name": "home.example.com",
+                "login": "example.com",
+                "password": "dyndns-token-value",
+            },
+            "would_create",
+        ),
+        (
+            "update_dynamic_dns",
+            {"ddns_id": "dd-x", "updates": {"enabled": False}},
+            "would_update",
+        ),
+        ("delete_dynamic_dns", {"ddns_id": "dd-x"}, "would_delete"),
         # port profiles
         ("create_port_profile", {"name": "trunk-iot"}, "would_create"),
         (
@@ -158,6 +199,12 @@ def _assert_unchanged(before: dict[str, Any], state: StubState) -> None:
             "set_port_state",
             {"device_mac": "aa:bb:cc:11:22:33", "port_idx": 1, "enable": False},
             "would_apply",
+        ),
+        # ipv6 (WAN: auto-resolves the single seeded WAN, no id needed)
+        (
+            "set_wan_ipv6",
+            {"connection_type": "dhcpv6", "prefix_delegation": "prefix-delegation"},
+            "would_update",
         ),
     ],
 )
@@ -404,6 +451,11 @@ async def test_provision_homelab_service_real_apply_rollback(
 
 READ_ONLY_TOOLS = (
     "list_networks",
+    "get_network_details",
+    "list_content_filters",
+    "get_content_filter_details",
+    "list_dynamic_dns",
+    "get_dynamic_dns_details",
     "list_wlans",
     "list_firewall_rules",
     "list_port_profiles",
@@ -414,11 +466,19 @@ READ_ONLY_TOOLS = (
     "list_top_talkers",
     "get_site_health",
     "get_wan_status",
+    "get_wan_ipv6",
     "list_events",
     "list_alarms",
     "trigger_speedtest",
     "get_speedtest_results",
     "audit_open_ports",
+    # Wave C — stats & insights (all read-only)
+    "get_system_info",
+    "get_gateway_stats",
+    "get_device_stats",
+    "get_client_stats",
+    "get_client_sessions",
+    "get_anomalies",
 )
 
 

@@ -7,6 +7,328 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.4] - 2026-06-14
+
+### Fixed
+
+- **`set_lan_ipv6` `prefix_id` now actually carves a distinct /64 for a SECOND
+  PD LAN.** v0.15.2 added an optional `prefix_id` (typed `str`) that wrote
+  `ipv6_pd_prefixid` but ALSO flipped `ipv6_setting_preference` to `auto` on
+  every PD enable. On UniFi Network 10.4.57 the controller's `auto` mode manages
+  the sub-prefix carve itself and hands the primary slice (id 0) to ONE LAN (the
+  Default/MGMT LAN), leaving a second auto PD LAN with an empty `ipv6_subnets` —
+  so a pinned `prefix_id` was effectively ignored. Probed live 2026-06-14:
+  Default = auto / id 0 -> `2606:380:2000:4ad::/64`; TRUSTED = auto / no id ->
+  `ipv6_subnets=[]`.
+- **The fix:** when `prefix_id` is supplied with `interface_type="pd"`, the tool
+  now writes `ipv6_pd_prefixid=<id>` AND pins `ipv6_setting_preference="manual"`
+  (it no longer flips to `auto` in this branch), because only manual mode honours
+  an operator-pinned sub-prefix. Both keys are added to the patch, so the strict
+  read-modify-write and the PD scaffold-fill preserve them. Verified live: TRUSTED
+  (VLAN20) with `prefix_id=1` persisted both fields and carved its own distinct
+  /64 from Empire's /56.
+
+### Changed
+
+- **`prefix_id` is now `int` (was `str`).** Default sentinel `-1` means "not
+  supplied" (so `0`, a real distinct sub-prefix id, is preserved as a value).
+  Omitting `prefix_id` keeps the legacy `auto` carve unchanged (back-compat for
+  the primary MGMT/Default LAN). The tool manifest schema now exposes
+  `prefix_id` as `type: integer`.
+
+## [0.15.3] - 2026-06-14
+
+### Fixed
+
+- **`set_lan_ipv6` PD enable no longer 400s with `api.err.InvalidIpv6Addr` on a
+  fresh LAN.** v0.15.2 fixed the WAN binding but only succeeded on the
+  Default/MGMT LAN because that record already carried a leftover PD-window
+  scaffold (`ipv6_pd_start=::2`, `ipv6_pd_stop=::7d1`) from a prior half-config,
+  which the strict read-modify-write preserved. A genuinely fresh LAN (TRUSTED,
+  IoT, GUEST — `ipv6_setting_preference=manual`, every `ipv6_*`/`dhcpdv6_*` key
+  unset) has no such fields, so the merged record carried `ipv6_pd_start: null`
+  and the controller rejected it (HTTP 400 `InvalidIpv6Addr`).
+- **Comprehensive fix (full delta, not one field).** Computed live against the
+  UCG-Fiber (UniFi Network 10.4.57) by diffing the WORKING Default LAN against a
+  fresh blank LAN. When enabling `interface_type="pd"`, the tool now fills the
+  COMPLETE PD scaffold a blank LAN lacks, copied verbatim from Default's working
+  record:
+  - `ipv6_pd_start` `::2`, `ipv6_pd_stop` `::7d1` (the PD window the controller
+    demanded — the `null` culprit)
+  - `dhcpdv6_start` `::2`, `dhcpdv6_stop` `::7d1`, `dhcpdv6_leasetime` `86400`
+    (DHCPv6 lease window)
+  - `ipv6_ra_priority` `high`, `ipv6_ra_preferred_lifetime` `14400` (RA lifetimes)
+  - `ipv6_aliases` `[]`
+  - `ipv6_setting_preference` flipped `manual` → `auto`: a manual LAN validates
+    and persists but the controller will not auto-carve a sub-prefix for it, so
+    it never gets a global /64. Default runs `auto`.
+- **Scaffold is non-destructive.** Each default is applied ONLY when the live
+  record lacks that key (absent/null) AND the caller did not set it explicitly,
+  so an already-configured PD LAN (like Default) keeps its own window via strict
+  read-modify-write. The WAN-binding auto-resolve, the optional `prefix_id`, and
+  the `none`/`static` paths from v0.15.2/v0.15.1 are unchanged.
+- **Live-verified on TRUSTED (VLAN20, the fresh-LAN proof):** the full
+  fixed-code payload (`pd` + `wan` binding + complete scaffold +
+  `ipv6_setting_preference=auto`) was applied to TRUSTED end-to-end; the
+  controller returned HTTP 200 `rc:ok` and the networkconf now matches Default's
+  working PD config exactly. TRUSTED IPv6 is left ENABLED. The gateway had not
+  yet carved TRUSTED's runtime `/64` onto its VLAN20 interface at ship time; that
+  carve requires a gateway provision cycle, which is out of scope for a
+  TRUSTED-only IPv6 change (do not force-provision the shared gateway). Config is
+  correct and accepted; runtime convergence is the gateway's to complete.
+- New stub + real-mode regression tests assert a fresh LAN (no pre-existing
+  ipv6 fields) emits a complete, non-null PD payload (`pd_start`/`stop`
+  populated, `pd_interface=wan`, full lease/RA scaffold, `auto` preference), and
+  that an already-configured PD LAN is not clobbered.
+
+## [0.15.2] - 2026-06-14
+
+### Fixed
+
+- **`set_lan_ipv6` PD enable path no longer 400s with
+  `api.err.PdRequiresAssignedDhcpv6Wan`.** Enabling prefix delegation on a LAN
+  (`interface_type="pd"`) was rejected by the controller on every apply. Root
+  cause, fixed and verified live against the UCG-Fiber (UniFi Network 10.4.57):
+  - **Missing WAN-uplink binding.** A PD LAN networkconf must reference which
+    DHCPv6 WAN's delegation it draws from via `ipv6_pd_interface` (the WAN's
+    networkgroup, lowercased — `"wan"` on this gateway). The tool emitted only
+    `ipv6_interface_type="pd"` and omitted the binding, so the controller
+    rejected the merged record. Probed live: `ipv6_interface_type=pd` alone →
+    HTTP 400 `PdRequiresAssignedDhcpv6Wan`; adding `ipv6_pd_interface="wan"` →
+    HTTP 200 and the LAN receives a global /64.
+  - The fix auto-resolves the binding from the WAN that actually has DHCPv6-PD
+    enabled (`ipv6_wan_delegation_type=="pd"` + non-disabled `wan_type_v6`) and
+    injects `ipv6_pd_interface` into the patch. When no WAN delegates a prefix,
+    the tool returns a clear error pointing at `set_wan_ipv6` instead of letting
+    the controller 400.
+  - **New optional `prefix_id` param.** A hex sub-prefix id selecting which /64
+    to carve from the delegated /56, sent as `ipv6_pd_prefixid` (only with
+    `interface_type="pd"`). On UniFi Network 10.4.57 the controller auto-carves
+    the sub-prefix and ignores this value; it is accepted for forward/
+    cross-firmware compatibility.
+  - Strict read-modify-write for all non-IPv6 keys and the `none`/`static`
+    paths are unchanged. Added stub + real-mode regression tests pinning the
+    WAN-binding payload, the `prefix_id` forwarding, and the no-delegation
+    error.
+  - **Live-verified:** the Default/MGMT LAN was enabled end-to-end through the
+    fixed code path. The gateway carved `2606:380:2000:4ad::/64` from the
+    delegated `2606:380:2000::/56` (gateway LAN address
+    `2606:380:2000:4ad::1`) and a real client picked up the global address
+    `2606:380:2000:4ad:a6bb:6dff:feac:287c`. Default IPv6 is left enabled.
+
+## [0.15.1] - 2026-06-14
+
+### Fixed
+
+- **`set_wan_ipv6` enable path no longer 400s with `api.err.InvalidValue`.**
+  Enabling DHCPv6-PD on the WAN (`connection_type="dhcpv6"` +
+  `prefix_delegation="prefix-delegation"`) was rejected by the controller on
+  every apply. Two root causes, both fixed and verified live against the
+  UCG-Fiber (UniFi Network 10.4.57):
+  - **Wrong delegation enum value.** The controller stores/accepts
+    `ipv6_wan_delegation_type: "pd"`, not `"prefix-delegation"` (the literal
+    `"prefix-delegation"` is rejected with `InvalidValue`). The tool now accepts
+    the descriptive `"prefix-delegation"` alias (and the raw `"pd"`) and
+    normalises it to the `"pd"` wire value before the PUT.
+  - **Inconsistent PD-size pair.** The live WAN record carries
+    `wan_dhcpv6_pd_size_auto: false` with no `wan_dhcpv6_pd_size` key. When
+    enabling delegation the tool now always emits a self-consistent pair: an
+    explicit `pd_size` pins `wan_dhcpv6_pd_size_auto=false` + that size;
+    enabling delegation with no explicit size pins
+    `wan_dhcpv6_pd_size_auto=true` so the controller auto-sizes.
+  - The strict read-modify-write for all non-IPv6 keys, the disable path, and
+    dual-WAN targeting are unchanged. Added stub + real-mode regression tests
+    pinning the exact accepted payload.
+
+## [0.15.0] - 2026-06-12
+
+### Added
+
+- **Network tool expansion: firewall groups, static routes, and v2 traffic
+  policies (18 new Network tools).** All four endpoint families were verified
+  live read-only against the UCG-Fiber (UniFi Network 10.4.57) before build;
+  each returns an empty list on a fresh gateway. Reads return the records as-is;
+  every mutating tool carries `dry_run=True`, and the deletes use the
+  preview-then-confirm token flow (`confirm_destructive_action`). A new
+  reusable client helper `_v2_request` wraps the `/proxy/network/v2/api/site/<site>/...`
+  surface (bare-list responses, unlike the legacy `{meta, data}` envelope).
+  - **Firewall groups** (`/rest/firewallgroup`, folded into the firewall
+    module): `list_firewall_groups`, `get_firewall_group_details`,
+    `create_firewall_group` (type one of `address-group` /
+    `ipv6-address-group` / `port-group`), `update_firewall_group` (full-PUT
+    read-modify-write; members replaced wholesale, `group_type` preserved),
+    `delete_firewall_group` (preview-token).
+  - **Static routes** (`/rest/routing`, new `routing` module):
+    `list_routes`, `get_route_details`, `create_route` (CIDR destination +
+    next-hop + administrative distance), `update_route`, `delete_route`
+    (preview-token).
+  - **Traffic rules** (v2 `/trafficrules`, new `traffic` module):
+    `list_traffic_rules`, `get_traffic_rule_details`, `create_traffic_rule`,
+    `update_traffic_rule` (read-modify-write), `toggle_traffic_rule`
+    (enable/disable).
+  - **Traffic routes** (v2 `/trafficroutes`, policy-based routing):
+    `list_traffic_routes`, `get_traffic_route_details`, `update_traffic_route`
+    (incl. `kill_switch_enabled`), `toggle_traffic_route`.
+- Stub parity: seeded in-memory state for firewall groups, static routes,
+  traffic rules, and traffic routes so the offline stub backend round-trips
+  create/update/delete for each.
+- **Network detail + DNS tools (10 new Network tools).** All endpoints were
+  verified live read-only against the UCG-Fiber (UniFi Network 10.4.57) before
+  build. Mutating tools carry `dry_run=True`; deletes use the
+  preview-then-confirm token flow (`confirm_destructive_action`).
+  - **Network detail** (`/rest/networkconf`, folded into the VLAN module):
+    `get_network_details` — the deep, sectioned view that complements
+    `list_networks`. Resolves a network by `network_id` or `name` and groups
+    the record into `network` (identity), `dhcp` (all `dhcpd_*`/`dhcpdv6_*`),
+    `ipv6` (LAN IPv6: `ipv6_interface_type`, `ipv6_ra_enabled`,
+    `ipv6_client_address_assignment`, `ipv6_pd_start`/`ipv6_pd_stop`, RA
+    tuning), `vpn`, and `raw` sections. (No `create_network`/`delete_network`
+    added: `create_vlan`/`delete_vlan` already cover non-VLAN corporate LANs
+    via the `purpose` parameter, so a generic pair would be redundant.)
+  - **DNS content filtering** (v2 `/content-filtering`, new `content_filtering`
+    module; the gateway's adblock/category-blocking profiles):
+    `list_content_filters`, `get_content_filter_details`,
+    `update_content_filter` (read-modify-write; list fields replaced
+    wholesale), `delete_content_filter` (preview-token).
+  - **Dynamic DNS** (`/rest/dynamicdns`, new `dynamic_dns` module):
+    `list_dynamic_dns`, `get_dynamic_dns_details`, `create_dynamic_dns`
+    (provider/host/login/password/interface; password redacted in previews and
+    reads), `update_dynamic_dns`, `delete_dynamic_dns` (preview-token).
+  - A static-DNS-records API (`/v2/.../dns-records`) returned 404 on this
+    firmware, so no static-DNS-record tools were built (no live surface).
+- Stub parity: seeded a sample content-filtering profile (so get/update/delete
+  round-trip) and an empty Dynamic DNS collection (matching the live gateway;
+  create/update/delete still round-trip).
+- **Stats & insights read pack (6 new Network tools, all read-only).** Every
+  endpoint was probed read-only against the live UCG-Fiber (UniFi Network
+  10.4.57) before build; tools were shipped only where the firmware exposes a
+  working surface. All six are in `READ_ONLY_TOOLS` (no `dry_run`). Backend
+  shaping (`clients/stats_shape.py`) trims the noisy controller records to a
+  compact, stable LLM-facing payload identical across the stub and real
+  backends.
+  - `get_system_info` (`/stat/sysinfo`) — controller version, build, hostname,
+    uptime, device type, and update-availability flags.
+  - `get_gateway_stats` (gateway `/stat/device` record) — CPU %, memory %,
+    board/CPU/PMIC temperatures, throughput counters, client count, WAN IP.
+  - `get_device_stats(mac)` (`/stat/device`) — per-device uptime, CPU/mem,
+    satisfaction, client count, throughput, and (for APs) tx-retries/packets.
+  - `get_client_stats(mac)` (`/stat/sta`) — per-client signal/RSSI/satisfaction,
+    uptime, tx/rx bytes and rates, retries, anomalies; wired fields when wired.
+  - `get_client_sessions(mac="", hours=24, limit=50)` (`POST /stat/session`) —
+    recent connection sessions, newest first, with assoc time, duration,
+    throughput, and roaming detail; optional per-client filter.
+  - `get_anomalies` (`/stat/anomalies`) — client-impacting anomalies
+    (e.g. `USER_HIGH_TCP_LATENCY`) with the affected MAC and occurrence times.
+  - **Deferred (no live surface on this firmware, not shipped):** IPS/IDS
+    threat events (`/stat/ips/event`, `/stat/ips/events`, `/rest/ips`,
+    `/stat/threat` all 404/400) and the full DPI pack (`get_dpi_stats`,
+    `get_site_dpi_traffic`, `list_dpi_applications`, `list_dpi_categories`) —
+    DPI is unpopulated on this gateway and the app/category reference dicts
+    (`/stat/dpiapp`, `/stat/dpigroup`) 404. **Skipped as duplicates:**
+    `get_top_clients` (the existing `list_top_talkers` already wraps the DPI
+    by-station view) and `get_network_health` (the existing `get_site_health`
+    already passes the full `/stat/health` per-subsystem record through).
+- Stub parity: seeded sysinfo, anomalies, and client-session state plus
+  `system-stats`/`temperatures`/`stat.ap` fields on the seed gateway and AP so
+  the offline stub backend returns plausible stats for every Wave C tool.
+
+## [0.14.0] - 2026-06-12
+
+### Added
+
+- **IPv6 / dual-stack configuration tools (3 new Network tools).** IPv6 is
+  modelled entirely inside the `/rest/networkconf` records the VLAN tools
+  already read-modify-write, so these tools reuse `list_networks` /
+  `update_network` (`PUT /rest/networkconf/<id>`) — no new endpoint. Every
+  write reads the live record first, mutates only the supplied IPv6 keys, and
+  writes the rest back unchanged. Mutating tools carry `dry_run=True` with a
+  `before`/`after` diff.
+  - `get_wan_ipv6` — read-only view of the WAN uplink IPv6 config:
+    `wan_type_v6` (connection type), `ipv6_wan_delegation_type`,
+    `wan_dhcpv6_pd_size_auto`/`wan_dhcpv6_pd_size`, `wan_ipv6_dns_preference`,
+    `ipv6_setting_preference`. The read-before-write companion for
+    `set_wan_ipv6`.
+  - `set_wan_ipv6` — set the WAN IPv6 connection type
+    (`disabled`/`dhcpv6`/`pppoe`/`static`), prefix delegation
+    (`none`/`prefix-delegation`), PD size (48-64), and IPv6 DNS preference.
+    Multi-WAN gateways select by `wan_name`. The `dry_run` output includes an
+    explicit **blast-radius** note: changing the WAN IPv6 type re-establishes
+    the WAN IPv6 session (IPv6 hosts briefly lose reachability; IPv4 is
+    unaffected).
+  - `set_lan_ipv6` — set a LAN/VLAN's IPv6 interface type
+    (`none`/`pd`/`static`), Router Advertisements on/off, address-assignment
+    mode (`slaac`/`dhcpv6`), and DHCPv6 DNS (auto or up to four explicit
+    servers). Refuses a WAN target and points the caller at `set_wan_ipv6`.
+- `list_networks` now surfaces each network's IPv6 state inline
+  (`ipv6_interface_type`, `ipv6_ra_enabled`, `ipv6_client_address_assignment`)
+  so callers see dual-stack status without a separate read.
+- Stub parity: the seeded stub state now carries a WAN `networkconf` record
+  and IPv6 keys on the LAN so the IPv6 tools return plausible state offline.
+
+### Field surface (probed live, 2026-06-12)
+
+- Probed a UCG-Fiber on UniFi Network 10.4.57 (Empire Access uplink, ASN
+  40545). All WAN and LAN IPv6 keys above are present and writable on the
+  `networkconf` records.
+
+### Not added
+
+- An IPv6-specific firewall tool. On this firmware the `/rest/firewallrule`
+  records carry **no** IP-family/version field and only the `LAN_IN` ruleset
+  is present, so IPv4 and IPv6 rules cannot be distinguished through this API
+  surface. Follow-up gap: when IPv6 is enabled, IPv6 inbound hosts are not
+  separately firewalled by the existing rule tools. Track separately before
+  exposing global IPv6 to LAN clients.
+
+## [0.13.0] - 2026-06-11
+
+### Added
+
+- **AP radio tuning and device management tools (5 new Network tools).**
+  All write tools read the live device record first, mutate only the
+  targeted radio's `radio_table` entry, and PUT the full table back
+  (`PUT /rest/device/<id>`, the same endpoint `set_port_state` already
+  uses) — untargeted radios and fields are preserved byte-for-byte.
+  Every response includes the `before`/`after` values for the changed
+  radio, and `dry_run=True` previews the exact diff without writing.
+  - `get_device_radios` — read-only per-radio view: channel, width,
+    `tx_power_mode`, `tx_power`, min-RSSI state, and the hardware
+    `min_txpower`/`max_txpower` bounds. The read-before-write companion
+    for the tools below.
+  - `set_radio_tx_power` — per-radio transmit power mode
+    (`auto`/`high`/`medium`/`low`/`custom` + exact dBm for custom,
+    validated against the radio's supported range).
+  - `set_radio_min_rssi` — enable/disable minimum RSSI per radio with a
+    threshold in dBm, for kicking sticky clients toward a closer AP.
+  - `set_radio_channel` — per-radio channel (`auto` or fixed) and/or
+    channel width (20/40/80/160/240/320 MHz).
+  - `rename_device` — set a device's display name.
+  - Bands are addressed as `2g`/`5g`/`6g` (raw UniFi ids `ng`/`na`/`6e`
+    also accepted).
+- Backend seam: `get_device_by_mac` + `update_device` on the `Backend`
+  protocol, both stub and real implementations.
+
+### Not added
+
+- A band-steering toggle was considered and dropped: probing a live
+  UCG-Fiber (UniFi Network 10.4.57, AP fw 6.7.41) found no
+  `bandsteering_mode` on device records and no per-WLAN steering toggle —
+  recent firmware handles band assignment automatically.
+
+## [0.12.0] - 2026-06-03
+
+### Fixed
+
+- **`list_alarms` uses the real alarm route on current firmware:**
+  `GET /api/s/<site>/list/alarm?archived=<bool>` (the v0.11.0
+  `POST /stat/alarm` form still 404'd against a live UCG-Fiber on
+  UniFi Network 10.4.57), plus a defensive client-side `archived` filter.
+- **`list_events` degrades gracefully on firmware with no event route:**
+  `/stat/event` is genuinely absent on UCG-Fiber / Network 10.4.57 (404),
+  so the client returns `[]` instead of erroring, and passes records
+  through unchanged if a future firmware restores the route.
+- `/health` echoes the running version in its JSON body.
+
 ## [0.11.0] - 2026-06-03
 
 ### Fixed

@@ -20,16 +20,22 @@ from mcp_unifi.modules.network import (
     clients,
     composites,
     confirm,
+    content_filtering,
     devices,
     dhcp,
     drift,
+    dynamic_dns,
     firewall,
     honeypot,
+    ipv6,
     observability,
     port_forwards,
     port_profiles,
+    routing,
+    stats,
     teleport,
     threat_management,
+    traffic,
     vlans,
     wlans,
 )
@@ -50,14 +56,20 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     the primitives.
     """
     vlans.register(mcp, settings, registry)
+    ipv6.register(mcp, settings, registry)
     wlans.register(mcp, settings, registry)
     firewall.register(mcp, settings, registry)
+    routing.register(mcp, settings, registry)
+    traffic.register(mcp, settings, registry)
+    content_filtering.register(mcp, settings, registry)
+    dynamic_dns.register(mcp, settings, registry)
     port_profiles.register(mcp, settings, registry)
     devices.register(mcp, settings, registry)
     clients.register(mcp, settings, registry)
     dhcp.register(mcp, settings, registry)
     port_forwards.register(mcp, settings, registry)
     observability.register(mcp, settings, registry)
+    stats.register(mcp, settings, registry)
     threat_management.register(mcp, settings, registry)
     honeypot.register(mcp, settings, registry)
     teleport.register(mcp, settings, registry)

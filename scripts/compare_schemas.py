@@ -56,6 +56,7 @@ def _strip_param_description(param: dict[str, Any]) -> dict[str, Any]:
     out.pop("description", None)
     return out
 
+
 #: Tools that mutate state and therefore MUST gain ``dry_run`` in Step 4.
 DESTRUCTIVE_TOOLS: frozenset[str] = frozenset(
     {
@@ -71,6 +72,28 @@ DESTRUCTIVE_TOOLS: frozenset[str] = frozenset(
         "create_firewall_rule",
         "update_firewall_rule",
         "delete_firewall_rule",
+        # firewall groups
+        "create_firewall_group",
+        "update_firewall_group",
+        "delete_firewall_group",
+        # static routes
+        "create_route",
+        "update_route",
+        "delete_route",
+        # traffic rules (v2)
+        "create_traffic_rule",
+        "update_traffic_rule",
+        "toggle_traffic_rule",
+        # traffic routes (v2)
+        "update_traffic_route",
+        "toggle_traffic_route",
+        # content filtering (v2 DNS)
+        "update_content_filter",
+        "delete_content_filter",
+        # dynamic DNS
+        "create_dynamic_dns",
+        "update_dynamic_dns",
+        "delete_dynamic_dns",
         # port profiles
         "create_port_profile",
         "update_port_profile",
@@ -91,6 +114,13 @@ DESTRUCTIVE_TOOLS: frozenset[str] = frozenset(
         "restart_device",
         "locate_device",
         "set_port_state",
+        "set_radio_tx_power",
+        "set_radio_min_rssi",
+        "set_radio_channel",
+        "rename_device",
+        # ipv6
+        "set_wan_ipv6",
+        "set_lan_ipv6",
         # composites
         "create_iot_network",
         "create_guest_network",
@@ -163,8 +193,7 @@ def main() -> int:
 
     if len(args) != 2:
         sys.stderr.write(
-            "Usage: compare_schemas.py <pre.json> <post.json> "
-            "[--allow-description-changes]\n"
+            "Usage: compare_schemas.py <pre.json> <post.json> [--allow-description-changes]\n"
         )
         return 2
 
@@ -187,9 +216,7 @@ def main() -> int:
     if unexpected_phase2:
         # Informational, not a hard failure: some Phase 2 tools may not yet
         # be present in post.json if it was captured mid-phase.
-        sys.stderr.write(
-            f"NOTE: Phase 2 tools missing from post.json: {unexpected_phase2}\n"
-        )
+        sys.stderr.write(f"NOTE: Phase 2 tools missing from post.json: {unexpected_phase2}\n")
 
     same_tools_with_controller = 0
     same_tools_with_dry_run = 0
@@ -209,41 +236,25 @@ def main() -> int:
             failures.append(f"{name}: missing new 'controller' parameter")
         else:
             ctrl = post_props["controller"]
-            ctrl_cmp = (
-                _strip_param_description(ctrl)
-                if allow_description_changes
-                else ctrl
-            )
+            ctrl_cmp = _strip_param_description(ctrl) if allow_description_changes else ctrl
             if ctrl_cmp != CONTROLLER_PARAM:
-                failures.append(
-                    f"{name}: controller param shape unexpected: {ctrl}"
-                )
+                failures.append(f"{name}: controller param shape unexpected: {ctrl}")
             else:
                 same_tools_with_controller += 1
 
         expect_dry_run = name in DESTRUCTIVE_TOOLS
         if expect_dry_run:
             if "dry_run" not in post_props:
-                failures.append(
-                    f"{name}: destructive tool missing 'dry_run' parameter"
-                )
+                failures.append(f"{name}: destructive tool missing 'dry_run' parameter")
             else:
                 dr = post_props["dry_run"]
-                dr_cmp = (
-                    _strip_param_description(dr)
-                    if allow_description_changes
-                    else dr
-                )
+                dr_cmp = _strip_param_description(dr) if allow_description_changes else dr
                 if dr_cmp != DRY_RUN_PARAM:
-                    failures.append(
-                        f"{name}: dry_run param shape unexpected: {dr}"
-                    )
+                    failures.append(f"{name}: dry_run param shape unexpected: {dr}")
                 else:
                     same_tools_with_dry_run += 1
         elif "dry_run" in post_props:
-            failures.append(
-                f"{name}: read-only tool unexpectedly has 'dry_run' parameter"
-            )
+            failures.append(f"{name}: read-only tool unexpectedly has 'dry_run' parameter")
 
         # Compare schemas with controller (+ dry_run if destructive) stripped.
         # When description changes are allowed, also strip per-param
@@ -269,9 +280,7 @@ def main() -> int:
             allow_description_changes=allow_description_changes,
         )
         if pre_schema != post_schema:
-            failures.append(
-                f"{name}: input_schema changed beyond the allowed additions"
-            )
+            failures.append(f"{name}: input_schema changed beyond the allowed additions")
 
     if failures:
         sys.stderr.write("REGRESSIONS:\n")

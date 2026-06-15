@@ -1,5 +1,5 @@
 {
-  "tool_count": 86,
+  "tool_count": 129,
   "tools": [
     {
       "description": "Return credentials expiring within ``days_ahead`` days.\n\nSide effects: None (read-only).\n\nIterates ``list_credentials`` client-side and filters to those whose\n``expires_at`` falls inside the window ``[now, now + days_ahead]``.\nCredentials with no ``expires_at`` (typical for mobile credentials)\nare excluded. Each entry includes ``days_until_expiry`` so the LLM\ncan sort and summarise without re-doing the math.\n\nExample: audit_expiring_credentials(days_ahead=14)",
@@ -121,6 +121,103 @@
         "type": "object"
       },
       "name": "confirm_destructive_action"
+    },
+    {
+      "description": "Create a Dynamic DNS update configuration.\n\nSide effects:\n- Adds a DDNS config: the gateway will push the WAN IP to ``service``\n  for ``host_name`` whenever the WAN address changes. Takes effect\n  immediately (the gateway sends an update on the next IP check).\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: create_dynamic_dns(service=\"namecheap\", host_name=\"home.example.com\", login=\"example.com\", password=\"<token>\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it. Returns the\npredicted change set (with the password redacted).",
+            "type": "boolean"
+          },
+          "enabled": {
+            "default": true,
+            "description": "``False`` creates the config disabled for staging.",
+            "type": "boolean"
+          },
+          "host_name": {
+            "description": "The FQDN to keep pointed at the WAN IP\n(``\"home.example.com\"``).",
+            "type": "string"
+          },
+          "interface": {
+            "default": "wan",
+            "description": "WAN interface whose IP is tracked. Defaults to\n``\"wan\"`` (the primary WAN on a single-WAN gateway).",
+            "type": "string"
+          },
+          "login": {
+            "description": "Provider account / username. For some providers (e.g.\nNamecheap) this is the zone/domain.",
+            "type": "string"
+          },
+          "password": {
+            "description": "Provider password or API token. Stored write-only and\nredacted in reads.",
+            "type": "string"
+          },
+          "server": {
+            "default": "",
+            "description": "Custom update-URL host. Only used (and required) when\n``service == \"custom\"``; leave empty otherwise.",
+            "type": "string"
+          },
+          "service": {
+            "description": "Provider keyword (e.g. ``\"dyndns\"``, ``\"namecheap\"``,\n``\"cloudflare\"``, ``\"noip\"``, or ``\"custom\"``).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "service",
+          "host_name",
+          "login",
+          "password"
+        ],
+        "type": "object"
+      },
+      "name": "create_dynamic_dns"
+    },
+    {
+      "description": "Create a reusable firewall group of addresses, IPv6 addresses, or ports.\n\nSide effects:\n- Adds a new reusable object. It does nothing on its own until a\n  firewall rule or policy references it by ``_id``.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: create_firewall_group(name=\"IoT Subnets\", group_type=\"address-group\", members=[\"10.50.0.0/24\", \"10.60.0.0/24\"])",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it. Returns the\npredicted change set.",
+            "type": "boolean"
+          },
+          "group_type": {
+            "description": "One of ``\"address-group\"`` (IPv4 CIDRs/IPs),\n``\"ipv6-address-group\"`` (IPv6 CIDRs/IPs), or ``\"port-group\"``\n(TCP/UDP port numbers and ranges).",
+            "type": "string"
+          },
+          "members": {
+            "description": "The group's members as strings. For address groups:\nCIDRs or IPs (``\"10.50.0.0/24\"``). For IPv6 address groups:\nIPv6 CIDRs/IPs. For port groups: ports or ranges\n(``\"443\"``, ``\"8000-8100\"``).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "name": {
+            "description": "Display name for the group (e.g. ``\"IoT Subnets\"``).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "group_type",
+          "members"
+        ],
+        "type": "object"
+      },
+      "name": "create_firewall_group"
     },
     {
       "description": "Create a firewall rule on the controller.\n\nSide effects:\n- Adds a new rule into the named ``ruleset`` at the given\n  ``rule_index``. Rules with lower indexes evaluate first.\n- Takes effect immediately on the next packet hitting the affected\n  datapath.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: create_firewall_rule(name=\"Allow IoT to Plex\", ruleset=\"LAN_IN\", action=\"accept\", protocol=\"tcp\", src_networkconf_id=\"65f...\", dst_networkconf_id=\"65a...\", dst_port=\"32400\")",
@@ -485,6 +582,53 @@
       "name": "create_port_profile"
     },
     {
+      "description": "Create a static next-hop route.\n\nSide effects:\n- Adds a destination-based route: traffic to ``destination`` is sent\n  to ``next_hop`` instead of following the default route. Takes effect\n  immediately on the gateway's routing table.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nBLAST RADIUS: a static route changes where traffic for the\ndestination prefix is sent. A wrong next-hop can black-hole that\nprefix. It does not affect traffic outside ``destination``.\n\nExample: create_route(name=\"Lab via firewall\", destination=\"10.99.0.0/24\", next_hop=\"192.168.1.254\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "destination": {
+            "description": "Destination network in CIDR form\n(``\"10.99.0.0/24\"``). This is the prefix the route matches.",
+            "type": "string"
+          },
+          "distance": {
+            "default": 1,
+            "description": "Administrative distance (1-255). Lower wins when two\nroutes match the same destination. Defaults to ``1``.",
+            "type": "integer"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it. Returns the\npredicted change set.",
+            "type": "boolean"
+          },
+          "enabled": {
+            "default": true,
+            "description": "``False`` creates the route disabled for staging.",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "Display name for the route (e.g. ``\"Lab via firewall\"``).",
+            "type": "string"
+          },
+          "next_hop": {
+            "description": "Next-hop gateway IP that traffic to ``destination`` is\nforwarded to (must be reachable on a directly-connected\nnetwork).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "destination",
+          "next_hop"
+        ],
+        "type": "object"
+      },
+      "name": "create_route"
+    },
+    {
       "description": "Reserve a fixed IP for a client by MAC.\n\nSide effects:\n- Adds a fixed-IP entry on the user object so ``mac`` always receives\n  ``ip`` from the controller's DHCP server. The next DHCP renewal\n  for that client picks up the reservation.\n- The IP must fall inside the network's subnet or the controller\n  will reject the request.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: create_static_dhcp_lease(mac=\"aa:bb:cc:00:00:01\", ip=\"10.50.0.10\", network_id=\"65f...\", name=\"cameras-nvr\")",
       "input_schema": {
         "additionalProperties": false,
@@ -530,6 +674,34 @@
         "type": "object"
       },
       "name": "create_static_dhcp_lease"
+    },
+    {
+      "description": "Create a v2 traffic rule from a full rule object.\n\nSide effects:\n- Adds a new app/domain/IP allow-or-block policy that takes effect\n  immediately on matching traffic.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nThe v2 traffic-rule schema is rich and version-dependent, so this tool\ntakes the full rule object as a dict rather than fixed parameters.\nBuild it from a ``get_traffic_rule_details`` example on a similar rule,\nor from the UniFi UI's network inspector.\n\nExample: create_traffic_rule(rule={\"action\": \"BLOCK\", \"matching_target\": \"INTERNET\", \"target_devices\": [], \"enabled\": True})",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it. Returns the\npredicted change set.",
+            "type": "boolean"
+          },
+          "rule": {
+            "additionalProperties": true,
+            "description": "The full traffic-rule object. Common keys: ``action``\n(``\"BLOCK\"``/``\"ALLOW\"``), ``matching_target``\n(``\"INTERNET\"``/``\"DOMAIN\"``/``\"IP\"``/``\"REGION\"`` etc.),\n``target_devices`` (list), ``enabled`` (bool), and the\ntarget-specific fields (``domains``, ``ip_addresses``,\n``app_ids``, ``regions``) for the chosen ``matching_target``.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "rule"
+        ],
+        "type": "object"
+      },
+      "name": "create_traffic_rule"
     },
     {
       "description": "Create a VLAN-tagged network on the controller.\n\nSide effects:\n- Adds a new network record with the given VLAN ID, IP subnet, and\n  DHCP scope. The first usable address (.1) becomes the gateway.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: create_vlan(name=\"iot\", vlan_id=50, subnet=\"10.50.0.0/24\")",
@@ -666,6 +838,87 @@
       "name": "create_wlan"
     },
     {
+      "description": "Preview deletion of a content-filtering profile.\n\nThis tool does not delete on its own. It returns a preview envelope\nwith a ``token``; call ``confirm_destructive_action(token)`` to commit\nthe delete. Tokens expire after 5 minutes.\n\nSide effects:\n- None until ``confirm_destructive_action`` runs against the token.\n- On confirm: removes the profile. The clients and networks in its\n  scope stop being filtered by it and fall back to whatever other\n  profile (or none) applies.\n- ``dry_run=True`` returns the legacy ``would_delete`` envelope with\n  no token: purely informational, no commit step possible.\n\nExample: delete_content_filter(filter_id=\"65f...\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "``True`` skips token generation and returns the legacy\n``{\"dry_run\": true, ...}`` envelope. ``False`` (default)\ngenerates a preview token that must be confirmed.",
+            "type": "boolean"
+          },
+          "filter_id": {
+            "description": "The ``_id`` from ``list_content_filters``.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "filter_id"
+        ],
+        "type": "object"
+      },
+      "name": "delete_content_filter"
+    },
+    {
+      "description": "Preview deletion of a Dynamic DNS config.\n\nThis tool does not delete on its own. It returns a preview envelope\nwith a ``token``; call ``confirm_destructive_action(token)`` to commit\nthe delete. Tokens expire after 5 minutes.\n\nSide effects:\n- None until ``confirm_destructive_action`` runs against the token.\n- On confirm: removes the DDNS config. The provider stops receiving\n  updates from the gateway; the external hostname goes stale once its\n  TTL lapses.\n- ``dry_run=True`` returns the legacy ``would_delete`` envelope with\n  no token: purely informational, no commit step possible.\n\nExample: delete_dynamic_dns(ddns_id=\"65f...\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "ddns_id": {
+            "description": "The ``_id`` from ``list_dynamic_dns``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "``True`` skips token generation and returns the legacy\n``{\"dry_run\": true, ...}`` envelope. ``False`` (default)\ngenerates a preview token that must be confirmed.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ddns_id"
+        ],
+        "type": "object"
+      },
+      "name": "delete_dynamic_dns"
+    },
+    {
+      "description": "Preview deletion of a firewall group.\n\nThis tool no longer deletes on its own. It returns a preview envelope\nwith a ``token``; call ``confirm_destructive_action(token)`` to commit\nthe delete. Tokens expire after 5 minutes.\n\nSide effects:\n- None until ``confirm_destructive_action`` runs against the token.\n- On confirm: removes the group. **The controller rejects deletion of\n  a group still referenced by any firewall rule** \u2014 detach it from\n  every rule first.\n- ``dry_run=True`` returns the legacy ``would_delete`` envelope with\n  no token \u2014 purely informational, no commit step possible.\n\nExample: delete_firewall_group(group_id=\"65f...\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "``True`` skips token generation and returns the legacy\n``{\"dry_run\": true, ...}`` envelope. ``False`` (default)\ngenerates a preview token that must be confirmed.",
+            "type": "boolean"
+          },
+          "group_id": {
+            "description": "The ``_id`` from ``list_firewall_groups``.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "group_id"
+        ],
+        "type": "object"
+      },
+      "name": "delete_firewall_group"
+    },
+    {
       "description": "Preview deletion of a firewall rule.\n\nv0.7.0: this tool no longer deletes on its own. It returns a preview\nenvelope with a ``token``; call ``confirm_destructive_action(token)``\nto commit the delete. Tokens expire after 5 minutes.\n\nSide effects:\n- None until ``confirm_destructive_action`` runs against the token.\n- On confirm: removes the rule. Traffic that previously matched it\n  falls through to the next rule (or the implicit default).\n- ``dry_run=True`` returns the legacy ``would_delete`` envelope with\n  no token \u2014 purely informational, no commit step possible.\n\nExample: delete_firewall_rule(rule_id=\"65f...\")",
       "input_schema": {
         "additionalProperties": false,
@@ -772,6 +1025,33 @@
         "type": "object"
       },
       "name": "delete_port_profile"
+    },
+    {
+      "description": "Preview deletion of a static route.\n\nThis tool no longer deletes on its own. It returns a preview envelope\nwith a ``token``; call ``confirm_destructive_action(token)`` to commit\nthe delete. Tokens expire after 5 minutes.\n\nSide effects:\n- None until ``confirm_destructive_action`` runs against the token.\n- On confirm: removes the route. Traffic to the destination prefix\n  falls back to the default route (or another matching route).\n- ``dry_run=True`` returns the legacy ``would_delete`` envelope with\n  no token \u2014 purely informational, no commit step possible.\n\nExample: delete_route(route_id=\"65f...\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "``True`` skips token generation and returns the legacy\n``{\"dry_run\": true, ...}`` envelope. ``False`` (default)\ngenerates a preview token that must be confirmed.",
+            "type": "boolean"
+          },
+          "route_id": {
+            "description": "The ``_id`` from ``list_routes``.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "route_id"
+        ],
+        "type": "object"
+      },
+      "name": "delete_route"
     },
     {
       "description": "Preview deletion of a static DHCP reservation.\n\nv0.7.0: this tool no longer deletes on its own. It returns a preview\nenvelope with a ``token``; call ``confirm_destructive_action(token)``\nto commit the delete. Tokens expire after 5 minutes.\n\nSide effects:\n- None until ``confirm_destructive_action`` runs against the token.\n- On confirm: removes the fixed-IP entry. The client returns to\n  dynamic DHCP on its next renewal and may receive a different\n  address.\n- ``dry_run=True`` returns the legacy ``would_delete`` envelope with\n  no token \u2014 purely informational, no commit step possible.\n\nExample: delete_static_dhcp_lease(lease_id=\"65f...\")",
@@ -914,6 +1194,21 @@
       "name": "get_access_system_info"
     },
     {
+      "description": "List client-impacting anomalies the controller has detected.\n\nSide effects: None (read-only).\n\nReturns one record per anomaly with ``anomaly`` (an enum string such\nas ``USER_HIGH_TCP_LATENCY`` or ``USER_DNS_LATENCY``), ``mac`` (the\naffected client), and ``timestamps`` (a list of epoch-ms occurrence\ntimes). Returns an empty list on a clean network.\n\nExample: get_anomalies(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "get_anomalies"
+    },
+    {
       "description": "Fetch a single camera's full record by ID.\n\nSide effects: None (read-only).\n\nReturns the full camera record (same shape as one entry from\n``list_cameras``) including current recording mode, motion sensitivity,\nprivacy-mask state, and the most recent ``lastMotion`` timestamp.\n\nExample: get_camera(camera_id=\"65f...\", controller=\"default\")",
       "input_schema": {
         "additionalProperties": false,
@@ -934,6 +1229,80 @@
         "type": "object"
       },
       "name": "get_camera"
+    },
+    {
+      "description": "List recent client connection sessions over a time window.\n\nSide effects: None (read-only).\n\nReturns one record per association, newest first, with ``mac``,\n``hostname``, ``name``, ``ip``, ``assoc_time`` (epoch seconds),\n``duration`` (seconds), ``rx_bytes``/``tx_bytes``, ``is_wired``,\n``is_guest``, ``ap_mac``, and ``satisfaction``. Pass ``mac`` to scope\nto one client; omit it for every client's sessions in the window.\n\nExample: get_client_sessions(mac=\"aa:bb:cc:00:00:01\", hours=48, limit=20)",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "hours": {
+            "default": 24,
+            "description": "Look-back window in hours (default 24, max 720 = 30 days).",
+            "type": "integer"
+          },
+          "limit": {
+            "default": 50,
+            "description": "Max number of sessions to return (default 50, max 1000).",
+            "type": "integer"
+          },
+          "mac": {
+            "default": "",
+            "description": "MAC address to filter to one client. Empty (default) returns\nsessions for all clients.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "get_client_sessions"
+    },
+    {
+      "description": "Report per-client traffic, signal, and uptime for one client by MAC.\n\nSide effects: None (read-only).\n\nReturns a record with ``hostname``, ``name``, ``ip``, ``is_wired``,\n``network``, ``essid``, ``uptime``, ``first_seen``/``last_seen``,\n``signal``/``rssi``/``satisfaction`` (wireless), ``tx_rate``/``rx_rate``,\n``tx_bytes``/``rx_bytes``, ``tx_retries``, ``anomalies``, and the wired\n``wired_rate_mbps``/``wired_tx_bytes``/``wired_rx_bytes`` fields when\npresent. Returns a NOT_FOUND error envelope if the client is not\ncurrently connected.\n\nExample: get_client_stats(mac=\"aa:bb:cc:00:00:01\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "mac": {
+            "description": "MAC address of the connected client.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mac"
+        ],
+        "type": "object"
+      },
+      "name": "get_client_stats"
+    },
+    {
+      "description": "Show one content-filtering profile's full record by ``_id``.\n\nSide effects: None (read-only). Call this before\n``update_content_filter`` to see the profile's current categories,\nallow/block lists, and scope (the values you are about to\nread-modify-write).\n\nReturns the profile record, or an error envelope if no profile\nmatches.\n\nExample: get_content_filter_details(filter_id=\"65f...\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "filter_id": {
+            "description": "The ``_id`` from ``list_content_filters``.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "filter_id"
+        ],
+        "type": "object"
+      },
+      "name": "get_content_filter_details"
     },
     {
       "description": "Fetch one credential's full record by ID.\n\nSide effects: None (read-only).\n\nSame shape as one entry from ``list_credentials`` plus any\ntype-specific fields (``card_id`` for NFC, ``pin_length`` for PIN,\n``device_label`` for mobile).\n\nExample: get_credential(credential_id=\"cred...\", controller=\"default\")",
@@ -958,6 +1327,50 @@
       "name": "get_credential"
     },
     {
+      "description": "Show per-radio RF settings for an access point.\n\nSide effects: None (read-only). Use this before any\n``set_radio_*`` call to see the current values you are about to\nchange.\n\nReturns the device identity plus one record per radio with\n``radio`` (UniFi id: ``ng``=2.4GHz, ``na``=5GHz, ``6e``=6GHz), the\nfriendly ``band``, ``channel``, ``ht`` (channel width MHz),\n``tx_power_mode`` (``auto`` when unset), ``tx_power``,\n``min_rssi_enabled``, ``min_rssi``, and the hardware\n``min_txpower``/``max_txpower`` bounds.\n\nExample: get_device_radios(device_mac=\"aa:bb:cc:00:00:02\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "device_mac": {
+            "description": "AP MAC address (from ``list_devices``).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_mac"
+        ],
+        "type": "object"
+      },
+      "name": "get_device_radios"
+    },
+    {
+      "description": "Report per-device stats for one UniFi device by MAC.\n\nSide effects: None (read-only).\n\nReturns a record with ``name``, ``model``, ``type``, ``state``,\n``uptime`` (seconds), ``cpu_pct``, ``mem_pct``, ``satisfaction``,\n``num_sta``, ``tx_bytes``/``rx_bytes``, and (for access points)\n``tx_retries``/``tx_packets``/``rx_packets``. Returns a NOT_FOUND\nerror envelope if no adopted device matches ``mac``.\n\nExample: get_device_stats(mac=\"f4:e2:c6:00:00:02\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "mac": {
+            "description": "MAC address of the device (gateway, AP, or switch).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mac"
+        ],
+        "type": "object"
+      },
+      "name": "get_device_stats"
+    },
+    {
       "description": "Fetch one door's full record by ID.\n\nSide effects: None (read-only).\n\nReturns the same fields as one entry in ``list_doors`` plus the live\nlock and position status. Useful for confirming a door is online\nbefore reading recent events against it.\n\nExample: get_door(door_id=\"abc...\", controller=\"default\")",
       "input_schema": {
         "additionalProperties": false,
@@ -978,6 +1391,28 @@
         "type": "object"
       },
       "name": "get_door"
+    },
+    {
+      "description": "Show one Dynamic DNS config's full record by ``_id``.\n\nSide effects: None (read-only). Call this before\n``update_dynamic_dns`` to see the current provider, hostname, and\ntracked interface.\n\nReturns the DDNS record (with ``x_password`` redacted), or an error\nenvelope if no config matches.\n\nExample: get_dynamic_dns_details(ddns_id=\"65f...\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "ddns_id": {
+            "description": "The ``_id`` from ``list_dynamic_dns``.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ddns_id"
+        ],
+        "type": "object"
+      },
+      "name": "get_dynamic_dns_details"
     },
     {
       "description": "Fetch the JPEG thumbnail for a Protect event, base64-encoded.\n\nSide effects: None (read-only).\n\nSame response shape as ``get_snapshot``, but keyed on the event\ninstead of the camera. Useful for previewing a motion or\nsmart-detection trigger without pulling the full clip.\n\nExample: get_event_thumbnail(event_id=\"evt123\", controller=\"default\")",
@@ -1002,6 +1437,68 @@
       "name": "get_event_thumbnail"
     },
     {
+      "description": "Show one firewall group's full record by ``_id``.\n\nSide effects: None (read-only). Call this before\n``update_firewall_group`` to see the current members you are about to\nread-modify-write.\n\nReturns the group record with ``_id``, ``name``, ``group_type``, and\n``group_members``, or an error envelope if no group matches.\n\nExample: get_firewall_group_details(group_id=\"65f...\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "group_id": {
+            "description": "The ``_id`` from ``list_firewall_groups``.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "group_id"
+        ],
+        "type": "object"
+      },
+      "name": "get_firewall_group_details"
+    },
+    {
+      "description": "Report gateway resource stats: CPU, memory, temperature, throughput.\n\nSide effects: None (read-only).\n\nReturns a single record for the gateway (UCG/UDM) with ``cpu_pct``,\n``mem_pct``, ``temperatures`` (a list of ``{name, type, value}`` in\ndegrees C), ``uptime`` (seconds), ``tx_bytes``/``rx_bytes``,\n``num_sta``, ``last_wan_ip``, and ``speedtest_status``. Returns ``{}``\nif no gateway device is adopted on this controller.\n\nExample: get_gateway_stats(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "get_gateway_stats"
+    },
+    {
+      "description": "Show one network's full record, grouped into readable sections.\n\nSide effects: None (read-only). This is the deep view that complements\n``list_networks`` (the summary). Use it to inspect a network's DHCP\nscope, IPv6 configuration, and VPN fields before editing with\n``update_vlan`` / ``set_lan_ipv6``.\n\nResolve the network by ``network_id`` (preferred, from\n``list_networks``) or by ``name`` (case-insensitive; errors if the name\nis ambiguous). Returns:\n\n- ``network``: identity fields (``_id``, ``name``, ``purpose``,\n  ``vlan``, ``vlan_enabled``, ``ip_subnet``, ``enabled``,\n  ``networkgroup``).\n- ``dhcp``: every ``dhcpd_*`` key (lease window, gateway/DNS toggles,\n  lease time, NTP/WINS) plus the IPv6 DHCP (``dhcpdv6_*``) keys.\n- ``ipv6``: the LAN IPv6 view: ``ipv6_interface_type``,\n  ``ipv6_ra_enabled``, ``ipv6_client_address_assignment``,\n  ``ipv6_pd_start`` / ``ipv6_pd_stop`` (the delegated-prefix window),\n  and the RA tuning keys. Empty section on a network with no IPv6.\n- ``vpn``: VPN-related keys (``vpn_type``, ``*_vpn_*``,\n  ``remote_vpn_*``) when the network is a VPN; empty otherwise.\n- ``raw``: the complete unfiltered record, so nothing is hidden.\n\nExample: get_network_details(name=\"Default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "name": {
+            "default": "",
+            "description": "Network display name (case-insensitive) as an alternative to\n``network_id``. Errors if more than one network matches.",
+            "type": "string"
+          },
+          "network_id": {
+            "default": "",
+            "description": "The ``_id`` from ``list_networks``. Wins over ``name``\nwhen both are given.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "get_network_details"
+    },
+    {
       "description": "Return the most recent N events across every door.\n\nSide effects: None (read-only).\n\nConvenience wrapper around ``list_access_events`` with a 24-hour\nwindow and no filters. Useful for \"what just happened\" triage.\n\nExample: get_recent_access_events(limit=10)",
       "input_schema": {
         "additionalProperties": false,
@@ -1020,6 +1517,28 @@
         "type": "object"
       },
       "name": "get_recent_access_events"
+    },
+    {
+      "description": "Show one static route's full record by ``_id``.\n\nSide effects: None (read-only). Call this before ``update_route`` to\nsee the current destination, next hop, and distance.\n\nReturns the route record, or an error envelope if no route matches.\n\nExample: get_route_details(route_id=\"65f...\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "route_id": {
+            "description": "The ``_id`` from ``list_routes``.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "route_id"
+        ],
+        "type": "object"
+      },
+      "name": "get_route_details"
     },
     {
       "description": "Report per-subsystem health (wan, lan, wlan, www, vpn).\n\nSide effects: None (read-only).\n\nReturns one record per subsystem with ``subsystem``, ``status``, and\nsubsystem-specific metrics (e.g. WAN throughput, LAN client counts).\n\nExample: get_site_health(controller=\"default\")",
@@ -1079,6 +1598,21 @@
       "name": "get_speedtest_results"
     },
     {
+      "description": "Report controller/system info: version, uptime, device type.\n\nSide effects: None (read-only).\n\nReturns a single record with ``version``, ``build``,\n``previous_version``, ``hostname``, ``name``, ``uptime`` (seconds),\n``timezone``, ``ubnt_device_type``, ``udm_version``,\n``console_display_version``, and ``update_available``. Use it to check\nthe firmware level and whether an update is pending.\n\nExample: get_system_info(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "get_system_info"
+    },
+    {
       "description": "Return Teleport VPN state and any wireguard-server networks.\n\nSide effects: None (read-only).\n\nReturns ``{\"enabled\": bool, \"vpn_networks\": [...],\n\"clients_via_local_api\": false, \"notes\": [...]}``. The ``enabled``\nflag is the global Teleport listener toggle; ``vpn_networks``\nlists the underlying wireguard-server network records (Teleport\nrides on these for tunnel termination); ``clients_via_local_api``\nis a hard ``false`` on UniFi Network 9.x \u2014 the client roster and\ninvitation lifecycle are only reachable via the Ubiquiti mobile\napp pairing flow, not the local API.\n\nExample: get_teleport_config(controller=\"default\")",
       "input_schema": {
         "additionalProperties": false,
@@ -1109,6 +1643,50 @@
       "name": "get_threat_management"
     },
     {
+      "description": "Show one traffic route's full record by ``_id``.\n\nSide effects: None (read-only). Call this before\n``update_traffic_route`` or ``toggle_traffic_route`` to see the route's\ncurrent matching target, next hop, and kill-switch state.\n\nReturns the route record, or an error envelope if no route matches.\n\nExample: get_traffic_route_details(route_id=\"65f...\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "route_id": {
+            "description": "The ``_id`` from ``list_traffic_routes``.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "route_id"
+        ],
+        "type": "object"
+      },
+      "name": "get_traffic_route_details"
+    },
+    {
+      "description": "Show one traffic rule's full record by ``_id``.\n\nSide effects: None (read-only). Call this before\n``update_traffic_rule`` or ``toggle_traffic_rule`` to see the rule's\ncurrent matching target and action.\n\nReturns the rule record, or an error envelope if no rule matches.\n\nExample: get_traffic_rule_details(rule_id=\"65f...\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "rule_id": {
+            "description": "The ``_id`` from ``list_traffic_rules``.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule_id"
+        ],
+        "type": "object"
+      },
+      "name": "get_traffic_rule_details"
+    },
+    {
       "description": "Fetch one visitor pass's full record by ID.\n\nSide effects: None (read-only).\n\nSame shape as one entry from ``list_visitors`` plus any per-pass\npurpose / notes.\n\nExample: get_visitor(visitor_id=\"vis...\", controller=\"default\")",
       "input_schema": {
         "additionalProperties": false,
@@ -1129,6 +1707,26 @@
         "type": "object"
       },
       "name": "get_visitor"
+    },
+    {
+      "description": "Show the current IPv6 configuration of the WAN uplink(s).\n\nSide effects: None (read-only). Call this before ``set_wan_ipv6`` to\nsee exactly what you are about to change.\n\nReturns one record per WAN interface with ``name``, ``_id``, and the\nIPv6 keys: ``wan_type_v6`` (connection type: ``disabled``/``dhcpv6``/\n``pppoe``/``static``), ``ipv6_wan_delegation_type`` (``none`` or ``pd``),\n``wan_dhcpv6_pd_size_auto``,\n``wan_dhcpv6_pd_size`` (present only when PD is configured),\n``wan_ipv6_dns_preference``, and ``ipv6_setting_preference``.\n\nExample: get_wan_ipv6(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "wan_name": {
+            "default": "",
+            "description": "Restrict the view to a single WAN by display name\n(e.g. ``\"Internet 1\"``). Empty (default) returns every WAN.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "get_wan_ipv6"
     },
     {
       "description": "Report current WAN status: link, ISP, public IP, throughput, latency.\n\nSide effects: None (read-only).\n\nConvenience wrapper around ``get_site_health`` that returns just the\nWAN subsystem record. Returns ``{\"subsystem\": \"wan\", \"status\":\n\"unknown\"}`` if the controller does not report WAN.\n\nExample: get_wan_status(controller=\"default\")",
@@ -1296,6 +1894,21 @@
       "name": "list_clients"
     },
     {
+      "description": "List DNS content-filtering profiles (category blocking, safe-search).\n\nSide effects: None (read-only).\n\nReturns one record per profile with ``_id``, ``name``, ``enabled``,\n``categories`` (blocked DNS-category enum list), ``allow_list`` /\n``block_list`` (per-domain overrides), ``client_macs`` and\n``network_ids`` (the scope the profile applies to), ``safe_search``,\nand ``schedule``. Empty on a gateway with no filtering profiles.\n\nExample: list_content_filters(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_content_filters"
+    },
+    {
       "description": "List every credential enrolled in the Access controller.\n\nSide effects: None (read-only).\n\nReturns one record per credential with ``id``, ``type`` (``nfc``,\n``pin``, or ``mobile``), ``label``, ``user_id``, ``status``,\n``issued_at`` (ms), and ``expires_at`` (ms or null for non-expiring\nmobile credentials).\n\nExample: list_credentials(controller=\"default\")",
       "input_schema": {
         "additionalProperties": false,
@@ -1386,6 +1999,21 @@
       "name": "list_doors"
     },
     {
+      "description": "List Dynamic DNS update configurations on the controller.\n\nSide effects: None (read-only).\n\nReturns one record per DDNS config with ``_id``, ``service``\n(provider), ``host_name`` (the FQDN kept updated), ``login``,\n``server`` (custom update-URL host, if any), ``interface`` (tracked\nWAN), and ``enabled``. The provider password (``x_password``) is\nwrite-only and comes back redacted. Empty on a gateway with no DDNS\nconfigured.\n\nExample: list_dynamic_dns(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_dynamic_dns"
+    },
+    {
       "description": "List recent controller events (connections, disconnections, etc.).\n\nSide effects: None (read-only).\n\nReturns the most recent ``limit`` event records, newest first.\n\nExample: list_events(limit=100)",
       "input_schema": {
         "additionalProperties": false,
@@ -1434,6 +2062,21 @@
         "type": "object"
       },
       "name": "list_failed_access_attempts"
+    },
+    {
+      "description": "List reusable firewall groups (address, IPv6-address, and port groups).\n\nSide effects: None (read-only).\n\nFirewall groups are named, reusable sets of addresses or ports that\nfirewall rules and other policies reference by ``_id`` instead of\nrepeating literals. Returns one record per group with ``_id``,\n``name``, ``group_type`` (``address-group``/``ipv6-address-group``/\n``port-group``), and ``group_members`` (the list of CIDRs, IPs, or\nports).\n\nExample: list_firewall_groups(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_firewall_groups"
     },
     {
       "description": "List every firewall rule on the controller.\n\nSide effects: None (read-only).\n\nReturns one record per rule with ``_id``, ``name``, ``ruleset``,\n``rule_index``, ``action``, ``enabled``, ``protocol``, and\n``src_*``/``dst_*`` fields.\n\nExample: list_firewall_rules(controller=\"default\")",
@@ -1496,7 +2139,7 @@
       "name": "list_motion_events"
     },
     {
-      "description": "List every network/VLAN configured on the controller.\n\nSide effects: None (read-only).\n\nReturns one record per network with ``_id``, ``name``, ``purpose``,\n``vlan``, ``vlan_enabled``, ``ip_subnet``, ``dhcpd_enabled``,\n``dhcpd_start``, ``dhcpd_stop``, and ``enabled``.\n\nExample: list_networks(controller=\"default\")",
+      "description": "List every network/VLAN configured on the controller.\n\nSide effects: None (read-only).\n\nReturns one record per network with ``_id``, ``name``, ``purpose``,\n``vlan``, ``vlan_enabled``, ``ip_subnet``, ``dhcpd_enabled``,\n``dhcpd_start``, ``dhcpd_stop``, and ``enabled``. Records also carry\ntheir IPv6 state inline: ``ipv6_interface_type`` (``none``/``pd``/\n``static``), ``ipv6_ra_enabled`` (router advertisements), and\n``ipv6_client_address_assignment`` (``slaac``/``dhcpv6``). Use\n``set_lan_ipv6`` to change those, or ``get_wan_ipv6`` /\n``set_wan_ipv6`` for the WAN uplink's IPv6 config.\n\nExample: list_networks(controller=\"default\")",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -1568,6 +2211,21 @@
       "name": "list_recordings"
     },
     {
+      "description": "List user-defined static (next-hop) routes on the controller.\n\nSide effects: None (read-only).\n\nReturns one record per route with ``_id``, ``name``, ``type``,\n``static-route_network`` (destination CIDR),\n``static-route_nexthop`` (next-hop IP), ``static-route_distance``,\nand ``enabled``. Empty on a gateway with no custom routes (the default\nroute is managed by the WAN config, not listed here).\n\nExample: list_routes(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_routes"
+    },
+    {
       "description": "List smart-detection events (person, vehicle, animal, package).\n\nSide effects: None (read-only).\n\nFilters Protect's event stream to ``type == \"smartDetectZone\"`` and\nnarrows to entries whose ``smartDetectTypes`` contain\n``detection_type``. Empty ``camera_id`` returns detections across all\ncameras.\n\nExample: list_smart_detections(detection_type=\"person\", hours_back=12)",
       "input_schema": {
         "additionalProperties": false,
@@ -1621,6 +2279,36 @@
         "type": "object"
       },
       "name": "list_top_talkers"
+    },
+    {
+      "description": "List v2 traffic routes (policy-based routing, e.g. VPN-client routes).\n\nSide effects: None (read-only).\n\nReturns one record per route with ``_id``, ``matching_target``,\n``next_hop`` / ``network_id`` (the interface or VPN the matched\ntraffic is sent out), ``kill_switch_enabled``, and ``enabled``. Empty\non a gateway with no policy routes configured.\n\nExample: list_traffic_routes(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_traffic_routes"
+    },
+    {
+      "description": "List v2 traffic rules (app/domain/IP-based allow & block policies).\n\nSide effects: None (read-only).\n\nReturns one record per rule with ``_id``, ``action``\n(``BLOCK``/``ALLOW``), ``matching_target``, ``target_devices``, and\n``enabled``. Empty on a gateway with no traffic rules configured.\n\nExample: list_traffic_rules(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_traffic_rules"
     },
     {
       "description": "List every visitor pass on the controller (active and expired).\n\nSide effects: None (read-only).\n\nReturns one record per visitor with ``id``, ``first_name``,\n``last_name``, ``full_name``, ``email``, ``host_user_id``,\n``valid_from`` (ms), ``valid_until`` (ms), ``status``, and\n``pass_code``.\n\nExample: list_visitors(controller=\"default\")",
@@ -1853,6 +2541,38 @@
       "name": "reconnect_client"
     },
     {
+      "description": "Rename an adopted UniFi device (AP, switch, or gateway).\n\nSide effects:\n- Cosmetic only: changes the display name in the controller and in\n  tool output. No RF or traffic impact, no client disconnects.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: rename_device(device_mac=\"aa:bb:cc:00:00:02\", name=\"Bedroom AP\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "device_mac": {
+            "description": "Device MAC address (from ``list_devices``).",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it. Returns the\npredicted change set.",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "New display name. Must be non-empty.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_mac",
+          "name"
+        ],
+        "type": "object"
+      },
+      "name": "rename_device"
+    },
+    {
       "description": "Restart an adopted UniFi device (gateway, AP, or switch).\n\nSide effects:\n- Issues a soft reboot. The device is unreachable for ~60 seconds.\n- Wireless clients on a restarted AP will be disconnected and must\n  re-associate.\n- Restarting a gateway interrupts WAN/LAN traffic for the duration\n  of the reboot.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: restart_device(mac=\"aa:bb:cc:00:00:01\")",
       "input_schema": {
         "additionalProperties": false,
@@ -1971,6 +2691,87 @@
       "name": "set_camera_recording_mode"
     },
     {
+      "description": "Set the IPv6 configuration of one LAN/VLAN network.\n\nSide effects:\n- Changes how this network gets and advertises IPv6. Turning on\n  ``interface_type=\"pd\"`` plus ``ra_enabled=True`` is what makes the\n  LAN's clients receive global IPv6 addresses from the prefix\n  delegated by the WAN. Toggling router advertisements\n  (``ra_enabled``) or the address-assignment mode causes clients on\n  this network to re-acquire IPv6; IPv4 is unaffected.\n- Only the IPv6 keys you supply change; every other field on the\n  network record is read first and written back unchanged (strict\n  read-modify-write).\n- Mutates controller state. Use dry_run=True to preview the before/\n  after diff without applying.\n\nPrefix-delegation binding: when ``interface_type=\"pd\"`` the controller\nREQUIRES the LAN to reference which DHCPv6 WAN's delegation to draw\nfrom. ``ipv6_interface_type=pd`` on its own returns HTTP 400\n``api.err.PdRequiresAssignedDhcpv6Wan``. This tool auto-binds the LAN to\nthe WAN that actually has DHCPv6-PD enabled (on a single-uplink gateway\nthat is the only internet uplink) by emitting ``ipv6_pd_interface`` =\nthat WAN's networkgroup (e.g. ``\"wan\"``). No WAN with PD enabled \u2192 a\nclear error instead of a controller 400.\n\nFresh-LAN PD scaffold: a brand-new LAN\n(``ipv6_setting_preference=manual``, every ipv6 key unset) has no PD\nwindow, DHCPv6 lease window, or RA lifetimes. Enabling PD on it without\nthose returns HTTP 400 ``api.err.InvalidIpv6Addr`` (the merged record\ncarries ``ipv6_pd_start: null``). When enabling PD, this tool fills the\nCOMPLETE required scaffold with the controller's standard defaults\n(``ipv6_pd_start=::2``, ``ipv6_pd_stop=::7d1``, matching DHCPv6 lease\nwindow, ``ipv6_ra_priority=high``, RA lifetimes) \u2014 but ONLY for keys the\nlive record lacks and the caller did not set explicitly, so an\nalready-configured PD LAN keeps its own window untouched.\n\nCarving a DISTINCT /64 for a SECOND PD LAN (``prefix_id``): on UniFi\nNetwork 10.4.57 the controller's ``auto`` IPv6 mode hands the primary\nsub-prefix (id 0) to ONE LAN (the Default/MGMT LAN) and leaves a second\nauto PD LAN with an empty ``ipv6_subnets`` \u2014 it never carves its own /64\n(probed live 2026-06-14). To give a second LAN its own slice, pass an\nexplicit ``prefix_id`` (e.g. ``1``). When ``prefix_id`` is supplied the\ntool writes ``ipv6_pd_prefixid=<id>`` AND pins\n``ipv6_setting_preference=\"manual\"`` (it does NOT flip to ``auto``),\nbecause only manual mode honours an operator-pinned sub-prefix. Both keys\nsurvive the strict read-modify-write and the scaffold-fill. Omitting\n``prefix_id`` keeps the legacy ``auto`` behaviour unchanged.\n\nRead first: call ``list_networks`` to find the ``network_id`` and see\nthe current ``ipv6_*`` state (now surfaced inline).\n\nExample: set_lan_ipv6(network_id=\"65f...\", interface_type=\"pd\", ra_enabled=True, dry_run=True)",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "address_assignment": {
+            "default": "",
+            "description": "``\"slaac\"`` or ``\"dhcpv6\"``. Empty leaves it\nunchanged.",
+            "type": "string"
+          },
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dns_auto": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "``True`` to advertise the gateway as DNS, ``False`` to\nuse explicit servers from ``dns_servers``. ``None`` leaves it\nunchanged."
+          },
+          "dns_servers": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Up to four IPv6 DNS server addresses, applied as\n``dhcpdv6_dns_1..4`` when ``dns_auto=False``. ``None`` leaves\nthem unchanged."
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the before/after diff without applying it.",
+            "type": "boolean"
+          },
+          "interface_type": {
+            "default": "",
+            "description": "``\"none\"``, ``\"pd\"`` (use the WAN-delegated\nprefix), or ``\"static\"``. Empty leaves it unchanged. When set to\n``\"pd\"`` the WAN binding is added automatically.",
+            "type": "string"
+          },
+          "network_id": {
+            "description": "The ``_id`` from ``list_networks`` (a LAN/VLAN, not a\nWAN).",
+            "type": "string"
+          },
+          "prefix_id": {
+            "default": -1,
+            "description": "Sub-prefix id (e.g. ``0``, ``1``) selecting which /64 to\ncarve from the delegated /56, so multiple PD LANs don't collide.\nOnly valid with ``interface_type=\"pd\"``. Default ``-1`` means\n\"not supplied\" \u2014 the LAN keeps the controller-managed ``auto``\ncarve (only the primary LAN gets a /64). Supplying a value (``0``\nand up) writes ``ipv6_pd_prefixid`` AND pins\n``ipv6_setting_preference=\"manual\"`` so the controller honours the\npinned sub-prefix and the LAN carves its OWN /64. The\nDefault/MGMT LAN already holds id ``0``, so a second LAN needs a\ndistinct id (``1``, ``2``, ...).",
+            "type": "integer"
+          },
+          "ra_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "``True``/``False`` to toggle IPv6 Router\nAdvertisements (SLAAC). ``None`` (default) leaves it unchanged."
+          }
+        },
+        "required": [
+          "network_id"
+        ],
+        "type": "object"
+      },
+      "name": "set_lan_ipv6"
+    },
+    {
       "description": "Set a camera's motion sensitivity (0-100).\n\nSide effects:\n- PATCHes ``motionSettings.sensitivity``. Higher values trigger more\n  motion events; 0 effectively disables motion-based recording even\n  when ``recordingSettings.mode`` is ``\"motion\"``.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: set_motion_sensitivity(camera_id=\"65f...\", sensitivity=60)",
       "input_schema": {
         "additionalProperties": false,
@@ -2057,6 +2858,132 @@
       "name": "set_port_state"
     },
     {
+      "description": "Set the channel and/or channel width of one radio on an AP.\n\nSide effects:\n- The radio retunes immediately; wireless clients on that band\n  briefly disconnect and re-associate.\n- On 5GHz, DFS channels (52-144) may add a radar-scan delay before\n  the radio starts serving clients.\n- Only the targeted radio changes; everything else on the device is\n  read first and written back unchanged.\n- Mutates controller state. Use dry_run=True to preview the change\n  (including the current value) without applying.\n\nRead first: call ``get_device_radios`` to see the current channel\nand width.\n\nExample: set_radio_channel(device_mac=\"aa:bb:cc:00:00:02\", band=\"5g\", channel=\"36\", width_mhz=80)",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "band": {
+            "description": "``\"2g\"``, ``\"5g\"``, or ``\"6g\"`` (raw UniFi ids ``ng``,\n``na``, ``6e`` also accepted).",
+            "type": "string"
+          },
+          "channel": {
+            "default": "",
+            "description": "``\"auto\"`` or a channel number as a string (e.g.\n``\"36\"``). Empty (default) leaves the channel unchanged.",
+            "type": "string"
+          },
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "device_mac": {
+            "description": "AP MAC address (from ``list_devices``).",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it. Returns the\npredicted change set.",
+            "type": "boolean"
+          },
+          "width_mhz": {
+            "default": 0,
+            "description": "Channel width: 20, 40, 80, 160, 240, or 320.\n``0`` (default) leaves the width unchanged.",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "device_mac",
+          "band"
+        ],
+        "type": "object"
+      },
+      "name": "set_radio_channel"
+    },
+    {
+      "description": "Enable, tune, or disable minimum RSSI on one radio of an AP.\n\nSide effects:\n- With min-RSSI enabled, the AP kicks clients whose signal drops\n  below the threshold, forcing them to roam to a closer AP. A\n  threshold set too aggressive (e.g. -60) causes disconnect loops\n  for legitimately distant clients.\n- Only the targeted radio changes; everything else on the device is\n  read first and written back unchanged.\n- Mutates controller state. Use dry_run=True to preview the change\n  (including the current value) without applying.\n\nRead first: call ``get_device_radios`` to see the current state.\nTypical sticky-client thresholds are -75 to -70 dBm.\n\nExample: set_radio_min_rssi(device_mac=\"aa:bb:cc:00:00:02\", band=\"5g\", enabled=True, rssi_dbm=-75)",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "band": {
+            "description": "``\"2g\"``, ``\"5g\"``, or ``\"6g\"`` (raw UniFi ids ``ng``,\n``na``, ``6e`` also accepted).",
+            "type": "string"
+          },
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "device_mac": {
+            "description": "AP MAC address (from ``list_devices``).",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it. Returns the\npredicted change set.",
+            "type": "boolean"
+          },
+          "enabled": {
+            "description": "``True`` enforces the threshold; ``False`` turns\nmin-RSSI off for this radio.",
+            "type": "boolean"
+          },
+          "rssi_dbm": {
+            "default": 0,
+            "description": "Threshold in dBm (negative, e.g. ``-75``). Required\nwhen ``enabled=True``.",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "device_mac",
+          "band",
+          "enabled"
+        ],
+        "type": "object"
+      },
+      "name": "set_radio_min_rssi"
+    },
+    {
+      "description": "Set the transmit power mode of one radio on an access point.\n\nSide effects:\n- Changes the AP's RF footprint. Lowering TX power shrinks coverage;\n  clients at the cell edge may roam to another AP or drop to a lower\n  PHY rate. The radio applies the change within seconds (brief\n  client re-association possible).\n- Only the targeted radio changes; the device's other radios and\n  settings are read first and written back unchanged.\n- Mutates controller state. Use dry_run=True to preview the change\n  (including the current value) without applying.\n\nRead first: call ``get_device_radios`` to see the current mode and\nthe radio's supported dBm range before changing it.\n\nExample: set_radio_tx_power(device_mac=\"aa:bb:cc:00:00:02\", band=\"5g\", mode=\"medium\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "band": {
+            "description": "``\"2g\"``, ``\"5g\"``, or ``\"6g\"`` (raw UniFi ids ``ng``,\n``na``, ``6e`` also accepted).",
+            "type": "string"
+          },
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "device_mac": {
+            "description": "AP MAC address (from ``list_devices``).",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it. Returns the\npredicted change set.",
+            "type": "boolean"
+          },
+          "mode": {
+            "description": "``\"auto\"``, ``\"high\"``, ``\"medium\"``, ``\"low\"``, or\n``\"custom\"`` (requires ``power_dbm``).",
+            "type": "string"
+          },
+          "power_dbm": {
+            "default": 0,
+            "description": "Exact transmit power in dBm, only used with\n``mode=\"custom\"``. Validated against the radio's\n``min_txpower``/``max_txpower`` bounds.",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "device_mac",
+          "band",
+          "mode"
+        ],
+        "type": "object"
+      },
+      "name": "set_radio_tx_power"
+    },
+    {
       "description": "Toggle the Teleport VPN listener.\n\nSide effects:\n- Patches the ``teleport`` setting record's ``enabled`` field.\n  When ``False``, the controller tears down the listener and\n  disconnects any active sessions. Registered clients (via the\n  mobile app) remain registered and reconnect once the listener\n  is re-enabled.\n- Mutates controller state. Use dry_run=True to preview.\n\nExample: set_teleport_enabled(enabled=True)",
       "input_schema": {
         "additionalProperties": false,
@@ -2131,6 +3058,51 @@
       "name": "set_threat_management"
     },
     {
+      "description": "Set the WAN uplink's IPv6 connection type and prefix delegation.\n\nSide effects:\n- Changes how the gateway obtains IPv6 on the WAN. **Changing\n  ``connection_type`` tears down and re-establishes the WAN IPv6\n  session**: existing IPv6 connections drop and the gateway\n  re-negotiates with the ISP (DHCPv6/SLAAC). IPv4 connectivity is not\n  affected, but IPv6 hosts lose reachability for a few seconds to a\n  minute. Enabling delegation (``prefix-delegation``) is what hands\n  IPv6 prefixes down to your LANs.\n- Only the IPv6 keys you supply change; every other field on the WAN\n  record is read first and written back unchanged (strict\n  read-modify-write).\n- Mutates controller state. Use dry_run=True to preview the before/\n  after diff without applying.\n\nRead first: call ``get_wan_ipv6`` to see the current values.\n\nBLAST RADIUS: this is a WAN-level change. On dual-WAN gateways it only\ntouches the named WAN. Do not run this against the live gateway without\nintent: a mistyped ``connection_type`` can leave the WAN with no IPv6.\n\nExample: set_wan_ipv6(connection_type=\"dhcpv6\", prefix_delegation=\"prefix-delegation\", dry_run=True)",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "connection_type": {
+            "default": "",
+            "description": "``\"disabled\"``, ``\"dhcpv6\"``, ``\"pppoe\"``, or\n``\"static\"``. Empty leaves it unchanged. Most ISPs that hand\nout IPv6 (incl. Empire Access) use ``\"dhcpv6\"``.",
+            "type": "string"
+          },
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dns_preference": {
+            "default": "",
+            "description": "``\"auto\"`` or ``\"manual\"`` for IPv6 DNS. Empty\nleaves it unchanged.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the before/after diff without applying it.",
+            "type": "boolean"
+          },
+          "pd_size": {
+            "default": 0,
+            "description": "DHCPv6-PD prefix size (48-64), e.g. ``56``. When enabling\ndelegation, the controller requires a consistent\n``wan_dhcpv6_pd_size_auto`` / ``wan_dhcpv6_pd_size`` pair: a\nnon-zero ``pd_size`` pins ``wan_dhcpv6_pd_size_auto=false`` and\nsends that size; ``pd_size=0`` while enabling delegation pins\n``wan_dhcpv6_pd_size_auto=true`` (controller auto-sizes). Leaving\nan inconsistent pair on the record is what triggers\n``api.err.InvalidValue``, so the tool always emits a consistent\npair when delegation is turned on.",
+            "type": "integer"
+          },
+          "prefix_delegation": {
+            "default": "",
+            "description": "``\"none\"`` or ``\"prefix-delegation\"`` (alias for\nthe controller's wire value ``\"pd\"``; ``\"pd\"`` is also accepted).\nEmpty leaves it unchanged. Prefix delegation is required for your\nLANs to receive IPv6 subnets.",
+            "type": "string"
+          },
+          "wan_name": {
+            "default": "",
+            "description": "Display name of the WAN to target (e.g. ``\"Internet 1\"``).\nRequired only on multi-WAN gateways; single-WAN gateways match\nautomatically.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "set_wan_ipv6"
+    },
+    {
       "description": "Aggregate badge events by door, user, and outcome.\n\nSide effects: None (read-only).\n\nPulls events over the last ``hours_back`` hours (cap 500 to keep the\nsummary tractable) and rolls them up into counts so the LLM can\nanswer \"who used which door how often\" without re-aggregating\nclient-side. Returns ``total``, ``granted``, ``denied``, plus\n``by_door`` and ``by_user`` maps.\n\nExample: summarize_access_activity(hours_back=24)",
       "input_schema": {
         "additionalProperties": false,
@@ -2149,6 +3121,70 @@
         "type": "object"
       },
       "name": "summarize_access_activity"
+    },
+    {
+      "description": "Enable or disable a traffic route without editing its other fields.\n\nSide effects:\n- Flips the route's ``enabled`` flag. Reads the current route first\n  and PUTs the full object back with only ``enabled`` changed\n  (read-modify-write), so the rest of the route is preserved.\n- Takes effect immediately: a disabled route stops steering its\n  matched traffic, which then follows the default route.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: toggle_traffic_route(route_id=\"65f...\", enabled=False)",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it. Returns the\npredicted change set.",
+            "type": "boolean"
+          },
+          "enabled": {
+            "description": "``True`` to enable the route, ``False`` to disable it.",
+            "type": "boolean"
+          },
+          "route_id": {
+            "description": "The ``_id`` from ``list_traffic_routes``.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "route_id",
+          "enabled"
+        ],
+        "type": "object"
+      },
+      "name": "toggle_traffic_route"
+    },
+    {
+      "description": "Enable or disable a traffic rule without editing its other fields.\n\nSide effects:\n- Flips the rule's ``enabled`` flag. Reads the current rule first and\n  PUTs the full object back with only ``enabled`` changed\n  (read-modify-write), so the rest of the rule is preserved.\n- Takes effect immediately: a disabled BLOCK rule stops blocking; a\n  disabled ALLOW rule stops allowing.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: toggle_traffic_rule(rule_id=\"65f...\", enabled=False)",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it. Returns the\npredicted change set.",
+            "type": "boolean"
+          },
+          "enabled": {
+            "description": "``True`` to enable the rule, ``False`` to disable it.",
+            "type": "boolean"
+          },
+          "rule_id": {
+            "description": "The ``_id`` from ``list_traffic_rules``.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule_id",
+          "enabled"
+        ],
+        "type": "object"
+      },
+      "name": "toggle_traffic_rule"
     },
     {
       "description": "Kick off a UniFi speed test on the WAN link.\n\nSide effects: None on the controller's persistent state. Issues a\none-shot WAN measurement that consumes WAN bandwidth for ~30-60\nseconds while the test runs server-side. Use\n``get_speedtest_results`` to read the result once it finishes.\n\nExample: trigger_speedtest(controller=\"default\")",
@@ -2191,6 +3227,119 @@
         "type": "object"
       },
       "name": "unblock_client"
+    },
+    {
+      "description": "Patch fields on an existing content-filtering profile (read-modify-write).\n\nSide effects:\n- Modifies the named profile in place. The v2 PUT replaces the whole\n  object, so this reads the current profile first and merges\n  ``updates`` onto it before writing: only the keys you supply change,\n  everything else (scope, schedule, the other lists) is preserved.\n- Takes effect immediately on DNS resolution for the in-scope clients\n  and networks: enabling a category starts blocking it; adding a\n  ``block_list`` domain starts NXDOMAIN-ing it.\n- List fields (``categories``, ``allow_list``, ``block_list``,\n  ``client_macs``, ``network_ids``, ``safe_search``) are **replaced\n  wholesale**, not appended, so pass the full desired list. Read the\n  current value with ``get_content_filter_details`` first.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: update_content_filter(filter_id=\"65f...\", updates={\"enabled\": False})",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it. Returns the\npredicted change set.",
+            "type": "boolean"
+          },
+          "filter_id": {
+            "description": "The ``_id`` from ``list_content_filters``.",
+            "type": "string"
+          },
+          "updates": {
+            "additionalProperties": true,
+            "description": "Partial profile record to merge. Common keys: ``name``,\n``enabled``, ``categories`` (full blocked-category list),\n``allow_list`` / ``block_list`` (full per-domain lists),\n``client_macs`` / ``network_ids`` (full scope lists),\n``safe_search``, ``schedule``.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "filter_id",
+          "updates"
+        ],
+        "type": "object"
+      },
+      "name": "update_content_filter"
+    },
+    {
+      "description": "Patch fields on an existing Dynamic DNS config.\n\nSide effects:\n- Modifies the named DDNS config in place. Only fields supplied in\n  ``updates`` change; everything else is preserved.\n- Takes effect immediately: changing ``host_name`` or ``service``\n  repoints the next update; toggling ``enabled`` starts or stops\n  updates.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: update_dynamic_dns(ddns_id=\"65f...\", updates={\"enabled\": False})",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "ddns_id": {
+            "description": "The ``_id`` from ``list_dynamic_dns``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it. Returns the\npredicted change set (``x_password`` redacted if present).",
+            "type": "boolean"
+          },
+          "updates": {
+            "additionalProperties": true,
+            "description": "Partial DDNS record. Common keys: ``service``,\n``host_name``, ``login``, ``x_password`` (new password/token),\n``server``, ``interface``, ``enabled``.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "ddns_id",
+          "updates"
+        ],
+        "type": "object"
+      },
+      "name": "update_dynamic_dns"
+    },
+    {
+      "description": "Rename a firewall group or replace its members (read-modify-write).\n\nSide effects:\n- Replaces the group's name and/or members in place. The members list\n  is **replaced wholesale**, not merged, so pass the full desired set.\n  The group's ``group_type`` is preserved (it is read first and\n  written back unchanged); group type cannot be changed after\n  creation, only members.\n- Every rule referencing this group immediately sees the new members.\n- Mutates controller state. Use dry_run=True to preview the before/\n  after diff without applying.\n\nRead first: call ``get_firewall_group_details`` to see the current\nmembers.\n\nExample: update_firewall_group(group_id=\"65f...\", members=[\"10.50.0.0/24\", \"10.70.0.0/24\"])",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the before/after diff without applying it.",
+            "type": "boolean"
+          },
+          "group_id": {
+            "description": "The ``_id`` from ``list_firewall_groups``.",
+            "type": "string"
+          },
+          "members": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "New full member list (replaces the old one). ``None``\n(default) keeps the current members."
+          },
+          "name": {
+            "default": "",
+            "description": "New display name. Empty (default) keeps the current name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "group_id"
+        ],
+        "type": "object"
+      },
+      "name": "update_firewall_group"
     },
     {
       "description": "Patch fields on an existing firewall rule.\n\nSide effects:\n- Modifies the named rule in place. Only fields supplied in\n  ``updates`` change; everything else is preserved.\n- Takes effect immediately on the next packet hitting the affected\n  datapath.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: update_firewall_rule(rule_id=\"65f...\", updates={\"enabled\": False})",
@@ -2292,6 +3441,39 @@
       "name": "update_port_profile"
     },
     {
+      "description": "Patch fields on an existing static route.\n\nSide effects:\n- Modifies the named route in place. Only fields supplied in\n  ``updates`` change; everything else is preserved.\n- Takes effect immediately on the gateway's routing table.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: update_route(route_id=\"65f...\", updates={\"enabled\": False})",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it. Returns the\npredicted change set.",
+            "type": "boolean"
+          },
+          "route_id": {
+            "description": "The ``_id`` from ``list_routes``.",
+            "type": "string"
+          },
+          "updates": {
+            "additionalProperties": true,
+            "description": "Partial route record. Common keys: ``name``, ``enabled``,\n``static-route_network`` (destination CIDR),\n``static-route_nexthop`` (next-hop IP),\n``static-route_distance``.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "route_id",
+          "updates"
+        ],
+        "type": "object"
+      },
+      "name": "update_route"
+    },
+    {
       "description": "Convert or update an existing client to a fixed-IP reservation.\n\nUse this instead of ``create_static_dhcp_lease`` when the MAC already\nhas a user record on the controller (any client that has ever\nconnected). The controller rejects POST ``/rest/user`` for known MACs\nwith ``api.err.MacUsed``; this tool resolves the existing ``_id`` and\nPUTs an update to ``/rest/user/{_id}`` instead.\n\nSide effects:\n- Sets ``use_fixedip=true`` and pins ``fixed_ip`` on the user record.\n- If ``local_dns_record`` is supplied, also sets\n  ``local_dns_record_enabled=true`` so the name resolves on the LAN\n  (controller version permitting).\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n- If no user record exists for ``mac``, the call fails with a clear\n  error. In that case use ``create_static_dhcp_lease`` instead.\n\nExample: update_static_dhcp_lease(mac=\"d0:11:e5:03:f6:3a\", fixed_ip=\"192.168.1.50\", network_id=\"6a0...\", name=\"cypher\")",
       "input_schema": {
         "additionalProperties": false,
@@ -2337,6 +3519,91 @@
         "type": "object"
       },
       "name": "update_static_dhcp_lease"
+    },
+    {
+      "description": "Patch fields on an existing traffic route (read-modify-write).\n\nSide effects:\n- Modifies the named policy route in place. The v2 PUT replaces the\n  whole object, so this reads the current route first and merges your\n  changes onto it before writing \u2014 only the keys you supply change.\n- Changes where matched traffic is routed (and, via\n  ``kill_switch_enabled``, whether it is dropped when the route's\n  interface is down). Takes effect immediately.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: update_traffic_route(route_id=\"65f...\", kill_switch_enabled=True)",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it. Returns the\npredicted change set.",
+            "type": "boolean"
+          },
+          "kill_switch_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "When set, toggles the route's kill switch\n(drop matched traffic if the route's interface is down).\n``None`` (default) leaves it unchanged. Merged into ``updates``\nif both are given."
+          },
+          "route_id": {
+            "description": "The ``_id`` from ``list_traffic_routes``.",
+            "type": "string"
+          },
+          "updates": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Partial traffic-route record to merge. Common keys:\n``matching_target``, ``domains``, ``ip_addresses``,\n``next_hop``, ``network_id``, ``enabled``. ``None`` (default)\napplies no field changes beyond ``kill_switch_enabled``."
+          }
+        },
+        "required": [
+          "route_id"
+        ],
+        "type": "object"
+      },
+      "name": "update_traffic_route"
+    },
+    {
+      "description": "Patch fields on an existing traffic rule (read-modify-write).\n\nSide effects:\n- Modifies the named rule in place. The v2 PUT replaces the whole\n  object, so this reads the current rule first and merges ``updates``\n  onto it before writing \u2014 only the keys you supply change.\n- Takes effect immediately on matching traffic.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: update_traffic_rule(rule_id=\"65f...\", updates={\"action\": \"ALLOW\"})",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it. Returns the\npredicted change set.",
+            "type": "boolean"
+          },
+          "rule_id": {
+            "description": "The ``_id`` from ``list_traffic_rules``.",
+            "type": "string"
+          },
+          "updates": {
+            "additionalProperties": true,
+            "description": "Partial traffic-rule record to merge. Common keys:\n``action``, ``matching_target``, ``target_devices``,\n``enabled``, plus target-specific fields.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "rule_id",
+          "updates"
+        ],
+        "type": "object"
+      },
+      "name": "update_traffic_rule"
     },
     {
       "description": "Patch fields on an existing VLAN/network record.\n\nSide effects:\n- Modifies the named network in place. Only fields supplied in\n  ``updates`` change; everything else is preserved.\n- Changes to ``vlan`` or ``ip_subnet`` may disconnect clients on the\n  affected network.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: update_vlan(network_id=\"65f...\", updates={\"enabled\": False})",

@@ -27,13 +27,6 @@ jobs:
         id: meta
         uses: dependabot/fetch-metadata@v3
 
-      - name: Approve PR (patch + minor only)
-        if: steps.meta.outputs.update-type != 'version-update:semver-major'
-        env:
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh pr review --approve "$PR_URL"
-
       - name: Enable auto-merge (patch + minor only)
         if: steps.meta.outputs.update-type != 'version-update:semver-major'
         env:
