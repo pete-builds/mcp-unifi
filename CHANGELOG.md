@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-07-06
+
 ### Added
 
 - **5xx retry with exponential backoff on idempotent reads.** The three service
