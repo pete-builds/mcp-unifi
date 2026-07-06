@@ -23,6 +23,7 @@ from typing import Any
 
 import httpx
 
+from mcp_unifi.clients.retry import request_with_retry
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.models import UniFiRecord
 
@@ -84,31 +85,22 @@ class AccessClient:
         share one exception class with the Network and Protect clients.
         """
         url = f"{self._base}{path}"
-        last_exc: Exception | None = None
-        for attempt in range(2):
-            try:
-                resp = await self._client.request(method, url, json=json)
-            except (httpx.ConnectError, httpx.RemoteProtocolError) as exc:
-                last_exc = exc
-                if attempt == 0:
-                    logger.warning(
-                        "Access connection error, retrying once",
-                        extra={"method": method, "path": path, "error": str(exc)},
-                    )
-                    continue
-                raise UniFiError(f"Access connection failed: {exc}") from exc
-            except httpx.HTTPError as exc:
-                raise UniFiError(f"Access transport error: {exc}") from exc
-
-            if resp.status_code >= 400:
-                raise UniFiError(
-                    f"Access {method} {path} returned {resp.status_code}: {resp.text[:300]}"
-                )
-            if not resp.content:
-                return None
-            return resp.json()
-
-        raise UniFiError(f"Access request exhausted retries: {last_exc}")  # pragma: no cover
+        resp = await request_with_retry(
+            self._client,
+            method,
+            url,
+            logger=logger,
+            service="Access",
+            error_cls=UniFiError,
+            json=json,
+        )
+        if resp.status_code >= 400:
+            raise UniFiError(
+                f"Access {method} {path} returned {resp.status_code}: {resp.text[:300]}"
+            )
+        if not resp.content:
+            return None
+        return resp.json()
 
     @staticmethod
     def _ensure_record(result: Any) -> UniFiRecord:

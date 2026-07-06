@@ -8,6 +8,10 @@ from typing import TYPE_CHECKING, Any
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
+from mcp_unifi.modules._params import (
+    BoundedName,
+    BoundedSecret,
+)
 from mcp_unifi.modules.network._common import (
     format_json,
     make_err,
@@ -82,8 +86,8 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     @mcp.tool()
     @audited("create_wlan")
     async def create_wlan(
-        name: str,
-        passphrase: str,
+        name: BoundedName,
+        passphrase: BoundedSecret,
         network_id: str,
         security: str = "wpapsk",
         wpa_mode: str = "wpa2",

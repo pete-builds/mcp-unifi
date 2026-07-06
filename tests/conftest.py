@@ -7,9 +7,21 @@ from collections.abc import Iterator
 import pytest
 
 from mcp_unifi import audit
+from mcp_unifi.clients import retry as _retry
 from mcp_unifi.clients.stubs import StubState
 from mcp_unifi.config import Settings
 from mcp_unifi.modules.network._pending import reset_pending_actions
+
+
+@pytest.fixture(autouse=True)
+def _fast_retry_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Zero the 5xx-retry backoff so read-path retry tests don't sleep.
+
+    The retry helper waits ``BACKOFF_BASE_SECONDS`` between attempts on a 5xx
+    GET. In production that is a short real delay; under test it would add up
+    across the many upstream-500 cases, so we drive it to 0.
+    """
+    monkeypatch.setattr(_retry, "BACKOFF_BASE_SECONDS", 0.0)
 
 
 @pytest.fixture(autouse=True)

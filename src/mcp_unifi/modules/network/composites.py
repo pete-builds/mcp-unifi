@@ -16,6 +16,12 @@ from mcp_unifi.backends import Backend
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
+from mcp_unifi.modules._params import (
+    BoundedName,
+    BoundedSecret,
+    BoundedSsid,
+    BoundedText,
+)
 from mcp_unifi.modules.network._common import (
     format_json,
     make_err,
@@ -71,9 +77,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     @mcp.tool()
     @audited("create_iot_network")
     async def create_iot_network(
-        name: str,
+        name: BoundedName,
         vlan_id: int,
-        passphrase: str,
+        passphrase: BoundedSecret,
         main_lan_subnet: str = "192.168.1.0/24",
         subnet: str = "",
         isolate: bool = True,
@@ -273,7 +279,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     @mcp.tool()
     @audited("provision_homelab_service")
     async def provision_homelab_service(
-        name: str,
+        name: BoundedName,
         mac: str,
         ip: str,
         network_id: str,
@@ -446,7 +452,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     @audited("quarantine_client")
     async def quarantine_client(
         mac: str,
-        reason: str = "",
+        reason: BoundedText = "",
         controller: str = "default",
         dry_run: bool = False,
     ) -> str:
@@ -505,13 +511,13 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     @mcp.tool()
     @audited("create_guest_network")
     async def create_guest_network(
-        name: str,
-        ssid: str,
-        passphrase: str,
+        name: BoundedName,
+        ssid: BoundedSsid,
+        passphrase: BoundedSecret,
         vlan_id: int,
         main_lan_subnet: str = "192.168.1.0/24",
         subnet: str = "",
-        schedule: str = "",
+        schedule: BoundedText = "",
         hide_ssid: bool = False,
         controller: str = "default",
         dry_run: bool = False,

@@ -8,6 +8,9 @@ from typing import TYPE_CHECKING, Any
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
+from mcp_unifi.modules._params import (
+    BoundedName,
+)
 from mcp_unifi.modules.network._common import format_json, make_err
 
 if TYPE_CHECKING:
@@ -584,7 +587,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     @audited("rename_device")
     async def rename_device(
         device_mac: str,
-        name: str,
+        name: BoundedName,
         controller: str = "default",
         dry_run: bool = False,
     ) -> str:

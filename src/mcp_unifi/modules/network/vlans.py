@@ -8,6 +8,9 @@ from typing import TYPE_CHECKING, Any
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
+from mcp_unifi.modules._params import (
+    BoundedName,
+)
 from mcp_unifi.modules.network._common import (
     format_json,
     make_err,
@@ -61,7 +64,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     @audited("get_network_details")
     async def get_network_details(
         network_id: str = "",
-        name: str = "",
+        name: BoundedName = "",
         controller: str = "default",
     ) -> str:
         """Show one network's full record, grouped into readable sections.
@@ -160,12 +163,12 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     @mcp.tool()
     @audited("create_vlan")
     async def create_vlan(
-        name: str,
+        name: BoundedName,
         vlan_id: int,
         subnet: str,
         dhcp_start: str = "",
         dhcp_stop: str = "",
-        purpose: str = "corporate",
+        purpose: BoundedName = "corporate",
         controller: str = "default",
         dry_run: bool = False,
     ) -> str:

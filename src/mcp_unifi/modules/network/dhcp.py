@@ -8,6 +8,10 @@ from typing import TYPE_CHECKING, Any
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
+from mcp_unifi.modules._params import (
+    BoundedHostname,
+    BoundedName,
+)
 from mcp_unifi.modules.network._common import format_json, make_err
 from mcp_unifi.modules.network._pending import build_preview_envelope, get_pending_actions
 
@@ -53,8 +57,8 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         mac: str,
         ip: str,
         network_id: str,
-        name: str = "",
-        hostname: str = "",
+        name: BoundedName = "",
+        hostname: BoundedHostname = "",
         controller: str = "default",
         dry_run: bool = False,
     ) -> str:
@@ -114,8 +118,8 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         mac: str,
         fixed_ip: str,
         network_id: str,
-        name: str = "",
-        local_dns_record: str = "",
+        name: BoundedName = "",
+        local_dns_record: BoundedHostname = "",
         controller: str = "default",
         dry_run: bool = False,
     ) -> str:

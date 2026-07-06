@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **5xx retry with exponential backoff on idempotent reads.** The three service
+  clients (`UniFiClient`, `ProtectClient`, `AccessClient`) now retry a `GET` that
+  comes back `5xx` (e.g. the `503` a gateway returns under load or mid firmware
+  upgrade) up to two extra times with exponential backoff (0.25s, 0.50s). The
+  retry policy lives in one place (`mcp_unifi/clients/retry.py`) and is shared by
+  every client HTTP helper. **Writes are never retried on a 5xx:** only `GET` is
+  eligible, because the server drives changes through a dry-run/confirm/rollback
+  model and a replayed `POST`/`PUT`/`DELETE` could double-apply. The existing
+  single retry on a connection blip (`ConnectError`/`RemoteProtocolError`) is
+  preserved unchanged.
+- **`maxLength` bounds on free-text and secret tool parameters.** Reusable
+  length-bounded `Annotated[str, Field(max_length=...)]` types
+  (`mcp_unifi/modules/_params.py`) are applied to 30 free-text/secret params
+  across the network tools (names 128, SSID 32, passphrases/passwords 128,
+  hostnames/DNS 253, free text 256, YAML spec 200 000, backup JSON 5 000 000),
+  publishing a `maxLength` constraint in each tool's input schema. This bounds
+  what reaches the UniFi controller (an unbounded name would otherwise be
+  forwarded verbatim). Identifier-style params (`*_id`, `mac`, `controller`) are
+  intentionally left unbounded — they are structurally validated downstream.
+
 ## [0.15.4] - 2026-06-14
 
 ### Fixed

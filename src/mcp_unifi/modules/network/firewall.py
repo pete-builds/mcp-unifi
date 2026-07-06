@@ -8,6 +8,9 @@ from typing import TYPE_CHECKING, Any
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
+from mcp_unifi.modules._params import (
+    BoundedName,
+)
 from mcp_unifi.modules.network._common import format_json, make_err
 from mcp_unifi.modules.network._pending import build_preview_envelope, get_pending_actions
 
@@ -55,7 +58,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     @mcp.tool()
     @audited("create_firewall_rule")
     async def create_firewall_rule(
-        name: str,
+        name: BoundedName,
         ruleset: str,
         action: str,
         rule_index: int = 20000,
@@ -355,7 +358,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     @mcp.tool()
     @audited("create_firewall_group")
     async def create_firewall_group(
-        name: str,
+        name: BoundedName,
         group_type: str,
         members: list[str],
         controller: str = "default",
@@ -416,7 +419,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     @audited("update_firewall_group")
     async def update_firewall_group(
         group_id: str,
-        name: str = "",
+        name: BoundedName = "",
         members: list[str] | None = None,
         controller: str = "default",
         dry_run: bool = False,

@@ -38,6 +38,7 @@
           },
           "spec_yaml": {
             "description": "The spec document, as a YAML string.",
+            "maxLength": 200000,
             "type": "string"
           }
         },
@@ -144,6 +145,7 @@
           },
           "host_name": {
             "description": "The FQDN to keep pointed at the WAN IP\n(``\"home.example.com\"``).",
+            "maxLength": 253,
             "type": "string"
           },
           "interface": {
@@ -153,15 +155,18 @@
           },
           "login": {
             "description": "Provider account / username. For some providers (e.g.\nNamecheap) this is the zone/domain.",
+            "maxLength": 256,
             "type": "string"
           },
           "password": {
             "description": "Provider password or API token. Stored write-only and\nredacted in reads.",
+            "maxLength": 128,
             "type": "string"
           },
           "server": {
             "default": "",
             "description": "Custom update-URL host. Only used (and required) when\n``service == \"custom\"``; leave empty otherwise.",
+            "maxLength": 253,
             "type": "string"
           },
           "service": {
@@ -207,6 +212,7 @@
           },
           "name": {
             "description": "Display name for the group (e.g. ``\"IoT Subnets\"``).",
+            "maxLength": 128,
             "type": "string"
           }
         },
@@ -265,6 +271,7 @@
           },
           "name": {
             "description": "Display name for the rule (e.g. ``\"Block iot to LAN\"``).",
+            "maxLength": 128,
             "type": "string"
           },
           "protocol": {
@@ -338,19 +345,23 @@
           },
           "name": {
             "description": "Display name for the network record (e.g. ``\"guest\"``).",
+            "maxLength": 128,
             "type": "string"
           },
           "passphrase": {
             "description": "WPA2 PSK (8-63 chars).",
+            "maxLength": 128,
             "type": "string"
           },
           "schedule": {
             "default": "",
             "description": "Optional schedule descriptor (controller field\n``schedule``). Empty = always on.",
+            "maxLength": 256,
             "type": "string"
           },
           "ssid": {
             "description": "SSID to broadcast (e.g. ``\"guest-wifi\"``).",
+            "maxLength": 32,
             "type": "string"
           },
           "subnet": {
@@ -437,10 +448,12 @@
           },
           "name": {
             "description": "Used for both the network name and the SSID (e.g. ``\"iot\"``).",
+            "maxLength": 128,
             "type": "string"
           },
           "passphrase": {
             "description": "WPA2 PSK for the IoT SSID (8-63 chars).",
+            "maxLength": 128,
             "type": "string"
           },
           "subnet": {
@@ -501,6 +514,7 @@
           },
           "name": {
             "description": "Display name for the rule.",
+            "maxLength": 128,
             "type": "string"
           },
           "proto": {
@@ -546,6 +560,7 @@
           },
           "name": {
             "description": "Display name for the profile (e.g. ``\"iot-trunk\"``).",
+            "maxLength": 128,
             "type": "string"
           },
           "native_networkconf_id": {
@@ -612,6 +627,7 @@
           },
           "name": {
             "description": "Display name for the route (e.g. ``\"Lab via firewall\"``).",
+            "maxLength": 128,
             "type": "string"
           },
           "next_hop": {
@@ -646,6 +662,7 @@
           "hostname": {
             "default": "",
             "description": "DHCP hostname (optional).",
+            "maxLength": 253,
             "type": "string"
           },
           "ip": {
@@ -659,6 +676,7 @@
           "name": {
             "default": "",
             "description": "Friendly display name (optional).",
+            "maxLength": 128,
             "type": "string"
           },
           "network_id": {
@@ -730,11 +748,13 @@
           },
           "name": {
             "description": "Network display name (e.g. ``\"iot\"``, ``\"cameras\"``).",
+            "maxLength": 128,
             "type": "string"
           },
           "purpose": {
             "default": "corporate",
             "description": "``\"corporate\"`` for normal LANs, ``\"guest\"`` for\nhotspot-style isolation.",
+            "maxLength": 128,
             "type": "string"
           },
           "subnet": {
@@ -802,6 +822,7 @@
           },
           "name": {
             "description": "SSID broadcast name (e.g. ``\"iot\"``).",
+            "maxLength": 128,
             "type": "string"
           },
           "network_id": {
@@ -810,6 +831,7 @@
           },
           "passphrase": {
             "description": "WPA pre-shared key (8-63 chars). Required unless\n``security=\"open\"``.",
+            "maxLength": 128,
             "type": "string"
           },
           "security": {
@@ -1486,6 +1508,7 @@
           "name": {
             "default": "",
             "description": "Network display name (case-insensitive) as an alternative to\n``network_id``. Errors if more than one network matches.",
+            "maxLength": 128,
             "type": "string"
           },
           "network_id": {
@@ -2444,6 +2467,7 @@
           },
           "name": {
             "description": "Display name (used for both the lease and the firewall\nrule, e.g. ``\"plex\"``).",
+            "maxLength": 128,
             "type": "string"
           },
           "network_id": {
@@ -2503,6 +2527,7 @@
           "reason": {
             "default": "",
             "description": "Free-form justification (kept in logs only,\ne.g. ``\"suspected malware c2\"``).",
+            "maxLength": 256,
             "type": "string"
           }
         },
@@ -2561,6 +2586,7 @@
           },
           "name": {
             "description": "New display name. Must be non-empty.",
+            "maxLength": 128,
             "type": "string"
           }
         },
@@ -2606,6 +2632,7 @@
         "properties": {
           "backup_json": {
             "description": "The envelope JSON string from ``backup_config``.",
+            "maxLength": 5000000,
             "type": "string"
           },
           "controller": {
@@ -3331,6 +3358,7 @@
           "name": {
             "default": "",
             "description": "New display name. Empty (default) keeps the current name.",
+            "maxLength": 128,
             "type": "string"
           }
         },
@@ -3495,6 +3523,7 @@
           "local_dns_record": {
             "default": "",
             "description": "Local DNS name to resolve to ``fixed_ip``\n(optional). When set, ``local_dns_record_enabled=true`` is\nalso sent.",
+            "maxLength": 253,
             "type": "string"
           },
           "mac": {
@@ -3504,6 +3533,7 @@
           "name": {
             "default": "",
             "description": "Friendly display name / hostname alias (optional).",
+            "maxLength": 128,
             "type": "string"
           },
           "network_id": {
