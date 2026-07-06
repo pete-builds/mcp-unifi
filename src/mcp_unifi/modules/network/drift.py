@@ -59,6 +59,9 @@ import yaml
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
+from mcp_unifi.modules._params import (
+    BoundedYaml,
+)
 from mcp_unifi.modules.network._common import format_json, make_err
 
 if TYPE_CHECKING:
@@ -404,7 +407,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     @mcp.tool()
     @audited("audit_network_drift")
     async def audit_network_drift(
-        spec_yaml: str,
+        spec_yaml: BoundedYaml,
         controller: str = "default",
     ) -> str:
         """Compare current controller state to a declared YAML spec.

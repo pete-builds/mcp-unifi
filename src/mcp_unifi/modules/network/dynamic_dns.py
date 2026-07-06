@@ -26,6 +26,11 @@ from typing import TYPE_CHECKING, Any
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
+from mcp_unifi.modules._params import (
+    BoundedHostname,
+    BoundedSecret,
+    BoundedText,
+)
 from mcp_unifi.modules.network._common import format_json, make_err
 from mcp_unifi.modules.network._pending import build_preview_envelope, get_pending_actions
 
@@ -107,10 +112,10 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     @audited("create_dynamic_dns")
     async def create_dynamic_dns(
         service: str,
-        host_name: str,
-        login: str,
-        password: str,
-        server: str = "",
+        host_name: BoundedHostname,
+        login: BoundedText,
+        password: BoundedSecret,
+        server: BoundedHostname = "",
         interface: str = "wan",
         enabled: bool = True,
         controller: str = "default",

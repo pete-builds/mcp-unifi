@@ -22,6 +22,7 @@ from typing import Any
 
 import httpx
 
+from mcp_unifi.clients.retry import request_with_retry
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.models import UniFiRecord
 
@@ -83,32 +84,22 @@ class ProtectClient:
         one exception class with the Network client.
         """
         url = f"{self._base}{path}"
-        last_exc: Exception | None = None
-        for attempt in range(2):
-            try:
-                resp = await self._client.request(method, url, json=json)
-            except (httpx.ConnectError, httpx.RemoteProtocolError) as exc:
-                last_exc = exc
-                if attempt == 0:
-                    logger.warning(
-                        "Protect connection error, retrying once",
-                        extra={"method": method, "path": path, "error": str(exc)},
-                    )
-                    continue
-                raise UniFiError(f"Protect connection failed: {exc}") from exc
-            except httpx.HTTPError as exc:
-                raise UniFiError(f"Protect transport error: {exc}") from exc
-
-            if resp.status_code >= 400:
-                raise UniFiError(
-                    f"Protect {method} {path} returned {resp.status_code}: {resp.text[:300]}"
-                )
-            if not resp.content:
-                return None
-            return resp.json()
-
-        # Defensive — the loop above should always return or raise.
-        raise UniFiError(f"Protect request exhausted retries: {last_exc}")  # pragma: no cover
+        resp = await request_with_retry(
+            self._client,
+            method,
+            url,
+            logger=logger,
+            service="Protect",
+            error_cls=UniFiError,
+            json=json,
+        )
+        if resp.status_code >= 400:
+            raise UniFiError(
+                f"Protect {method} {path} returned {resp.status_code}: {resp.text[:300]}"
+            )
+        if not resp.content:
+            return None
+        return resp.json()
 
     async def _request_bytes(self, method: str, path: str) -> bytes:
         """Issue a binary-returning request (snapshots, thumbnails) with one retry.
@@ -116,29 +107,19 @@ class ProtectClient:
         Same retry shape as :meth:`_request` but does not call ``resp.json``.
         """
         url = f"{self._base}{path}"
-        last_exc: Exception | None = None
-        for attempt in range(2):
-            try:
-                resp = await self._client.request(method, url)
-            except (httpx.ConnectError, httpx.RemoteProtocolError) as exc:
-                last_exc = exc
-                if attempt == 0:
-                    logger.warning(
-                        "Protect connection error (bytes), retrying once",
-                        extra={"method": method, "path": path, "error": str(exc)},
-                    )
-                    continue
-                raise UniFiError(f"Protect connection failed: {exc}") from exc
-            except httpx.HTTPError as exc:
-                raise UniFiError(f"Protect transport error: {exc}") from exc
-
-            if resp.status_code >= 400:
-                raise UniFiError(
-                    f"Protect {method} {path} returned {resp.status_code}: {resp.text[:300]}"
-                )
-            return resp.content
-
-        raise UniFiError(f"Protect bytes request exhausted retries: {last_exc}")  # pragma: no cover
+        resp = await request_with_retry(
+            self._client,
+            method,
+            url,
+            logger=logger,
+            service="Protect",
+            error_cls=UniFiError,
+        )
+        if resp.status_code >= 400:
+            raise UniFiError(
+                f"Protect {method} {path} returned {resp.status_code}: {resp.text[:300]}"
+            )
+        return resp.content
 
     @staticmethod
     def _ensure_record(result: Any) -> UniFiRecord:

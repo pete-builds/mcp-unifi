@@ -84,6 +84,9 @@ from mcp_unifi.backends import Backend
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
+from mcp_unifi.modules._params import (
+    BoundedJson,
+)
 from mcp_unifi.modules.network._common import format_json, make_err
 
 if TYPE_CHECKING:
@@ -422,7 +425,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     @mcp.tool()
     @audited("restore_config")
     async def restore_config(
-        backup_json: str,
+        backup_json: BoundedJson,
         controller: str = "default",
         dry_run: bool = False,
     ) -> str:

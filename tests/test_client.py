@@ -188,6 +188,56 @@ async def test_5xx_raises_unifi_error(client: UniFiClient) -> None:
 
 
 @respx.mock
+async def test_5xx_get_retries_then_succeeds(client: UniFiClient) -> None:
+    """A transient 503 on an idempotent GET is retried until it succeeds."""
+    route = respx.get(f"{BASE}/rest/networkconf").mock(
+        side_effect=[
+            httpx.Response(503, text="upgrading"),
+            httpx.Response(503, text="upgrading"),
+            httpx.Response(200, json={"data": [{"_id": "n1"}]}),
+        ]
+    )
+    result = await client.list_networks()
+    assert result == [{"_id": "n1"}]
+    # 1 initial + MAX_5XX_RETRIES (2) = 3 total attempts.
+    assert route.call_count == 3
+
+
+@respx.mock
+async def test_5xx_get_exhausts_retries_then_raises(client: UniFiClient) -> None:
+    """A persistent 5xx on a GET raises after the retry budget is spent."""
+    route = respx.get(f"{BASE}/rest/networkconf").mock(
+        return_value=httpx.Response(503, text="down")
+    )
+    with pytest.raises(UniFiError):
+        await client.list_networks()
+    assert route.call_count == 3
+
+
+@respx.mock
+async def test_5xx_write_is_not_retried(client: UniFiClient) -> None:
+    """A 5xx on a write (POST) must NOT be retried — a retried write could
+    double-apply under the dry-run/confirm/rollback model."""
+    route = respx.post(f"{BASE}/rest/networkconf").mock(
+        return_value=httpx.Response(503, text="down")
+    )
+    with pytest.raises(UniFiError):
+        await client.create_network({"name": "x"})
+    assert route.call_count == 1
+
+
+@respx.mock
+async def test_5xx_put_is_not_retried(client: UniFiClient) -> None:
+    """A 5xx on a PUT update is issued exactly once (no replay)."""
+    route = respx.put(f"{BASE}/rest/networkconf/n1").mock(
+        return_value=httpx.Response(500, text="boom")
+    )
+    with pytest.raises(UniFiError):
+        await client.update_network("n1", {"name": "x"})
+    assert route.call_count == 1
+
+
+@respx.mock
 async def test_connection_error_retries_then_raises(client: UniFiClient) -> None:
     respx.get(f"{BASE}/stat/device").mock(side_effect=httpx.ConnectError("nope"))
     with pytest.raises(UniFiError) as exc:

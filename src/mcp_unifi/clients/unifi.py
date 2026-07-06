@@ -15,6 +15,7 @@ from typing import Any
 
 import httpx
 
+from mcp_unifi.clients.retry import request_with_retry
 from mcp_unifi.models import UniFiRecord
 
 logger = logging.getLogger("mcp_unifi.client")
@@ -76,36 +77,26 @@ class UniFiClient:
         json: dict[str, Any] | None = None,
     ) -> Any:
         url = f"{self._base}{path}"
-        last_exc: Exception | None = None
-        for attempt in range(2):
-            try:
-                resp = await self._client.request(method, url, json=json)
-            except (httpx.ConnectError, httpx.RemoteProtocolError) as exc:
-                last_exc = exc
-                if attempt == 0:
-                    logger.warning(
-                        "UniFi connection error, retrying once",
-                        extra={"method": method, "path": path, "error": str(exc)},
-                    )
-                    continue
-                raise UniFiError(f"UniFi connection failed: {exc}") from exc
-            except httpx.HTTPError as exc:
-                raise UniFiError(f"UniFi transport error: {exc}") from exc
-
-            if resp.status_code >= 400:
-                raise UniFiError(
-                    f"UniFi {method} {path} returned {resp.status_code}: {resp.text[:300]}"
-                )
-            if not resp.content:
-                return None
-            body = resp.json()
-            # Legacy UniFi controller wraps payloads in {"meta": {...}, "data": [...]}.
-            if isinstance(body, dict) and "data" in body:
-                return body["data"]
-            return body
-
-        # Defensive — the loop above should always return or raise.
-        raise UniFiError(f"UniFi request exhausted retries: {last_exc}")  # pragma: no cover
+        resp = await request_with_retry(
+            self._client,
+            method,
+            url,
+            logger=logger,
+            service="UniFi",
+            error_cls=UniFiError,
+            json=json,
+        )
+        if resp.status_code >= 400:
+            raise UniFiError(
+                f"UniFi {method} {path} returned {resp.status_code}: {resp.text[:300]}"
+            )
+        if not resp.content:
+            return None
+        body = resp.json()
+        # Legacy UniFi controller wraps payloads in {"meta": {...}, "data": [...]}.
+        if isinstance(body, dict) and "data" in body:
+            return body["data"]
+        return body
 
     async def _v2_request(
         self,
@@ -127,33 +118,22 @@ class UniFiClient:
         body unchanged (list or dict), or ``None`` on an empty response.
         """
         url = f"{self._base}/v2/api/site/{self.site}{path}"
-        last_exc: Exception | None = None
-        for attempt in range(2):
-            try:
-                resp = await self._client.request(method, url, json=json)
-            except (httpx.ConnectError, httpx.RemoteProtocolError) as exc:
-                last_exc = exc
-                if attempt == 0:
-                    logger.warning(
-                        "UniFi v2 connection error, retrying once",
-                        extra={"method": method, "path": path, "error": str(exc)},
-                    )
-                    continue
-                raise UniFiError(f"UniFi connection failed: {exc}") from exc
-            except httpx.HTTPError as exc:
-                raise UniFiError(f"UniFi transport error: {exc}") from exc
-
-            if resp.status_code >= 400:
-                raise UniFiError(
-                    f"UniFi {method} (v2) {path} returned {resp.status_code}: {resp.text[:300]}"
-                )
-            if not resp.content:
-                return None
-            return resp.json()
-
-        raise UniFiError(  # pragma: no cover
-            f"UniFi v2 request exhausted retries: {last_exc}"
+        resp = await request_with_retry(
+            self._client,
+            method,
+            url,
+            logger=logger,
+            service="UniFi v2",
+            error_cls=UniFiError,
+            json=json,
         )
+        if resp.status_code >= 400:
+            raise UniFiError(
+                f"UniFi {method} (v2) {path} returned {resp.status_code}: {resp.text[:300]}"
+            )
+        if not resp.content:
+            return None
+        return resp.json()
 
     async def _get(self, path: str) -> Any:
         return await self._request("GET", f"{self._site_path}{path}")
@@ -262,39 +242,25 @@ class UniFiClient:
         the URL manually.
         """
         url = f"{self._base}/v2/api/site/{self.site}/apgroups"
-        last_exc: Exception | None = None
-        for attempt in range(2):
-            try:
-                resp = await self._client.request("GET", url)
-            except (httpx.ConnectError, httpx.RemoteProtocolError) as exc:
-                last_exc = exc
-                if attempt == 0:
-                    logger.warning(
-                        "UniFi connection error, retrying once",
-                        extra={"method": "GET", "path": "/v2/.../apgroups", "error": str(exc)},
-                    )
-                    continue
-                raise UniFiError(f"UniFi connection failed: {exc}") from exc
-            except httpx.HTTPError as exc:
-                raise UniFiError(f"UniFi transport error: {exc}") from exc
-
-            if resp.status_code >= 400:
-                raise UniFiError(
-                    f"UniFi GET apgroups returned {resp.status_code}: {resp.text[:300]}"
-                )
-            if not resp.content:
-                return []
-            body = resp.json()
-            # v2 endpoint returns a bare list (not the legacy meta+data envelope).
-            if isinstance(body, list):
-                return body
-            if isinstance(body, dict) and "data" in body:
-                return body["data"] if isinstance(body["data"], list) else []
-            return []
-
-        raise UniFiError(  # pragma: no cover
-            f"UniFi apgroups request exhausted retries: {last_exc}"
+        resp = await request_with_retry(
+            self._client,
+            "GET",
+            url,
+            logger=logger,
+            service="UniFi",
+            error_cls=UniFiError,
         )
+        if resp.status_code >= 400:
+            raise UniFiError(f"UniFi GET apgroups returned {resp.status_code}: {resp.text[:300]}")
+        if not resp.content:
+            return []
+        body = resp.json()
+        # v2 endpoint returns a bare list (not the legacy meta+data envelope).
+        if isinstance(body, list):
+            return body
+        if isinstance(body, dict) and "data" in body:
+            return body["data"] if isinstance(body["data"], list) else []
+        return []
 
     async def list_clients(self) -> list[UniFiRecord]:
         """Return currently active wireless and wired clients on the gateway.
