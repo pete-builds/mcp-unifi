@@ -7,7 +7,7 @@
 #   docker pull python:3.13-slim
 #   docker inspect python:3.13-slim --format '{{index .RepoDigests 0}}'
 # Dependabot keeps it fresh weekly via .github/dependabot.yml.
-FROM python:3.14-slim@sha256:b877e50bd90de10af8d82c57a022fc2e0dc731c5320d762a27986facfc3355c1 AS builder
+FROM python:3.14-slim@sha256:d3400aa122fa42cf0af0dbe8ec3091b047eac5c8f7e3539f7135e86d855dc015 AS builder
 
 WORKDIR /build
 
@@ -27,7 +27,7 @@ RUN pip install --no-cache-dir --target /wheels --no-deps .
 # ---------------------------------------------------------------------------
 # Runtime stage: slim image with only the installed package + UID 1000 user.
 # ---------------------------------------------------------------------------
-FROM python:3.14-slim@sha256:b877e50bd90de10af8d82c57a022fc2e0dc731c5320d762a27986facfc3355c1 AS runtime
+FROM python:3.14-slim@sha256:d3400aa122fa42cf0af0dbe8ec3091b047eac5c8f7e3539f7135e86d855dc015 AS runtime
 
 # Apply Debian security patches on top of the pinned base. Keeps the digest
 # pin for reproducibility while picking up CVE fixes between base rebuilds
