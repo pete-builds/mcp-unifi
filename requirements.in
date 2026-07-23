@@ -9,5 +9,5 @@ pydantic-settings==2.14.2
 # (CVE-2026-48526, GHSA-537c-gmf6-5ccf, CVE-2026-49852, CVE-2026-53539).
 pyjwt==2.13.0
 cryptography==48.0.1
-joserfc==1.7.3
+joserfc==1.7.4
 python-multipart==0.0.32
