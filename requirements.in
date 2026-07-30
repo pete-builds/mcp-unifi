@@ -1,6 +1,6 @@
-fastmcp==3.4.4
+fastmcp==3.4.5
 httpx==0.28.1
-uvicorn==0.51.0
+uvicorn==0.52.0
 python-dotenv==1.2.2
 pydantic==2.13.4
 pydantic-settings==2.14.2
