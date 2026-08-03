@@ -22,10 +22,20 @@ Four supported paths. Pick the one that matches how you run Claude.
 
 Long-running container, Streamable HTTP on port `3714`. Best for homelab and multi-client setups.
 
+HTTP transport refuses to start without a bearer token, so supply one:
+
 ```bash
-docker run --rm -p 3714:3714 -e STUB_MODE=true \
+export MCP_UNIFI_TOKEN=$(openssl rand -hex 32)
+docker run --rm -p 3714:3714 \
+  -e STUB_MODE=true \
+  -e MCP_UNIFI_AUTH_TOKENS="$MCP_UNIFI_TOKEN" \
   ghcr.io/pete-builds/mcp-unifi:latest
 ```
+
+Clients then send `Authorization: Bearer $MCP_UNIFI_TOKEN`. For throwaway local
+testing on loopback only, `-e MCP_UNIFI_AUTH_REQUIRED=false` skips auth entirely;
+never use it on an interface reachable by anything else, because every connected
+client gets admin-equivalent access to the controller.
 
 ### Claude Desktop (.dxt) — one-click
 
@@ -37,8 +47,13 @@ Download `mcp-unifi-<version>.dxt` from the [latest release](https://github.com/
 helm repo add mcp-unifi https://pete-builds.github.io/mcp-unifi/
 helm install unifi mcp-unifi/mcp-unifi \
   --set unifi.host=192.168.1.1 \
-  --set unifi.apiKey=<your-local-api-key>
+  --set unifi.apiKey=<your-local-api-key> \
+  --set auth.tokens=$(openssl rand -hex 32)
 ```
+
+The chart ships `auth.required: true` with `auth.tokens: ""`, so the pod will not
+start until you set a token (or `--set auth.required=false`, which is only
+appropriate for a trusted single-tenant cluster).
 
 ### uvx / pipx
 
@@ -64,17 +79,21 @@ Full guides for each install path live in the [docs site](https://pete-builds.gi
 
 Fastest cold-start: Docker + Claude Code in stub mode, no hardware required.
 
-1. Start the container:
+1. Start the container. Auth is on by default, so mint a token first:
 
    ```bash
-   docker run -d --rm -p 3714:3714 -e STUB_MODE=true \
+   export MCP_UNIFI_TOKEN=$(openssl rand -hex 32)
+   docker run -d --rm -p 3714:3714 \
+     -e STUB_MODE=true \
+     -e MCP_UNIFI_AUTH_TOKENS="$MCP_UNIFI_TOKEN" \
      --name mcp-unifi ghcr.io/pete-builds/mcp-unifi:latest
    ```
 
-2. Register it with Claude Code:
+2. Register it with Claude Code, passing the token:
 
    ```bash
-   claude mcp add --transport http --scope user unifi http://localhost:3714/mcp
+   claude mcp add --transport http --scope user unifi http://localhost:3714/mcp \
+     --header "Authorization: Bearer $MCP_UNIFI_TOKEN"
    ```
 
 3. Verify the connection:
@@ -92,6 +111,7 @@ Fastest cold-start: Docker + Claude Code in stub mode, no hardware required.
      -e STUB_MODE=false \
      -e UNIFI_HOST=192.168.1.1 \
      -e UNIFI_API_KEY=<your-local-api-key> \
+     -e MCP_UNIFI_AUTH_TOKENS="$MCP_UNIFI_TOKEN" \
      --name mcp-unifi ghcr.io/pete-builds/mcp-unifi:latest
    ```
 
