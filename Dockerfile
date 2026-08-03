@@ -3,9 +3,12 @@
 # ---------------------------------------------------------------------------
 # Builder stage: compile wheels from the hash-locked requirements.
 # ---------------------------------------------------------------------------
-# Pinned by digest so rebuilds are reproducible. Refresh with:
-#   docker pull python:3.13-slim
-#   docker inspect python:3.13-slim --format '{{index .RepoDigests 0}}'
+# Base image pinned by digest so the base bits are stable across rebuilds.
+# The runtime stage layers Debian security upgrades on top, so bit-for-bit
+# reproducibility is not guaranteed — see the runtime stage's comment.
+# Refresh with:
+#   docker pull python:3.14-slim
+#   docker inspect python:3.14-slim --format '{{index .RepoDigests 0}}'
 # Dependabot keeps it fresh weekly via .github/dependabot.yml.
 FROM python:3.14-slim@sha256:cea0e6040540fb2b965b6e7fb5ffa00871e632eef63719f0ea54bca189ce14a6 AS builder
 
@@ -29,9 +32,12 @@ RUN pip install --no-cache-dir --target /wheels --no-deps .
 # ---------------------------------------------------------------------------
 FROM python:3.14-slim@sha256:cea0e6040540fb2b965b6e7fb5ffa00871e632eef63719f0ea54bca189ce14a6 AS runtime
 
-# Apply Debian security patches on top of the pinned base. Keeps the digest
-# pin for reproducibility while picking up CVE fixes between base rebuilds
-# (libcap2 CVE-2026-4878, libsystemd0/libudev1 CVE-2026-29111, etc).
+# Apply Debian security patches on top of the pinned base. This intentionally
+# trades bit-for-bit reproducibility for current CVE fixes between base
+# rebuilds (libcap2 CVE-2026-4878, libsystemd0/libudev1 CVE-2026-29111, etc).
+# Two rebuilds of the same commit may differ if the Debian mirror publishes
+# a new security update between them. The Python deps below are still fully
+# hash-locked via ``pip --require-hashes``.
 RUN apt-get update && apt-get -y upgrade && rm -rf /var/lib/apt/lists/*
 
 # MCP Registry ownership-verification label. The value MUST match the
