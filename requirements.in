@@ -11,3 +11,7 @@ pyjwt==2.13.0
 cryptography==48.0.1
 joserfc==1.7.4
 python-multipart==0.0.32
+
+# Security: force mcp past HIGH CVEs (CVE-2026-52869, CVE-2026-52870,
+# CVE-2026-59950) — fastmcp==3.4.5 accepts mcp<2.0,>=1.24.0.
+mcp==1.29.0
