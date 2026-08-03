@@ -17,6 +17,7 @@ on:
 permissions:
   id-token: write
   contents: read
+  packages: read
 
 concurrency:
   group: publish-mcp-${{ github.ref }}
@@ -26,10 +27,63 @@ jobs:
   publish:
     name: Publish server.json to MCP Registry
     runs-on: ubuntu-latest
-    # If triggered by a tag push, give the Release workflow time to publish
-    # the image to GHCR before the registry tries to verify the OCI label.
     steps:
       - uses: actions/checkout@v6
+
+      - name: Point server.json at the released version
+        # The tag is the source of truth for the released version, NOT the
+        # server.json committed at that tag. Release.yml bumps the version files
+        # in its own runner checkout before building, then pushes the bump back
+        # to main only AFTER the build. This workflow gets a separate checkout of
+        # the same tag, where server.json still carries the PREVIOUS version, so
+        # without this step every publish lands one release behind (which is why
+        # the registry sat on 0.15.4 while GHCR was on 0.16.0). Mirrors the sed
+        # block in release.yml. Skipped on workflow_dispatch, where the checkout
+        # is main and already carries the released version.
+        if: github.ref_type == 'tag'
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          VERSION="${REF_NAME#v}"
+          sed -i -E "s|(\"version\": \")[0-9]+\.[0-9]+\.[0-9]+(\")|\1${VERSION}\2|" server.json
+          sed -i -E "s|(ghcr\.io/${REPO}:)[0-9]+\.[0-9]+\.[0-9]+|\1${VERSION}|" server.json
+          echo "server.json now points at:"
+          grep -E '"version"|"identifier"' server.json
+
+      - name: Log in to GHCR
+        if: github.ref_type == 'tag'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Wait for the released image to land in GHCR
+        # The registry verifies ownership by reading the
+        # io.modelcontextprotocol.server.name label off the OCI image named in
+        # server.json, so that image has to exist first. Release.yml is triggered
+        # by the same tag push and takes ~10-15min for the multi-arch build, so
+        # poll rather than racing it.
+        if: github.ref_type == 'tag'
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          VERSION="${REF_NAME#v}"
+          IMAGE="ghcr.io/${REPO}:${VERSION}"
+          for i in $(seq 1 60); do
+            if docker manifest inspect "${IMAGE}" >/dev/null 2>&1; then
+              echo "${IMAGE} is live (attempt ${i})"
+              exit 0
+            fi
+            echo "attempt ${i}/60: ${IMAGE} not published yet, sleeping 30s"
+            sleep 30
+          done
+          echo "::error::timed out after 30min waiting for ${IMAGE}"
+          exit 1
 
       - name: Install mcp-publisher
         run: |
