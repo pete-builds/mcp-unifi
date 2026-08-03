@@ -61,7 +61,7 @@ The Streamable HTTP transport is secure by default. See the [Authentication guid
 | Variable | Type | Default | Required | Notes |
 |---|---|---|---|---|
 | `MCP_UNIFI_AUTH_REQUIRED` | bool | `true` | no | When `true`, the HTTP transport refuses to start without tokens. Set to `false` only on a loopback-bound single-host deployment. Stdio transport ignores this. |
-| `MCP_UNIFI_AUTH_TOKENS` | CSV string | `""` | HTTP + auth on | Comma-separated bearer tokens. Each entry is either a bare token (auto-assigned `client-N`) or a `name:token` pair (recommended — the name shows up in the audit log). |
+| `MCP_UNIFI_AUTH_TOKENS` | CSV string | `""` | HTTP + auth on | Comma-separated bearer tokens. Each entry is one of: a bare token (auto-assigned `client-N`), a `name:token` pair (recommended — name shows up in the audit log), or a `name:token:module1\|module2` triple to scope a client to specific modules. Pipe-separated because comma is the entry delimiter. Known modules: `network`, `protect`, `access`; `*` means all. |
 
 ## Logging
 

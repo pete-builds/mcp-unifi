@@ -106,8 +106,11 @@ If you deploy with a bare `docker run`, replicate these flags yourself.
 - It does not expose any cloud Site Manager / Ubiquiti Account integration.
 - It does not store any state between restarts (stub-mode data is in-memory
   only; audit log is append-only on disk when `MCP_UNIFI_AUDIT_SINK=file`).
-- It does not implement per-tool RBAC. Every authenticated client can call
-  every registered tool. Per-client scopes are a v1.x decision.
+- It does not implement per-tool RBAC. Per-**module** scoping is supported
+  via the `client_id:token:module1|module2` token form (see the
+  [Authentication guide](https://pete-builds.github.io/mcp-unifi/guides/auth/)),
+  so a client can be restricted to Network / Protect / Access. Finer per-tool
+  scopes are a v1.x decision.
 - It does not implement rate limiting or a token-rotation API. Rotate by
   editing `MCP_UNIFI_AUTH_TOKENS` and restarting.
 - It does not auto-update. Pin a specific tag in your `docker-compose.yml`

@@ -75,7 +75,7 @@ docker buildx imagetools inspect \
 
 ## What's intentionally not in scope
 
-- **No per-tool RBAC.** Every authenticated client can call every registered tool. Per-client scopes are a v1.x decision. (Auth on the MCP endpoint itself is on by default for HTTP — see the [Authentication guide](/mcp-unifi/guides/auth/) — but every authenticated client is equal.)
+- **No per-tool RBAC.** Per-**module** scoping is supported (`client_id:token:module1|module2` in `MCP_UNIFI_AUTH_TOKENS`; see the [Authentication guide](/mcp-unifi/guides/auth/)) so a client can be restricted to Network, Protect, or Access. Finer per-tool scopes are a v1.x decision.
 - **No token rotation API.** Rotate by editing `MCP_UNIFI_AUTH_TOKENS` and restarting.
 - **No rate limiting.**
 - **No remote-control of the audit log.** The log is local. Ship it to your SIEM with whatever you already use (Fluent Bit, syslog forwarder, etc).

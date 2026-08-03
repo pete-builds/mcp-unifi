@@ -20,15 +20,18 @@ Use one token per client (Claude Code, n8n, Home Assistant, etc.) so you can rev
 
 ## Configure the server
 
-Set `MCP_UNIFI_AUTH_TOKENS` as a comma-separated list. Each entry is either:
+Set `MCP_UNIFI_AUTH_TOKENS` as a comma-separated list. Each entry is one of:
 
-- a **bare token** (auto-assigned client_id `client-0`, `client-1`, ...)
-- a **`name:token` pair** for named clients (recommended — the name shows up in the audit log)
+- a **bare token** (auto-assigned client_id `client-0`, `client-1`, ...) — all modules allowed
+- a **`name:token` pair** for named clients (recommended — the name shows up in the audit log) — all modules allowed
+- a **`name:token:module1|module2` triple** to scope a client to specific modules — pipe-separated because comma is the entry delimiter. Known modules are `network`, `protect`, `access`; `*` means all.
 
 ```env
-MCP_UNIFI_AUTH_TOKENS=claude:7f3a...,n8n:c812...,homeassistant:a4d9...
+MCP_UNIFI_AUTH_TOKENS=claude:7f3a...,n8n:c812...:network|protect,readonly:a4d9...:access
 MCP_UNIFI_AUTH_REQUIRED=true
 ```
+
+In the example above, `claude` sees every tool, `n8n` can only see Network and Protect, and `readonly` only sees Access tools. On `tools/list` a scoped client only sees the tools it's allowed to call; attempts to call a tool outside the scope return an auth error without leaking which other modules exist.
 
 On boot, the server logs the configured client_ids (never the tokens) and starts. Without tokens and with `MCP_UNIFI_AUTH_REQUIRED=true`, the server raises at startup with a clear error.
 
@@ -92,7 +95,7 @@ Every tool call records the authenticated `client_id` in the JSONL audit log:
 
 ## What's still out of scope
 
-- **Per-tool scopes**: every authenticated client can call every tool. Per-client RBAC is a v1.x decision.
+- **Per-tool scopes**: scoping is per-module (`network` / `protect` / `access`), not per-tool. A client with `network` scope can call every Network tool, including destructive ones. Finer-grained per-tool scopes are a v1.x decision.
 - **Token rotation API**: rotate by editing the env var and restarting. No live rotation endpoint.
 - **OAuth flows**: out of scope. The static-token model fits homelab single-admin use; if you need OAuth, front mcp-unifi with an authenticating reverse proxy (Authelia, Caddy + auth_request, etc.) and keep `MCP_UNIFI_AUTH_REQUIRED=false`.
 - **Rate limiting**: not implemented.
