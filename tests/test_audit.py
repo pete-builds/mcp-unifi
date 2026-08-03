@@ -450,6 +450,41 @@ async def test_parse_jsonl_round_trips_emitted_events(tmp_path: Path) -> None:
     assert events[1].success is False
 
 
+async def test_parse_jsonl_round_trips_client_id(tmp_path: Path) -> None:
+    """Replay must preserve the authenticated caller.
+
+    Regression for a silent drop: ``to_json`` emitted ``client_id`` via
+    ``asdict``, but ``parse_jsonl`` never read it back, so every replayed or
+    parsed event reported ``client_id=None`` and the audit trail lost caller
+    attribution. Logs written before the field existed still parse, because the
+    dataclass default covers the missing key.
+    """
+    target = tmp_path / "who.jsonl"
+    log = AuditLog(sink=FileSink(target))
+    await log.emit(
+        "home", "delete_vlan", {"network_id": "x"}, None, True, 1.0, client_id="ops-key-2"
+    )
+
+    (event,) = parse_jsonl(target.read_text(encoding="utf-8").splitlines())
+    assert event.client_id == "ops-key-2"
+
+    # A pre-client_id log line must still parse, defaulting to None.
+    legacy = json.dumps(
+        {
+            "ts": "2026-08-03T00:00:00.000Z",
+            "controller": "home",
+            "tool": "list_devices",
+            "args": {},
+            "result": None,
+            "success": True,
+            "latency_ms": 1.0,
+            "schema": "1",
+        }
+    )
+    (legacy_event,) = parse_jsonl([legacy])
+    assert legacy_event.client_id is None
+
+
 def test_parse_jsonl_skips_blank_lines() -> None:
     line = json.dumps(
         {

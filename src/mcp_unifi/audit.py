@@ -378,6 +378,7 @@ def parse_jsonl(lines: Iterable[str]) -> list[AuditEvent]:
                     latency_ms=float(payload.get("latency_ms", 0.0)),
                     error=payload.get("error"),
                     schema=str(payload.get("schema", "1")),
+                    client_id=payload.get("client_id"),
                 )
             )
         except KeyError as exc:
