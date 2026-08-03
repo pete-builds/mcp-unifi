@@ -156,15 +156,18 @@ class FileSink:
         return self._path
 
     async def write(self, event: AuditEvent) -> None:
-        # The outer audit log holds the lock. File open/write/close inside
-        # one call is cheap and yields the simplest crash-safety story
-        # (every line is fully fsynced by the OS before we return).
+        # The outer audit log holds the lock. File open/write/fsync/close
+        # inside one call is cheap and yields a simple crash-safety story:
+        # once ``emit`` returns, the line is durable on the underlying
+        # storage (subject to disk-level write barriers).
         line = event.to_json() + "\n"
         await asyncio.to_thread(self._append, line)
 
     def _append(self, line: str) -> None:
         with self._path.open("a", encoding="utf-8") as fh:
             fh.write(line)
+            fh.flush()
+            os.fsync(fh.fileno())
 
     async def aclose(self) -> None:
         return None
