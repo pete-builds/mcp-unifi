@@ -30,16 +30,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Point server.json at the released version
-        # The tag is the source of truth for the released version, NOT the
-        # server.json committed at that tag. Release.yml bumps the version files
-        # in its own runner checkout before building, then pushes the bump back
-        # to main only AFTER the build. This workflow gets a separate checkout of
-        # the same tag, where server.json still carries the PREVIOUS version, so
-        # without this step every publish lands one release behind (which is why
-        # the registry sat on 0.15.4 while GHCR was on 0.16.0). Mirrors the sed
-        # block in release.yml. Skipped on workflow_dispatch, where the checkout
-        # is main and already carries the released version.
+      - name: Verify server.json matches the tag
+        # release.yml's verify step already enforces this for tag builds, but
+        # this workflow can also run on workflow_dispatch against main. Re-run
+        # the tag check here so a stale server.json can never reach the
+        # registry.
         if: github.ref_type == 'tag'
         env:
           REF_NAME: ${{ github.ref_name }}
@@ -47,9 +42,16 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${REF_NAME#v}"
-          sed -i -E "s|(\"version\": \")[0-9]+\.[0-9]+\.[0-9]+(\")|\1${VERSION}\2|" server.json
-          sed -i -E "s|(ghcr\.io/${REPO}:)[0-9]+\.[0-9]+\.[0-9]+|\1${VERSION}|" server.json
-          echo "server.json now points at:"
+          server_version=$(python3 -c "import json;print(json.load(open('server.json'))['version'])")
+          server_oci=$(python3 -c "import json;print(json.load(open('server.json'))['packages'][0]['identifier'])")
+          expected_oci="ghcr.io/${REPO}:${VERSION}"
+          if [ "${server_version}" != "${VERSION}" ] || [ "${server_oci}" != "${expected_oci}" ]; then
+            echo "::error::server.json disagrees with tag ${REF_NAME}"
+            echo "::error::  version    got '${server_version}', expected '${VERSION}'"
+            echo "::error::  identifier got '${server_oci}', expected '${expected_oci}'"
+            exit 1
+          fi
+          echo "server.json matches tag ${REF_NAME}:"
           grep -E '"version"|"identifier"' server.json
 
       - name: Log in to GHCR

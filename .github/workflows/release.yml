@@ -6,7 +6,7 @@ on:
       - "v*.*.*"
 
 permissions:
-  contents: write
+  contents: write  # softprops/action-gh-release attaches SBOM + .dxt to the release
   packages: write
   id-token: write
   attestations: write
@@ -22,6 +22,61 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Verify version surfaces match the tag
+        # Fail closed: the released artifacts must describe the version their
+        # tag claims. This checks every place a release version lives against
+        # the tag name. Historically release.yml sed-bumped these files inside
+        # the runner and pushed the fix to main after the build, which meant
+        # tags v0.10.0 through v0.16.0 all misreported their own version.
+        # v0.16.1 moved the bump before the tag; this step enforces that
+        # invariant so a future stale tag fails the release immediately
+        # instead of being silently repaired.
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          VERSION="${REF_NAME#v}"
+          echo "Verifying every version surface matches tag ${REF_NAME} (${VERSION})..."
+
+          fail=0
+          check() {
+            local label="$1"
+            local expected="$2"
+            local actual="$3"
+            if [ "${actual}" != "${expected}" ]; then
+              echo "::error::${label} is '${actual}', expected '${expected}'"
+              fail=1
+            else
+              echo "  ok  ${label} = ${actual}"
+            fi
+          }
+
+          pyproject=$(grep -E '^version = ' pyproject.toml | head -1 | sed -E 's/version = "([^"]+)"/\1/')
+          init=$(grep -E '^__version__ = ' src/mcp_unifi/__init__.py | head -1 | sed -E 's/__version__ = "([^"]+)"/\1/')
+          manifest=$(python3 -c "import json;print(json.load(open('manifest.json'))['version'])")
+          server_version=$(python3 -c "import json;print(json.load(open('server.json'))['version'])")
+          server_oci=$(python3 -c "import json;print(json.load(open('server.json'))['packages'][0]['identifier'])")
+          expected_oci="ghcr.io/${REPO}:${VERSION}"
+          compose_image=$(grep -E "image: ghcr\.io/${REPO}:" docker-compose.yml | head -1 | sed -E 's/.*image: (.+)/\1/')
+          chart_app=$(grep -E '^appVersion:' charts/mcp-unifi/Chart.yaml | head -1 | sed -E 's/appVersion: "?([^"]+)"?/\1/')
+
+          check "pyproject.toml version" "${VERSION}" "${pyproject}"
+          check "src/mcp_unifi/__init__.py __version__" "${VERSION}" "${init}"
+          check "manifest.json version" "${VERSION}" "${manifest}"
+          check "server.json version" "${VERSION}" "${server_version}"
+          check "server.json packages[0].identifier" "${expected_oci}" "${server_oci}"
+          check "docker-compose.yml image" "${expected_oci}" "${compose_image}"
+          check "charts/mcp-unifi/Chart.yaml appVersion" "${VERSION}" "${chart_app}"
+
+          if [ "${fail}" -ne 0 ]; then
+            echo ""
+            echo "::error::Version surfaces disagree with tag ${REF_NAME}."
+            echo "::error::Bump every surface in a commit BEFORE cutting the tag."
+            echo "::error::See CONTRIBUTING.md for the release procedure."
+            exit 1
+          fi
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
 
@@ -34,27 +89,6 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Bump in-tree version files to the released version
-        # Runs while the checkout is at the pushed tag. These four files are
-        # baked into the build artifacts (the wheel, hence the Docker image,
-        # carries pyproject.toml + __init__.py via pip install; the .dxt carries
-        # the working-tree manifest.json via the cp below). They MUST be bumped
-        # here, before "Build and push" and before "Build .dxt bundle", so the
-        # artifacts actually report the released version. server.json is the MCP
-        # Registry listing source; bumping it here keeps it consistent and lets
-        # the post-build main commit carry it back to the default branch.
-        env:
-          REF_NAME: ${{ github.ref_name }}
-          REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          VERSION="${REF_NAME#v}"
-          sed -i -E "s|^version = \"[0-9]+\.[0-9]+\.[0-9]+\"|version = \"${VERSION}\"|" pyproject.toml
-          sed -i -E "s|^__version__ = \"[0-9]+\.[0-9]+\.[0-9]+\"|__version__ = \"${VERSION}\"|" src/mcp_unifi/__init__.py
-          sed -i -E "s|(\"version\": \")[0-9]+\.[0-9]+\.[0-9]+(\")|\1${VERSION}\2|" manifest.json
-          sed -i -E "s|(\"version\": \")[0-9]+\.[0-9]+\.[0-9]+(\")|\1${VERSION}\2|" server.json
-          sed -i -E "s|(ghcr\.io/${REPO}:)[0-9]+\.[0-9]+\.[0-9]+|\1${VERSION}|" server.json
 
       - name: Extract version
         id: meta
@@ -127,34 +161,3 @@ jobs:
           files: |
             /tmp/sbom.cyclonedx.json
             mcp-unifi-${{ steps.dxt.outputs.version }}.dxt
-
-      - name: Bump version files + compose example on main
-        # Artifacts are already built and published from the tag above. Now sync
-        # the default branch so main reflects the release: the five version
-        # files (pyproject.toml, __init__.py, manifest.json, server.json image
-        # tag + version, docker-compose.yml example). Done after the build so it
-        # cannot affect the published artifacts, and on a fresh checkout of main
-        # so the bump lands on the branch (the tag is detached HEAD).
-        env:
-          REF_NAME: ${{ github.ref_name }}
-          REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          VERSION="${REF_NAME#v}"
-          git fetch origin main
-          git checkout main
-          sed -i -E "s|^version = \"[0-9]+\.[0-9]+\.[0-9]+\"|version = \"${VERSION}\"|" pyproject.toml
-          sed -i -E "s|^__version__ = \"[0-9]+\.[0-9]+\.[0-9]+\"|__version__ = \"${VERSION}\"|" src/mcp_unifi/__init__.py
-          sed -i -E "s|(\"version\": \")[0-9]+\.[0-9]+\.[0-9]+(\")|\1${VERSION}\2|" manifest.json
-          sed -i -E "s|(\"version\": \")[0-9]+\.[0-9]+\.[0-9]+(\")|\1${VERSION}\2|" server.json
-          sed -i -E "s|(ghcr\.io/${REPO}:)[0-9]+\.[0-9]+\.[0-9]+|\1${VERSION}|" server.json
-          sed -i -E "s|(ghcr\.io/${REPO}:)[0-9]+\.[0-9]+\.[0-9]+|\1${VERSION}|" docker-compose.yml
-          if git diff --quiet; then
-            echo "all version files already on ${VERSION}, nothing to bump"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add pyproject.toml src/mcp_unifi/__init__.py manifest.json server.json docker-compose.yml
-          git commit -m "release: bump version files + compose example to ${VERSION} [skip ci]"
-          git push origin main
