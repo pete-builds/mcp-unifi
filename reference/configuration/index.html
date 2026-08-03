@@ -282,7 +282,7 @@
 <td>CSV string</td>
 <td><code dir="auto">""</code></td>
 <td>HTTP + auth on</td>
-<td>Comma-separated bearer tokens. Each entry is either a bare token (auto-assigned <code dir="auto">client-N</code>) or a <code dir="auto">name:token</code> pair (recommended — the name shows up in the audit log).</td>
+<td>Comma-separated bearer tokens. Each entry is one of: a bare token (auto-assigned <code dir="auto">client-N</code>), a <code dir="auto">name:token</code> pair (recommended — name shows up in the audit log), or a <code dir="auto">name:token:module1|module2</code> triple to scope a client to specific modules. Pipe-separated because comma is the entry delimiter. Known modules: <code dir="auto">network</code>, <code dir="auto">protect</code>, <code dir="auto">access</code>; <code dir="auto">*</code> means all.</td>
 </tr>
 </tbody>
 </table>
