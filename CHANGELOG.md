@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-08-03
+
+Maintenance and dependency-security release. No tool behaviour changes: every
+tool signature, envelope, and dry-run/confirm path is identical to 0.16.0.
+
+### Security
+
+- **Pinned `mcp==1.29.0` to clear three HIGH CVEs** (CVE-2026-52869,
+  CVE-2026-52870, CVE-2026-59950). The transitive pin was reachable because
+  `fastmcp==3.4.5` accepts `mcp<2.0,>=1.24.0` and the lockfile had resolved to an
+  affected version. Pinned directly in `requirements.in` rather than waiting on a
+  fastmcp release.
+- Bumped `astro` to `^7.1.6` in `docs/site`, clearing 7 open Dependabot alerts,
+  and bumped the docs `vite` transitive for CVE-2026-53571.
+
+### Changed
+
+- Dependency bumps across the python-minor-patch group and the `python` base
+  image digest, via Dependabot.
+- Regenerated `requirements.lock` and `requirements-dev.lock` to clear
+  pre-existing pin drift (fastmcp, uvicorn, joserfc, python-multipart, ruff,
+  mypy, hypothesis).
+
+### Fixed
+
+- **The documented Docker quick start could not start.** HTTP is the default
+  transport and `auth_required` defaults to `True` with an empty `auth_tokens`,
+  so `docker run -e STUB_MODE=true ghcr.io/pete-builds/mcp-unifi:latest` (the
+  first command in the README, and the one on the docs homepage) raised
+  `ValueError` and exited rather than serving. Broken since auth landed in
+  0.9.0. Every install path in the README now mints and passes a bearer token,
+  and shows the matching `--header "Authorization: Bearer ..."` for
+  `claude mcp add`. The Helm example had the same defect, since the chart ships
+  `auth.required: true` with `auth.tokens: ""`.
+- **Release tags did not describe their own version.** The version files are
+  bumped by `release.yml` *inside the runner* after checking out the pushed tag,
+  and the bump is only committed to `main` after the build, so the tagged tree
+  reported the previous version: `v0.16.0` contained
+  `version = "0.15.4"` in `pyproject.toml`, `__init__.py`, and `manifest.json`.
+  Installing from `@v0.16.0` therefore produced 0.15.4 metadata, and rebuilding
+  the tag verbatim did not reproduce the released artifacts. Version files are
+  now bumped in a commit *before* the tag is cut, so the tag names the exact
+  source tree the artifacts were built from. The in-runner sed in `release.yml`
+  is retained as a no-op safety net.
+- **MCP Registry publishes landed one release behind**, the same root cause seen
+  from the registry side. `publish-mcp.yml` takes its own checkout of the tag and
+  read the stale `server.json`, so the registry sat on 0.15.4 while GHCR served
+  0.16.0. It now derives the version from the tag name and waits for the image to
+  land in GHCR first, so the `io.modelcontextprotocol.server.name` ownership
+  label resolves instead of racing the build.
+- **Audit replay silently lost the authenticated caller.** `AuditEvent.client_id`
+  was written to the JSONL by `to_json`, but `parse_jsonl` never read it back, so
+  every parsed or replayed event reported `client_id=None`. Logs predating the
+  field still parse via the dataclass default, so the schema stays at `"1"`.
+- Dropped an unused `# noqa: S310` in the healthcheck that `ruff 0.16.0` began
+  flagging, unblocking CI on `main`.
+
 ## [0.16.0] - 2026-07-06
 
 ### Added
