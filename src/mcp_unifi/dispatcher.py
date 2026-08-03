@@ -16,7 +16,7 @@ import importlib
 import logging
 import os
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Literal, overload
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 from mcp_unifi.backends import (
     AccessBackend,
@@ -347,6 +347,15 @@ def register_modules(
 
     Returns the tuple of module names actually registered (in order).
 
+    Side effect: each newly-registered tool is tagged with its module name
+    (``"network"``, ``"protect"``, ``"access"``) via FastMCP's ``tool.tags``
+    set. The scope-filter middleware
+    (:class:`mcp_unifi.scoping.ScopeMiddleware`) reads those tags at
+    request time to decide which tools a given client_id may see and call.
+    Tagging happens here — at the one place that already knows the
+    module→tool relationship — instead of inside every ``@mcp.tool()``
+    call site across ~20 sub-modules.
+
     Raises:
         UnknownModuleError: ``MCP_UNIFI_MODULES_ENABLED`` references a module
             that doesn't exist in ``mcp_unifi.modules``.
@@ -358,13 +367,53 @@ def register_modules(
             raise UnknownModuleError(f"Unknown module '{name}'. Known: {sorted(KNOWN_MODULES)}")
         module = importlib.import_module(f"mcp_unifi.modules.{name}")
         register_fn = module.register
+        before = _tool_names(mcp)
         register_fn(mcp, settings, registry)
+        _tag_new_tools(mcp, module_name=name, existing=before)
         registered.append(name)
     logger.info(
         "registered modules",
         extra={"modules": registered, "controllers": registry.names()},
     )
     return tuple(registered)
+
+
+def _iter_registered_tools(mcp: FastMCP) -> list[Any]:
+    """Return the currently-registered tool objects.
+
+    Reads from ``_local_provider._components``, which FastMCP 3.4 keys by
+    ``"tool:<name>@..."``. Falls back to an empty list if the shape
+    changes across versions — tagging is best-effort and must not break
+    server construction.
+    """
+    provider = getattr(mcp, "_local_provider", None)
+    if provider is None:
+        return []
+    components = getattr(provider, "_components", None)
+    if components is None:
+        return []
+    return [
+        obj
+        for key, obj in components.items()
+        if isinstance(key, str) and key.startswith("tool:")
+    ]
+
+
+def _tool_names(mcp: FastMCP) -> set[str]:
+    """Snapshot the names of tools currently registered on ``mcp``."""
+    return {getattr(t, "name", "") for t in _iter_registered_tools(mcp)}
+
+
+def _tag_new_tools(mcp: FastMCP, *, module_name: str, existing: set[str]) -> None:
+    """Add ``module_name`` to ``tool.tags`` for every tool registered since ``existing``."""
+    for tool in _iter_registered_tools(mcp):
+        name = getattr(tool, "name", "")
+        if not name or name in existing:
+            continue
+        tags = getattr(tool, "tags", None)
+        if tags is None:
+            continue
+        tags.add(module_name)
 
 
 __all__ = [

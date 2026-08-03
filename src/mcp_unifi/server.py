@@ -51,6 +51,7 @@ from mcp_unifi.clients.unifi import UniFiClient
 from mcp_unifi.config import Settings, load_settings
 from mcp_unifi.dispatcher import build_registry, register_modules
 from mcp_unifi.logging_setup import configure_logging
+from mcp_unifi.scoping import WILDCARD, ScopeMiddleware
 
 logger = logging.getLogger("mcp_unifi.server")
 
@@ -148,7 +149,32 @@ def build_server(
         return JSONResponse({"status": "ok", "version": _resolve_version()})
 
     register_modules(mcp, settings, registry)
+    _install_scope_middleware(mcp, settings)
     return mcp
+
+
+def _install_scope_middleware(mcp: FastMCP, settings: Settings) -> None:
+    """Register the per-client tool-scope filter middleware.
+
+    No-op on stdio (no authenticated clients to distinguish) and no-op
+    when every configured client has wildcard access (nothing to filter
+    on any request). Skipping the middleware in those cases keeps
+    ``tools/list`` on the hot path free of the extra hop.
+    """
+    if settings.mcp_transport == "stdio":
+        return
+    scopes = settings.auth_client_scopes
+    if not scopes or all(WILDCARD in modules for modules in scopes.values()):
+        return
+    mcp.add_middleware(ScopeMiddleware(client_scopes=scopes))
+    logger.info(
+        "per-client tool scoping enabled",
+        extra={
+            "scopes": {
+                client_id: sorted(modules) for client_id, modules in scopes.items()
+            }
+        },
+    )
 
 
 def _build_auth_provider(settings: Settings) -> StaticTokenVerifier | None:

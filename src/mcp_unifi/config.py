@@ -171,9 +171,13 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("MCP_UNIFI_AUTH_TOKENS", "auth_tokens"),
         description=(
             "Bearer tokens for HTTP transport. Comma-separated. Each entry "
-            "is either a bare token (assigned synthetic client_id 'client-N') "
-            "or a 'client_id:token' pair for named clients. Ignored on stdio. "
-            "Env var: MCP_UNIFI_AUTH_TOKENS."
+            "is one of: a bare token (assigned client_id 'client-N', all "
+            "modules allowed); 'client_id:token' (named client, all modules "
+            "allowed); or 'client_id:token:module1|module2' (named client "
+            "scoped to specific modules — known modules are 'network', "
+            "'protect', 'access'; '*' means all). The pipe separator is "
+            "used because comma is already the entry delimiter. Ignored on "
+            "stdio. Env var: MCP_UNIFI_AUTH_TOKENS."
         ),
     )
     auth_required: bool = Field(
@@ -192,33 +196,74 @@ class Settings(BaseSettings):
         """Parse ``auth_tokens`` into the dict shape FastMCP's StaticTokenVerifier expects.
 
         Returns ``{token: {"client_id": str, "scopes": []}}``. Empty if no
-        tokens configured. Each entry in the CSV is either a bare token
-        (assigned ``client-0``, ``client-1``, ...) or a ``name:token`` pair
-        (then ``client_id`` is the name). Used by ``build_server`` to wire
-        the auth provider; also surfaced for tests.
+        tokens configured. Each entry in the CSV is one of:
+
+        * ``token`` — bare, client_id auto-assigned ``client-N``.
+        * ``client_id:token`` — named client, all modules allowed.
+        * ``client_id:token:module1|module2`` — named client, restricted to
+          the listed modules (pipe-separated because comma is already the
+          entry delimiter). ``*`` matches everything.
+
+        Used by ``build_server`` to wire the auth provider. Per-client
+        module allowlists live on :meth:`auth_client_scopes` alongside.
         """
+        return {token: {"client_id": meta["client_id"], "scopes": []}
+                for token, meta in self._auth_entries().items()}
+
+    @property
+    def auth_client_scopes(self) -> dict[str, set[str]]:
+        """Return ``{client_id: allowed_modules}`` derived from ``auth_tokens``.
+
+        A client with ``{"*"}`` (or a bare/2-part token) may call every tool
+        the server registered. A client with a concrete set like
+        ``{"network", "protect"}`` sees only tools tagged with one of those
+        modules on ``tools/list``, and calls to any other tool return an
+        auth error. The scope map is consumed by
+        :class:`mcp_unifi.scoping.ScopeMiddleware`.
+        """
+        return {meta["client_id"]: meta["allowed_modules"]
+                for meta in self._auth_entries().values()}
+
+    def _auth_entries(self) -> dict[str, dict[str, Any]]:
+        """Parse ``auth_tokens`` once. Internal helper for the two properties above."""
         raw = self.auth_tokens.strip()
         if not raw:
             return {}
         out: dict[str, dict[str, Any]] = {}
+        seen_client_ids: set[str] = set()
         for idx, item in enumerate(raw.split(",")):
             item = item.strip()
             if not item:
                 continue
-            if ":" in item:
-                client_id, _, token = item.partition(":")
-                client_id = client_id.strip()
-                token = token.strip()
+            parts = item.split(":", 2)
+            if len(parts) == 1:
+                client_id, token, scope_str = f"client-{idx}", parts[0].strip(), "*"
+            elif len(parts) == 2:
+                client_id = parts[0].strip()
+                token = parts[1].strip()
+                scope_str = "*"
             else:
-                client_id, token = f"client-{idx}", item
+                client_id = parts[0].strip()
+                token = parts[1].strip()
+                scope_str = parts[2].strip() or "*"
             if not token:
                 raise ValueError(f"MCP_UNIFI_AUTH_TOKENS entry {idx} is missing a token value")
+            if not client_id:
+                raise ValueError(f"MCP_UNIFI_AUTH_TOKENS entry {idx} has an empty client_id")
+            if client_id in seen_client_ids:
+                raise ValueError(
+                    f"MCP_UNIFI_AUTH_TOKENS entry {idx} reuses client_id={client_id!r}"
+                )
             if token in out:
                 raise ValueError(
                     f"MCP_UNIFI_AUTH_TOKENS entry {idx} reuses a token already "
                     f"assigned to client_id={out[token]['client_id']!r}"
                 )
-            out[token] = {"client_id": client_id, "scopes": []}
+            allowed = {m.strip() for m in scope_str.split("|") if m.strip()}
+            if "*" in allowed:
+                allowed = {"*"}
+            out[token] = {"client_id": client_id, "allowed_modules": allowed}
+            seen_client_ids.add(client_id)
         return out
 
     # ------------------------------------------------------------------
