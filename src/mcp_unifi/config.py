@@ -30,6 +30,12 @@ import yaml
 from pydantic import AliasChoices, BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Duplicated (intentionally) from dispatcher.KNOWN_MODULES to keep config a
+# leaf module — importing dispatcher here would risk a circular via
+# mcp_unifi.clients.*. The two must stay in sync; test_scoping.py's
+# test_scope_names_match_known_modules enforces it.
+_KNOWN_MODULE_SCOPES: frozenset[str] = frozenset({"network", "protect", "access"})
+
 logger = logging.getLogger(__name__)
 
 
@@ -250,6 +256,17 @@ class Settings(BaseSettings):
                 raise ValueError(f"MCP_UNIFI_AUTH_TOKENS entry {idx} is missing a token value")
             if not client_id:
                 raise ValueError(f"MCP_UNIFI_AUTH_TOKENS entry {idx} has an empty client_id")
+            # ``:`` and ``|`` are the parser's structural delimiters. A token
+            # containing either would be silently reinterpreted (colon → treated
+            # as ``token:scope`` splitting the wrong way; pipe → parsed as
+            # a module boundary). ``openssl rand -hex 32`` produces hex-only
+            # output that is safe; other generators must avoid these chars.
+            if ":" in token or "|" in token:
+                raise ValueError(
+                    f"MCP_UNIFI_AUTH_TOKENS entry {idx}: token value contains a "
+                    f"reserved delimiter (':' or '|'). Use `openssl rand -hex 32` "
+                    f"or another hex-only generator."
+                )
             if client_id in seen_client_ids:
                 raise ValueError(
                     f"MCP_UNIFI_AUTH_TOKENS entry {idx} reuses client_id={client_id!r}"
@@ -262,6 +279,19 @@ class Settings(BaseSettings):
             allowed = {m.strip() for m in scope_str.split("|") if m.strip()}
             if "*" in allowed:
                 allowed = {"*"}
+            else:
+                # Fail closed on unknown scope names. A typo like
+                # ``networks,protect`` would otherwise silently produce a
+                # client that matches no tool (empty intersection), which
+                # both hides misconfig from the operator and can lock a
+                # client out of tools they were supposed to reach.
+                unknown = allowed - _KNOWN_MODULE_SCOPES
+                if unknown:
+                    raise ValueError(
+                        f"MCP_UNIFI_AUTH_TOKENS entry {idx}: unknown "
+                        f"module scope(s) {sorted(unknown)!r}. Known: "
+                        f"{sorted(_KNOWN_MODULE_SCOPES)!r} or '*'."
+                    )
             out[token] = {"client_id": client_id, "allowed_modules": allowed}
             seen_client_ids.add(client_id)
         return out

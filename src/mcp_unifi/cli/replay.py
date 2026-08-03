@@ -15,6 +15,14 @@ a typo or a stray shell expansion:
 * ``--i-mean-it`` — second confirmation. Without it, the CLI exits before
   any network call is made.
 
+**Scope note.** Replay builds a fresh, in-process FastMCP instance and
+invokes tools via ``server.call_tool``. It does NOT go through the HTTP
+transport, which means the per-client bearer-token scope from
+``MCP_UNIFI_AUTH_TOKENS`` is bypassed by design — replay runs with full
+tool access regardless of how narrow any client's scope is. This CLI is
+an operator/admin tool; only run it on systems where you already trust
+the operator's shell access.
+
 The CLI is intentionally minimal in this step. Step 3 (dispatcher refactor)
 will wire per-tool ``controller`` arg handling; until then real-mode replay
 shells out to the existing single-controller wiring and uses the matching

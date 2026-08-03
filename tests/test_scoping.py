@@ -111,6 +111,53 @@ def test_empty_module_names_after_pipe_split_are_dropped() -> None:
     assert result == {"ops": {"network", "protect"}}
 
 
+def test_token_with_pipe_rejected() -> None:
+    """A pipe in the token would be silently reinterpreted as a module boundary."""
+    s = Settings(stub_mode=True, auth_required=False, auth_tokens="ops:tok|weird")
+    with pytest.raises(ValueError, match="reserved delimiter"):
+        _ = s.auth_client_scopes
+
+
+def test_unknown_module_scope_rejected() -> None:
+    """A typo like 'protects' or a stray colon in the intended token would
+    silently produce an unknown scope. Reject at parse time so misconfig is
+    loud, not silent.
+
+    This is the fail-closed behavior the reviewer flagged: a token like
+    ``ops:my:secret:network`` produces client=ops, token=my (safe), scope
+    ``secret:network`` — an unknown 'module' that would give the client an
+    empty allow set. Better to refuse to boot.
+    """
+    s = Settings(
+        stub_mode=True, auth_required=False, auth_tokens="ops:tok:networks"
+    )
+    with pytest.raises(ValueError, match=r"unknown .*module scope"):
+        _ = s.auth_client_scopes
+
+
+def test_colon_in_intended_token_becomes_unknown_scope_and_rejected() -> None:
+    """End-to-end check on the exact ``ops:my:secret:network`` misconfig."""
+    s = Settings(
+        stub_mode=True, auth_required=False, auth_tokens="ops:my:secret:network"
+    )
+    with pytest.raises(ValueError, match=r"unknown .*module scope"):
+        _ = s.auth_client_scopes
+
+
+def test_scope_names_match_dispatcher_known_modules() -> None:
+    """The config-layer scope allowlist and dispatcher.KNOWN_MODULES must agree.
+
+    Both are frozensets of the same three strings, duplicated to keep
+    config a leaf module. If one drifts (a fourth module ships, an
+    existing one is renamed), tokens either accept unknown scopes or
+    reject valid ones. Catch drift here.
+    """
+    from mcp_unifi.config import _KNOWN_MODULE_SCOPES
+    from mcp_unifi.dispatcher import KNOWN_MODULES
+
+    assert _KNOWN_MODULE_SCOPES == KNOWN_MODULES
+
+
 # ---------------------------------------------------------------------------
 # Dispatcher: tools are tagged by module
 # ---------------------------------------------------------------------------
