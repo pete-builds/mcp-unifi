@@ -12,7 +12,7 @@
 
 An [MCP server](https://modelcontextprotocol.io/) built around the assumption that LLM-driven infrastructure calls need guardrails. Every destructive tool accepts `dry_run=True` and returns the predicted change set without writing. Composite tools (`create_iot_network`, `create_guest_network`, `provision_homelab_service`, `provision_camera`) capture pre-state and roll back applied steps on partial failure. Every call — dry-run or real — lands in a JSONL audit log with secrets scrubbed; the included `mcp-unifi-replay` CLI can re-issue a log against a fresh controller.
 
-Beyond the safety substrate: 62 Network tools (devices, AP radio tuning, VLANs, WLANs, firewall, switch ports, port forwards, DHCP reservations, AP groups, observability, Threat Management / IDS-IPS, Honeypot, Teleport VPN), 11 Protect tools (cameras, motion events, smart detections, recording config), and 18 Access tools (doors, credentials, visitors, badge events, hubs / readers). Every tool accepts a `controller` parameter so one server instance manages multiple UniFi sites. Speaks both **stdio** (Claude Desktop, `uvx`, `.dxt`) and **Streamable HTTP** (Docker, Helm). Works on any UniFi OS gateway running UniFi Network 9.x or newer (UDM, UDM Pro, UDM SE, UCG-Fiber, UCG-Ultra, UDR, UDW, UniFi OS Server), authenticated with a local API key from Settings → Control Plane → Integrations. Verified against UCG-Fiber fw 5.1.12.33296. No Site Manager or cloud account required.
+Beyond the safety substrate: **Network** tools for devices, AP radio tuning, VLANs, WLANs, firewall, switch ports, port forwards, DHCP reservations, AP groups, observability, Threat Management / IDS-IPS, Honeypot, and Teleport VPN, plus opt-in **Protect** (cameras, motion events, smart detections, recording config) and **Access** (doors, credentials, visitors, badge events, hubs / readers). Every tool accepts a `controller` parameter so one server instance manages multiple UniFi sites. Speaks both **stdio** (Claude Desktop, `uvx`, `.dxt`) and **Streamable HTTP** (Docker, Helm). The full, always-current tool list is in the auto-generated [Tool Manifest](https://pete-builds.github.io/mcp-unifi/tools/). Works on any UniFi OS gateway running UniFi Network 9.x or newer (UDM, UDM Pro, UDM SE, UCG-Fiber, UCG-Ultra, UDR, UDW, UniFi OS Server), authenticated with a local API key from Settings → Control Plane → Integrations. Verified against UCG-Fiber fw 5.1.12.33296. No Site Manager or cloud account required.
 
 ## Install
 
@@ -73,7 +73,7 @@ Full guides for each install path live in the [docs site](https://pete-builds.gi
 - **Single image, multi-controller.** One container runs Network, Protect, and Access together. The same process manages multiple UniFi sites in parallel via the `controller` parameter and a YAML controllers file (`MCP_UNIFI_CONTROLLERS_FILE`). No need to run a separate process per controller.
 - **API-key-first auth.** Uses the local API key from Settings → Control Plane → Integrations against the `/proxy/network/api` endpoint. No username/password storage, no cloud account, no Site Manager dependency.
 - **Multi-channel distribution.** Docker, .dxt one-click for Claude Desktop, Helm chart, uvx. Listed on the official MCP Registry. Container images are cosign-signed (keyless OIDC) with a CycloneDX SBOM attached to each release.
-- **Network + Protect + Access.** Network on by default; Protect and Access opt-in via `MCP_UNIFI_MODULES_ENABLED=network,protect,access`. Access ships read-only in v0.10 (door unlocks and credential issuance require session-token auth and are deferred). UniFi Drive is not in scope.
+- **Network + Protect + Access.** Network on by default; Protect and Access opt-in via `MCP_UNIFI_MODULES_ENABLED=network,protect,access`. Access ships read-only (door unlocks and credential issuance require session-token auth and are deferred). UniFi Drive is not in scope.
 
 ## Quick start
 
@@ -133,9 +133,9 @@ Full env var reference and the multi-site YAML schema are in the [Configuration 
 
 ## How this is built
 
-The engineering scaffolding around the 86 tools, in case you want to know what's holding it up:
+The engineering scaffolding around the tool surface (see the [Tool Manifest](https://pete-builds.github.io/mcp-unifi/tools/) for the current count), in case you want to know what's holding it up:
 
-**Test discipline.** 619 tests covering unit, integration, and property-based (Hypothesis). HTTP is mocked with respx so tests don't hit a real controller. Coverage gated at 80% branch coverage in CI; current floor is 90%.
+**Test discipline.** ~880 tests across unit, integration, and property-based (Hypothesis) — see `pytest --collect-only` for the current count. HTTP is mocked with respx so tests don't hit a real controller. Coverage gated at 80% branch coverage in CI; current floor is 90%.
 
 **Code quality gates.** Ruff (pycodestyle, pyflakes, isort, flake8-bugbear, pyupgrade, simplify, flake8-bandit security ruleset, comprehensions) plus mypy strict (no implicit Any, unreachable code flagged, unused ignores flagged). Pre-commit hooks run lint, format, types, and regenerate the tool manifest with a drift check, so bad code never reaches CI.
 

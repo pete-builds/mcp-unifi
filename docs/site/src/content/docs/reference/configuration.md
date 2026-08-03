@@ -34,7 +34,17 @@ These env vars cover the single-controller case. When set without `MCP_UNIFI_CON
 
 | Variable | Type | Default | Required | Notes |
 |---|---|---|---|---|
-| `MCP_UNIFI_MODULES_ENABLED` | CSV string | `network` | no | Modules to load. Known values: `network`, `protect`. Unknown values fail startup with `UnknownModuleError`. |
+| `MCP_UNIFI_MODULES_ENABLED` | CSV string | `network` | no | Modules to load. Known values: `network`, `protect`, `access`. Unknown values fail startup with `UnknownModuleError`. Access requires `UNIFI_ACCESS_HOST` and `UNIFI_ACCESS_API_KEY` in real mode. |
+
+## Access module (opt-in)
+
+Only required when `MCP_UNIFI_MODULES_ENABLED` includes `access` and `STUB_MODE=false`. See the [Access setup guide](/mcp-unifi/guides/access-setup/).
+
+| Variable | Type | Default | Required | Notes |
+|---|---|---|---|---|
+| `UNIFI_ACCESS_HOST` | string | `""` | access + real mode | Access hub IP or hostname. Often the same as `UNIFI_HOST`. |
+| `UNIFI_ACCESS_API_KEY` | string | `""` | access + real mode | Access API key. Separate from the Network API key; generated on the Access controller's developer settings. |
+| `UNIFI_ACCESS_PORT` | int (1-65535) | `12445` | no | HTTPS port for the Access hub (the direct Access app port). |
 
 ## Transport
 
@@ -43,6 +53,15 @@ These env vars cover the single-controller case. When set without `MCP_UNIFI_CON
 | `MCP_TRANSPORT` | enum (`stdio`, `streamable-http`) | `streamable-http` | no | `stdio` for Claude Desktop / `uvx` / `.dxt` installs; `streamable-http` for the long-running container. |
 | `MCP_HOST` | string | `0.0.0.0` | no | Bind address (Streamable HTTP only). |
 | `MCP_PORT` | int (1-65535) | `3714` | no | Listen port (Streamable HTTP only). |
+
+## HTTP authentication
+
+The Streamable HTTP transport is secure by default. See the [Authentication guide](/mcp-unifi/guides/auth/) for the full model.
+
+| Variable | Type | Default | Required | Notes |
+|---|---|---|---|---|
+| `MCP_UNIFI_AUTH_REQUIRED` | bool | `true` | no | When `true`, the HTTP transport refuses to start without tokens. Set to `false` only on a loopback-bound single-host deployment. Stdio transport ignores this. |
+| `MCP_UNIFI_AUTH_TOKENS` | CSV string | `""` | HTTP + auth on | Comma-separated bearer tokens. Each entry is either a bare token (auto-assigned `client-N`) or a `name:token` pair (recommended — the name shows up in the audit log). |
 
 ## Logging
 

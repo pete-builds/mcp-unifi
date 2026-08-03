@@ -8,17 +8,21 @@ Claude Code is the fastest path to a working tool call. It supports both **Strea
 
 ## Streamable HTTP (Docker)
 
-Start the container if you haven't already:
+Start the container if you haven't already. The HTTP transport is secure by default and refuses to start without a bearer token, so mint one first:
 
 ```bash
-docker run -d --rm -p 3714:3714 -e STUB_MODE=true \
+export MCP_UNIFI_TOKEN=$(openssl rand -hex 32)
+docker run -d --rm -p 3714:3714 \
+  -e STUB_MODE=true \
+  -e MCP_UNIFI_AUTH_TOKENS="$MCP_UNIFI_TOKEN" \
   --name mcp-unifi ghcr.io/pete-builds/mcp-unifi:latest
 ```
 
-Register it with Claude Code at user scope:
+Register it with Claude Code at user scope, passing the token as an `Authorization` header:
 
 ```bash
-claude mcp add --transport http --scope user unifi http://localhost:3714/mcp
+claude mcp add --transport http --scope user unifi http://localhost:3714/mcp \
+  --header "Authorization: Bearer $MCP_UNIFI_TOKEN"
 ```
 
 Verify:

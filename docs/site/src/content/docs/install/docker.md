@@ -8,12 +8,19 @@ The Docker image is the recommended install for homelab and multi-client setups.
 
 ## Quickstart (stub mode)
 
+The HTTP transport is **secure by default**: it refuses to start without a bearer token. Mint one, pass it to the container, and use it on every MCP request. See the [Authentication guide](/mcp-unifi/guides/auth/) for the full model.
+
 ```bash
-docker run --rm -p 3714:3714 -e STUB_MODE=true \
+export MCP_UNIFI_TOKEN=$(openssl rand -hex 32)
+docker run --rm -p 3714:3714 \
+  -e STUB_MODE=true \
+  -e MCP_UNIFI_AUTH_TOKENS="$MCP_UNIFI_TOKEN" \
   ghcr.io/pete-builds/mcp-unifi:latest
 ```
 
-That's the whole thing. The server boots into stub mode, returns realistic mock data, and needs no UniFi hardware. You can register it with any MCP client right now and start calling tools.
+The server boots into stub mode, returns realistic mock data, and needs no UniFi hardware. Register it with any MCP client using `Authorization: Bearer $MCP_UNIFI_TOKEN` and start calling tools.
+
+For throwaway local testing on loopback only, `-e MCP_UNIFI_AUTH_REQUIRED=false` skips auth entirely. **Never** use it on an interface reachable by anything else — every connected client gets admin-equivalent access to the controller.
 
 ## docker-compose
 
@@ -61,26 +68,28 @@ The container runs as **UID 1000**, no shell, with a **read-only root filesystem
 
 ## Verify
 
-Send a `tools/list` request to confirm the server is alive and the right modules are loaded:
+Send a `tools/list` request to confirm the server is alive and the right modules are loaded. Include the bearer token you minted above:
 
 ```bash
 curl -sS -X POST http://localhost:3714/mcp \
+  -H "Authorization: Bearer $MCP_UNIFI_TOKEN" \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
-You should see 57 Network tools listed. With `MCP_UNIFI_MODULES_ENABLED=network,protect` that climbs to 68; with `network,protect,access` to 86.
+You should see the Network tools listed. Enabling `MCP_UNIFI_MODULES_ENABLED=network,protect` adds Protect; `network,protect,access` adds Access on top. The always-current per-module count is in the [Tool Manifest](/mcp-unifi/tools/).
 
 ## Switch to real mode
 
-When you have a gateway and an API key, drop stub mode and add the gateway env vars:
+When you have a gateway and an API key, drop stub mode and add the gateway env vars. Keep the auth token — it's required for the HTTP transport regardless of stub/real mode:
 
 ```bash
 docker run --rm -p 3714:3714 \
   -e STUB_MODE=false \
   -e UNIFI_HOST=192.168.1.1 \
   -e UNIFI_API_KEY=<your-local-api-key> \
+  -e MCP_UNIFI_AUTH_TOKENS="$MCP_UNIFI_TOKEN" \
   ghcr.io/pete-builds/mcp-unifi:latest
 ```
 
@@ -88,20 +97,23 @@ Get the API key from **Settings → Control Plane → Integrations → Create AP
 
 For multi-site setups (more than one controller), use the `MCP_UNIFI_CONTROLLERS_FILE` env var instead. See the [Multi-Site Setup guide](/mcp-unifi/guides/multi-site/).
 
-## Enable Protect
+## Enable Protect and Access
 
-The Protect module is opt-in. Add `MCP_UNIFI_MODULES_ENABLED=network,protect`:
+Protect and Access are opt-in modules. Add them to `MCP_UNIFI_MODULES_ENABLED`:
 
 ```bash
 docker run --rm -p 3714:3714 \
   -e STUB_MODE=false \
   -e UNIFI_HOST=192.168.1.1 \
   -e UNIFI_API_KEY=<your-local-api-key> \
-  -e MCP_UNIFI_MODULES_ENABLED=network,protect \
+  -e MCP_UNIFI_MODULES_ENABLED=network,protect,access \
+  -e UNIFI_ACCESS_HOST=192.168.1.1 \
+  -e UNIFI_ACCESS_API_KEY=<your-access-api-key> \
+  -e MCP_UNIFI_AUTH_TOKENS="$MCP_UNIFI_TOKEN" \
   ghcr.io/pete-builds/mcp-unifi:latest
 ```
 
-See the [Protect Tools reference](/mcp-unifi/reference/protect/) for the full surface.
+Access uses a separate API key generated on the Access controller's developer settings. See the [Protect Tools reference](/mcp-unifi/reference/protect/) and the [Access setup guide](/mcp-unifi/guides/access-setup/) for the full surface.
 
 ## Verify the image signature
 

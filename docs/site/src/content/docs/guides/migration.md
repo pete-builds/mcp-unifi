@@ -45,20 +45,23 @@ To manage more than one controller, write a YAML file and point `MCP_UNIFI_CONTR
 ```
 
 ```bash
+export MCP_UNIFI_TOKEN=$(openssl rand -hex 32)
 docker run --rm -p 3714:3714 \
   -e STUB_MODE=false \
   -e MCP_UNIFI_CONTROLLERS_FILE=/etc/mcp-unifi/controllers.yaml \
+  -e MCP_UNIFI_AUTH_TOKENS="$MCP_UNIFI_TOKEN" \
   -v ./controllers.yaml:/etc/mcp-unifi/controllers.yaml:ro \
   ghcr.io/pete-builds/mcp-unifi:latest
 ```
 
-When `MCP_UNIFI_CONTROLLERS_FILE` is set, the legacy `UNIFI_HOST` / `UNIFI_API_KEY` env vars are ignored. See the [Multi-Site Setup guide](/mcp-unifi/guides/multi-site/) for the full schema.
+When `MCP_UNIFI_CONTROLLERS_FILE` is set, the legacy `UNIFI_HOST` / `UNIFI_API_KEY` env vars are ignored. See the [Multi-Site Setup guide](/mcp-unifi/guides/multi-site/) for the full schema, and the [Authentication guide](/mcp-unifi/guides/auth/) for the bearer-token model.
 
 ## New: enable Protect and Access
 
-Both modules are opt-in. To load Protect's 11 tools and Access's 18 tools alongside the 57 Network tools, set `MCP_UNIFI_MODULES_ENABLED=network,protect,access`:
+Both modules are opt-in. To load Protect and Access alongside Network, set `MCP_UNIFI_MODULES_ENABLED=network,protect,access`:
 
 ```bash
+export MCP_UNIFI_TOKEN=$(openssl rand -hex 32)
 docker run --rm -p 3714:3714 \
   -e STUB_MODE=false \
   -e UNIFI_HOST=192.168.1.1 \
@@ -66,10 +69,11 @@ docker run --rm -p 3714:3714 \
   -e UNIFI_ACCESS_HOST=192.168.1.20 \
   -e UNIFI_ACCESS_API_KEY=<your-access-api-key> \
   -e MCP_UNIFI_MODULES_ENABLED=network,protect,access \
+  -e MCP_UNIFI_AUTH_TOKENS="$MCP_UNIFI_TOKEN" \
   ghcr.io/pete-builds/mcp-unifi:latest
 ```
 
-`UNIFI_ACCESS_*` is only required when the `access` module is enabled in real mode. Subset the module list freely: `network,protect`, `protect`, `access`, etc. Access is read-only in v0.10; see the [Access Setup guide](/mcp-unifi/guides/access-setup/) for the dual-auth deferral and config details.
+`UNIFI_ACCESS_*` is only required when the `access` module is enabled in real mode. Subset the module list freely: `network,protect`, `protect`, `access`, etc. See the [Access Setup guide](/mcp-unifi/guides/access-setup/) for Access config details and the [Tool Manifest](/mcp-unifi/tools/) for the current tool surface.
 
 ## New: audit log
 
@@ -78,10 +82,12 @@ Audit logging is on by default. The log file lands at `audit.jsonl` in the conta
 For a long-running container, you'll want to mount that as a volume so it survives restarts:
 
 ```bash
+export MCP_UNIFI_TOKEN=$(openssl rand -hex 32)
 docker run --rm -p 3714:3714 \
   -e UNIFI_HOST=192.168.1.1 \
   -e UNIFI_API_KEY=<your-local-api-key> \
   -e MCP_UNIFI_AUDIT_PATH=/var/log/mcp-unifi/audit.jsonl \
+  -e MCP_UNIFI_AUTH_TOKENS="$MCP_UNIFI_TOKEN" \
   -v ./logs:/var/log/mcp-unifi \
   ghcr.io/pete-builds/mcp-unifi:latest
 ```
@@ -90,14 +96,9 @@ Or set `MCP_UNIFI_AUDIT_SINK=stdout` to route the log to the container's stdout 
 
 ## Tool count
 
-| Version | Tool count |
-|---|---|
-| v0.4.x (Network only) | 41 |
-| v0.5.0-rc.1 (Network + multi-site + dry-run + audit) | 43 |
-| v0.5.0-rc.2 (added `audit_network_drift`, `backup_config`, `restore_config`) | 46 |
-| v0.5.0-rc.2 + Protect enabled | 58 |
+The tool surface has grown considerably since v0.5.x. The [Tool Manifest](/mcp-unifi/tools/) lists every registered tool per release; it's auto-generated from the FastMCP registration so it never drifts from the code.
 
-No tools were removed. The added tools are read-only (`audit_network_drift`, `backup_config`) or honor `dry_run` (`restore_config`).
+No tools have been removed. Every additive tool is read-only or honors `dry_run`.
 
 ## What to verify after upgrade
 

@@ -4,7 +4,7 @@
   "display_name": "UniFi Gateway",
   "version": "0.16.1",
   "description": "MCP server for self-hosted UniFi gateway management.",
-  "long_description": "Self-hosted UniFi gateway management: VLANs, WLANs, firewall, clients, DHCP, observability, UniFi Protect cameras, and UniFi Access doors / credentials / badge events. Multi-site, dry-run on destructive ops, replayable audit log. Stub mode lets you try the 86 tools with no hardware.",
+  "long_description": "Self-hosted UniFi gateway management: VLANs, WLANs, firewall, clients, DHCP, observability, UniFi Protect cameras, and UniFi Access doors / credentials / badge events. Multi-site, dry-run on destructive ops, replayable audit log. Stub mode lets you try the full tool surface with no hardware.",
   "author": {
     "name": "Pete Stergion",
     "url": "https://github.com/pete-builds"
@@ -72,7 +72,7 @@
     "modules_enabled": {
       "type": "string",
       "title": "Modules Enabled",
-      "description": "Comma-separated list of modules to load. Options: network, protect, access. Default loads Network only. Access is read-only in v0.10.",
+      "description": "Comma-separated list of modules to load. Options: network, protect, access. Default loads Network only. Access currently ships read-only.",
       "default": "network",
       "required": false
     }

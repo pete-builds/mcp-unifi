@@ -1,10 +1,10 @@
 ---
 draft: false
 title: Access Tools
-description: Full reference for the 18 Access module tools.
+description: Reference for the Access module tool surface.
 ---
 
-The Access module covers UniFi Access doors, credentials, visitor passes, badge-scan events, and hub / reader hardware. v0.10 ships **read-only** tools: door unlocks, credential issuance, and visitor-pass creation are deferred to a future v0.11+ that introduces session-token auth alongside the API key (see the v0.10 spec doc for the Option A vs. Option B decision).
+The Access module covers UniFi Access doors, credentials, visitor passes, badge-scan events, and hub / reader hardware. It currently ships **read-only** tools; door unlocks, credential issuance, and visitor-pass creation are deferred to a future release that introduces session-token auth alongside the API key. See the [Tool Manifest](/mcp-unifi/tools/) for the always-current per-module count.
 
 ## Enabling
 
@@ -24,9 +24,9 @@ When the env var is unset, only Network is loaded.
 
 ## Conventions
 
-Every tool accepts an optional `controller: str = "default"` parameter. The v0.10 surface has no `dry_run` parameter because every tool is read-only.
+Every tool accepts an optional `controller: str = "default"` parameter. The current Access surface has no `dry_run` parameter because every tool is read-only.
 
-The Access tool surface is intentionally narrow: no door unlocks, no credential issuance, no visitor pass creation, no policy updates, no device reboots. v0.10 covers forensics, audits, summaries, and visibility, which is the bulk of the LLM use cases for Access. Write tools land in a later release gated by a separate explicit decision.
+The Access tool surface is intentionally narrow: no door unlocks, no credential issuance, no visitor pass creation, no policy updates, no device reboots. It covers forensics, audits, summaries, and visibility, which is the bulk of the LLM use cases for Access. Write tools land in a later release gated by a separate explicit decision.
 
 ## Read-only
 
@@ -112,6 +112,6 @@ UNIFI_ACCESS_PORT=12445
 UNIFI_ACCESS_API_KEY=<access-key>
 ```
 
-Or, when using a `MCP_UNIFI_CONTROLLERS_FILE`, set the per-controller `access_host`, `access_port`, and `access_api_key` fields. The Access API key only authorises GETs; the dual-auth path required for writes is not implemented in v0.10.
+Or, when using a `MCP_UNIFI_CONTROLLERS_FILE`, set the per-controller `access_host`, `access_port`, and `access_api_key` fields. The Access API key only authorises GETs; the dual-auth path required for writes is not implemented yet.
 
 If `MCP_UNIFI_MODULES_ENABLED` includes `access` but no controller has Access credentials configured, calls to Access tools return a clean `AccessNotAvailableError` envelope rather than failing deep inside the HTTP client.

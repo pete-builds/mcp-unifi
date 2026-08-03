@@ -8,22 +8,28 @@ Cursor reads MCP server config from `.cursor/mcp.json` (project scope) or `~/.cu
 
 ## Streamable HTTP (Docker)
 
-Point Cursor at a running container:
+Point Cursor at a running container. The HTTP transport is secure by default — every request needs an `Authorization: Bearer <token>` header:
 
 ```json
 {
   "mcpServers": {
     "unifi": {
-      "url": "http://localhost:3714/mcp"
+      "url": "http://localhost:3714/mcp",
+      "headers": {
+        "Authorization": "Bearer <paste-token-from-openssl-rand-hex-32>"
+      }
     }
   }
 }
 ```
 
-Start the container in a separate terminal:
+Start the container in a separate terminal, passing the same token:
 
 ```bash
-docker run -d --rm -p 3714:3714 -e STUB_MODE=true \
+export MCP_UNIFI_TOKEN=$(openssl rand -hex 32)
+docker run -d --rm -p 3714:3714 \
+  -e STUB_MODE=true \
+  -e MCP_UNIFI_AUTH_TOKENS="$MCP_UNIFI_TOKEN" \
   --name mcp-unifi ghcr.io/pete-builds/mcp-unifi:latest
 ```
 

@@ -22,33 +22,93 @@ supported version is whatever is tagged latest on the
 
 ## Threat model
 
-mcp-unifi is designed to run on a trusted LAN and talk to a single self-hosted
-UniFi gateway. As of v0.9.0, the HTTP transport authenticates every request
-with a bearer token (`Authorization: Bearer <token>`); the server refuses to
-start without tokens by default. Stdio transport stays unauthenticated by
-design — the parent process owns the security boundary. Even with bearer
-auth on, treat the network as defence in depth: run on a trusted segment,
-behind a Tailscale ACL, etc.
+mcp-unifi is designed to run on a trusted LAN and talk to a self-hosted UniFi
+gateway. Even with the transport-layer bearer auth described below, treat the
+network as defence in depth: run on a trusted segment, behind a Tailscale ACL,
+etc.
 
-The container:
+## MCP client authentication
 
-- Runs as a non-root user (UID 1000), no shell, no home directory
-- Uses a read-only root filesystem (with a small `tmpfs` for `/tmp`)
-- Drops `no-new-privileges` and runs no capabilities beyond default
-- Pins the base image by digest and installs Python deps with `--require-hashes`
-- Never logs the API key or WLAN passphrases (a redacting JSON formatter scrubs
-  known sensitive keys defensively)
-- Does not call out to any cloud service. The only outbound HTTPS connection
-  is to the configured `UNIFI_HOST`
+Behavior depends on transport:
 
-The API key is read from the `UNIFI_API_KEY` environment variable and sent in
-the `X-API-Key` header on every request to the gateway. It is never written to
-disk by this server, never echoed in logs, and never returned in MCP responses.
+- **Streamable HTTP transport** (Docker, Helm, standalone HTTP): every MCP
+  request is authenticated with a bearer token (`Authorization: Bearer
+  <token>`). The server refuses to start with the HTTP transport unless
+  `MCP_UNIFI_AUTH_TOKENS` is set (default `MCP_UNIFI_AUTH_REQUIRED=true`).
+  Auth can be disabled with `MCP_UNIFI_AUTH_REQUIRED=false` — only appropriate
+  for loopback-bound single-host deployments. See the
+  [Authentication guide](https://pete-builds.github.io/mcp-unifi/guides/auth/)
+  for setup and audit-log integration.
+- **Stdio transport** (`.dxt`, `uvx`, `pipx`): unauthenticated by design. The
+  parent process (Claude Desktop, Claude Code) owns the security boundary;
+  adding transport auth on top would be theatre.
+
+## Secret handling
+
+- `UNIFI_API_KEY` and every per-controller `api_key` value are wrapped in
+  Pydantic's `SecretStr`. Reading the cleartext requires `.get_secret_value()`;
+  `repr()` and structured logging never echo the raw key.
+- The API key is sent in the `X-API-Key` header on every request to the
+  gateway. It is never written to disk by this server, never echoed in logs,
+  and never returned in MCP responses.
+- The structured logger has a redactor that scrubs known sensitive keys
+  (`api_key`, `passphrase`, `x_passphrase`, `password`, `secret`, `token`)
+  from any log record.
+- The audit log applies the same scrub to tool kwargs and results before
+  writing.
+
+## Container-level hardening
+
+The published image (`ghcr.io/pete-builds/mcp-unifi`) contributes:
+
+- Runs as a **non-root user (UID 1000)** with **no shell** and **no home
+  directory** (baked into the Dockerfile).
+- **Base image pinned by digest**. Debian security upgrades are applied on
+  top of the pinned base at build time.
+- Python dependencies installed with **`pip --require-hashes`** from a
+  hash-locked `requirements.lock`.
+- **cosign keyless OIDC signature** on every published image; **CycloneDX
+  SBOM** attached to every release; **SLSA build provenance** attested via
+  `docker/build-push-action`.
+- **`io.modelcontextprotocol.server.name`** label so the MCP Registry can
+  verify the publisher controls the image.
+
+## Runtime hardening (applied by Compose or Helm — not `docker run`)
+
+The following protections come from the runtime configuration in
+`docker-compose.example.yml`, `docker-compose.yml`, and the Helm chart. A
+plain `docker run` without those flags does **not** apply them:
+
+- **Read-only root filesystem** (`read_only: true` / Helm
+  `securityContext.readOnlyRootFilesystem: true`), with a small `tmpfs` for
+  `/tmp` (16 MiB in the compose example).
+- **`no-new-privileges`** set on the container (`security_opt:
+  no-new-privileges:true` / Helm `securityContext.allowPrivilegeEscalation:
+  false`).
+- **All Linux capabilities dropped** in Helm
+  (`securityContext.capabilities.drop: [ALL]`). The Docker compose examples
+  rely on the default cap set plus `no-new-privileges`; drop caps explicitly
+  with `cap_drop: [ALL]` if you want the same posture there.
+
+If you deploy with a bare `docker run`, replicate these flags yourself.
+
+## Network posture
+
+- The server does not call out to any cloud service. The only outbound HTTPS
+  connections are to the configured `UNIFI_HOST` (and `UNIFI_ACCESS_HOST`
+  when the Access module is enabled).
+- The Helm chart ships an optional `NetworkPolicy` template
+  (`networkPolicy.enabled: true`) so cluster operators can pin ingress and
+  egress explicitly.
 
 ## What this server does NOT do
 
 - It does not expose any cloud Site Manager / Ubiquiti Account integration.
-- It does not store any state between restarts (stub-mode data is in-memory only).
-- It does not authenticate MCP clients. Run it on a trusted network or behind a
-  reverse proxy with auth.
-- It does not auto-update. Pin a specific tag in your `docker-compose.yml`.
+- It does not store any state between restarts (stub-mode data is in-memory
+  only; audit log is append-only on disk when `MCP_UNIFI_AUDIT_SINK=file`).
+- It does not implement per-tool RBAC. Every authenticated client can call
+  every registered tool. Per-client scopes are a v1.x decision.
+- It does not implement rate limiting or a token-rotation API. Rotate by
+  editing `MCP_UNIFI_AUTH_TOKENS` and restarting.
+- It does not auto-update. Pin a specific tag in your `docker-compose.yml`
+  or Helm `image.tag`.

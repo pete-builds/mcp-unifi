@@ -6,12 +6,13 @@ description: What mcp-unifi is, prerequisites, and the four install paths.
 
 `mcp-unifi` is a [Model Context Protocol](https://modelcontextprotocol.io/) server that gives any MCP-aware client (Claude Desktop, Claude Code, Cursor, Cline, custom agents) a typed surface area over a self-hosted UniFi gateway. It speaks to the gateway over the local API key, runs entirely on your network, and does not require a Site Manager / cloud account.
 
-The server covers two UniFi apps:
+The server covers three UniFi apps:
 
-- **Network** (46 tools): devices, VLANs, WLANs, firewall rules, switch port profiles, per-client commands, static DHCP leases, port forwards, observability, plus composite tools with rollback (`create_iot_network`, `create_guest_network`, `provision_homelab_service`).
-- **Protect** (12 tools, opt-in): cameras, motion events, smart detections, snapshots, recordings, recording mode, privacy mask, motion sensitivity, plus a `provision_camera` composite.
+- **Network** (default): devices, VLANs, WLANs, firewall rules, switch port profiles, per-client commands, static DHCP leases, port forwards, observability, Threat Management / IDS-IPS, Honeypot, Teleport VPN, plus composite tools with rollback (`create_iot_network`, `create_guest_network`, `provision_homelab_service`).
+- **Protect** (opt-in): cameras, motion events, smart detections, snapshots, recordings, recording mode, privacy mask, motion sensitivity, plus a `provision_camera` composite.
+- **Access** (opt-in): doors, credentials, visitors, badge events, hubs / readers.
 
-Every destructive tool accepts `dry_run=True` to preview the change set without applying it. Every call lands in a JSONL audit log with secrets scrubbed. Every tool accepts an optional `controller` parameter so one server instance can manage multiple sites.
+The full, always-current tool list is in the auto-generated [Tool Manifest](/mcp-unifi/tools/). Every destructive tool accepts `dry_run=True` to preview the change set without applying it. Every call lands in a JSONL audit log with secrets scrubbed. Every tool accepts an optional `controller` parameter so one server instance can manage multiple sites.
 
 ## Prerequisites
 
@@ -32,13 +33,17 @@ Four supported install paths. Pick the one that matches how you run Claude:
 
 ## Fastest path to a working tool call
 
-The fastest cold-start is **Docker + Claude Code in stub mode**:
+The fastest cold-start is **Docker + Claude Code in stub mode**. Mint a bearer token first — the HTTP transport is secure by default and refuses to start without one:
 
 ```bash
-docker run -d --rm -p 3714:3714 -e STUB_MODE=true \
+export MCP_UNIFI_TOKEN=$(openssl rand -hex 32)
+docker run -d --rm -p 3714:3714 \
+  -e STUB_MODE=true \
+  -e MCP_UNIFI_AUTH_TOKENS="$MCP_UNIFI_TOKEN" \
   --name mcp-unifi ghcr.io/pete-builds/mcp-unifi:latest
 
-claude mcp add --transport http --scope user unifi http://localhost:3714/mcp
+claude mcp add --transport http --scope user unifi http://localhost:3714/mcp \
+  --header "Authorization: Bearer $MCP_UNIFI_TOKEN"
 ```
 
-Then in Claude Code: *"list my UniFi devices"*. You'll get two stubbed devices back, no hardware required. See the [Claude Code recipe](/mcp-unifi/recipes/claude-code/) for the full walkthrough.
+Then in Claude Code: *"list my UniFi devices"*. You'll get two stubbed devices back, no hardware required. See the [Claude Code recipe](/mcp-unifi/recipes/claude-code/) for the full walkthrough and the [Authentication guide](/mcp-unifi/guides/auth/) for the token model.

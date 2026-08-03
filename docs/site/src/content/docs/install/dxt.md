@@ -24,7 +24,7 @@ Click the extension's gear icon in **Settings → Extensions** to open the confi
 | **Stub Mode** | Toggles `STUB_MODE`. On = mock data, no hardware needed. Off = real gateway. | On |
 | **UniFi Host** | `UNIFI_HOST`. IP or hostname (e.g. `192.168.1.1`). Required when Stub Mode is off. | (empty) |
 | **UniFi API Key** | `UNIFI_API_KEY`. Local API key from the gateway. Stored encrypted by Claude Desktop. | (empty) |
-| **Modules Enabled** | `MCP_UNIFI_MODULES_ENABLED`. Comma-separated. Use `network,protect` to enable both. | `network` |
+| **Modules Enabled** | `MCP_UNIFI_MODULES_ENABLED`. Comma-separated. Use `network,protect,access` to enable all three. | `network` |
 
 To get the API key, log into the gateway UI, go to **Settings → Control Plane → Integrations**, and click **Create API Key**.
 

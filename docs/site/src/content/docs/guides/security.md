@@ -19,17 +19,23 @@ mcp-unifi is designed to run on a trusted home or homelab LAN, behind your exist
 - The structured logger has a redactor that scrubs known sensitive keys (`api_key`, `passphrase`, `x_passphrase`, `password`, `secret`) from any log record. WLAN passphrases are scrubbed `[REDACTED]` from every tool response, even in stub mode.
 - The audit log applies the same scrub to tool kwargs before writing.
 
-## Container hardening
+## Container-level hardening (baked into the image)
 
-The published image (`ghcr.io/pete-builds/mcp-unifi`) ships with:
+The published image (`ghcr.io/pete-builds/mcp-unifi`) contributes:
 
 - **Non-root**: runs as **UID 1000**, no shell, no home directory.
-- **Read-only root filesystem**: enforced via Docker / Helm. `/tmp` is `tmpfs` for ephemeral writes (audit log, runtime caches).
-- **`no-new-privileges`**: prevents setuid escalation paths.
-- **Capabilities dropped**: all Linux capabilities dropped at the container boundary.
 - **Hash-pinned deps**: Python dependencies installed with `pip --require-hashes` from a hash-locked `requirements.lock`. The base image is pinned by digest.
 - **Trivy scan**: CI fails the build on any HIGH or CRITICAL vulnerability finding. Current status: zero findings.
 - **Multi-arch**: `linux/amd64` and `linux/arm64` from one release.
+
+## Runtime hardening (applied by Compose or Helm)
+
+The following protections come from the runtime configuration, not the image itself. A plain `docker run` without these flags does **not** apply them — replicate them yourself if you deploy that way:
+
+- **Read-only root filesystem**: `read_only: true` in compose / `securityContext.readOnlyRootFilesystem: true` in Helm. `/tmp` is `tmpfs` for ephemeral writes (audit log, runtime caches).
+- **`no-new-privileges`**: `security_opt: no-new-privileges:true` in compose / `securityContext.allowPrivilegeEscalation: false` in Helm. Prevents setuid escalation paths.
+- **Capabilities dropped**: `securityContext.capabilities.drop: [ALL]` in Helm; add `cap_drop: [ALL]` in compose for the same posture.
+- **NetworkPolicy** (Kubernetes): the chart ships an optional `NetworkPolicy` template so operators can pin ingress and egress explicitly.
 
 ## Supply-chain provenance
 
@@ -69,7 +75,9 @@ docker buildx imagetools inspect \
 
 ## What's intentionally not in scope
 
-- **No auth on the MCP endpoint.** Out of scope. Use Tailscale, a reverse proxy with mTLS, or a NetworkPolicy.
+- **No per-tool RBAC.** Every authenticated client can call every registered tool. Per-client scopes are a v1.x decision. (Auth on the MCP endpoint itself is on by default for HTTP — see the [Authentication guide](/mcp-unifi/guides/auth/) — but every authenticated client is equal.)
+- **No token rotation API.** Rotate by editing `MCP_UNIFI_AUTH_TOKENS` and restarting.
+- **No rate limiting.**
 - **No remote-control of the audit log.** The log is local. Ship it to your SIEM with whatever you already use (Fluent Bit, syslog forwarder, etc).
 - **No tenant isolation.** One server instance = one tenant. Multi-tenant SaaS deployment is a post-v1.0 question.
 

@@ -1,10 +1,10 @@
 ---
 draft: false
 title: mcp-unifi
-description: Self-hosted UniFi MCP server. Multi-site config, dry-run previews, JSONL audit log. Network + Protect.
+description: Self-hosted UniFi MCP server. Multi-site config, dry-run previews, JSONL audit log. Network + Protect + Access.
 template: splash
 hero:
-  tagline: Self-hosted UniFi MCP server. Multi-site config, dry-run previews, JSONL audit log. Network + Protect.
+  tagline: Self-hosted UniFi MCP server. Multi-site config, dry-run previews, JSONL audit log. Network + Protect + Access.
   actions:
     - text: Get Started
       link: /mcp-unifi/getting-started/
@@ -19,16 +19,21 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 
 `mcp-unifi` is a [Model Context Protocol](https://modelcontextprotocol.io/) server for self-hosted UniFi gateways, built around the assumption that LLM-driven infrastructure calls need guardrails. Every destructive tool ships with a `dry_run` preview that returns the predicted change set without writing. Every call — preview or real — lands in a JSONL audit log with secrets scrubbed. Composite tools (e.g. "create an IoT VLAN with isolation rule") capture pre-state and roll back applied steps if any sub-step fails.
 
-Beyond the safety substrate: **62 Network tools** (devices, VLANs, WLANs, firewall, switch ports, port forwards, DHCP reservations, AP groups, observability, Threat Management / IDS-IPS, Honeypot, Teleport VPN) plus **11 opt-in Protect tools** (cameras, motion events, smart detections, recording config). One container runs both modules, and one process manages multiple UniFi sites in parallel via a `controller` parameter. Works on any UniFi OS gateway running UniFi Network 9.x or newer (UDM, UDM Pro, UDM SE, UCG-Fiber, UCG-Ultra, UDR, UDW, UniFi OS Server) using a local API key. No Site Manager or cloud account required.
+Beyond the safety substrate: **Network tools** for devices, VLANs, WLANs, firewall, switch ports, port forwards, DHCP reservations, AP groups, observability, Threat Management / IDS-IPS, Honeypot, and Teleport VPN, plus opt-in **Protect** (cameras, motion events, smart detections, recording config) and **Access** (doors, credentials, visitors, badge events, hubs / readers) modules. One container runs all three, and one process manages multiple UniFi sites in parallel via a `controller` parameter. The full, always-current tool list is in the [Tool Manifest](/mcp-unifi/tools/). Works on any UniFi OS gateway running UniFi Network 9.x or newer (UDM, UDM Pro, UDM SE, UCG-Fiber, UCG-Ultra, UDR, UDW, UniFi OS Server) using a local API key. No Site Manager or cloud account required.
 
 ## Install in 30 seconds
+
+The HTTP transport refuses to start without a bearer token. All Docker / Helm examples below mint one and pass it through. For a full walkthrough, follow the linked install guide.
 
 <CardGrid>
   <Card title="Docker" icon="seti:docker">
     Long-running container for homelab and multi-client setups.
 
     ```bash
-    docker run --rm -p 3714:3714 -e STUB_MODE=true \
+    export MCP_UNIFI_TOKEN=$(openssl rand -hex 32)
+    docker run --rm -p 3714:3714 \
+      -e STUB_MODE=true \
+      -e MCP_UNIFI_AUTH_TOKENS="$MCP_UNIFI_TOKEN" \
       ghcr.io/pete-builds/mcp-unifi:latest
     ```
 
@@ -49,7 +54,8 @@ Beyond the safety substrate: **62 Network tools** (devices, VLANs, WLANs, firewa
     ```bash
     helm repo add mcp-unifi \
       https://pete-builds.github.io/mcp-unifi/
-    helm install unifi mcp-unifi/mcp-unifi
+    helm install unifi mcp-unifi/mcp-unifi \
+      --set auth.tokens=$(openssl rand -hex 32)
     ```
 
     [Helm install guide →](/mcp-unifi/install/helm/)
@@ -74,15 +80,15 @@ Beyond the safety substrate: **62 Network tools** (devices, VLANs, WLANs, firewa
   </Card>
 
   <Card title="Single image, multi-controller" icon="seti:config">
-    One container runs Network and Protect together; one process manages multiple UniFi sites in parallel via the `controller` parameter and a YAML controllers file.
+    One container runs Network, Protect, and Access together; one process manages multiple UniFi sites in parallel via the `controller` parameter and a YAML controllers file.
   </Card>
 
   <Card title="API-key-first auth" icon="seti:lock">
     Uses the local API key from Settings → Control Plane → Integrations. No username/password storage, no cloud account, no Site Manager dependency.
   </Card>
 
-  <Card title="Network + Protect" icon="puzzle">
-    62 Network tools plus 11 opt-in Protect tools. Network on by default; Protect via `MCP_UNIFI_MODULES_ENABLED=network,protect`.
+  <Card title="Network + Protect + Access" icon="puzzle">
+    Network on by default; opt in to Protect and Access via `MCP_UNIFI_MODULES_ENABLED=network,protect,access`. See the [Tool Manifest](/mcp-unifi/tools/) for the current tool count per module.
   </Card>
 
   <Card title="Supply-chain hardened" icon="rocket">
@@ -100,27 +106,29 @@ Beyond the safety substrate: **62 Network tools** (devices, VLANs, WLANs, firewa
 └────────────┬────────────┘                  │ loaded at boot
              │ stdio  /  Streamable HTTP     │
              ▼                               ▼
-        ┌────────────────────────────────────────────┐
-        │  mcp-unifi server  (FastMCP, Python 3.13)  │
-        │  ┌─────────────────────────────────────┐   │
-        │  │  Tool dispatcher (per-module)       │   │
-        │  ├──────────────────┬──────────────────┤   │
-        │  │  Network module  │  Protect module  │   │
-        │  │  (46 tools)      │  (12 tools, opt) │   │
-        │  └─────┬────────────┴────────┬─────────┘   │
-        │        │                     │             │
-        │  ┌─────▼──────────┐  ┌───────▼──────────┐  │
-        │  │  Safety layer  │  │  Audit log       │  │
-        │  │  dry_run +     │  │  JSONL,          │  │
-        │  │  rollback      │  │  secrets scrubbed│  │
-        │  └─────┬──────────┘  └──────────────────┘  │
-        └────────┼───────────────────────────────────┘
-                 │ X-API-Key (local API)
-                 ▼
-        ┌────────────────────────────────────────────┐
-        │  UniFi gateway  (UCG-Fiber / UDM / UniFi OS)│
-        │  /proxy/network/api   /proxy/protect/api   │
-        └────────────────────────────────────────────┘
+        ┌────────────────────────────────────────────────┐
+        │  mcp-unifi server  (FastMCP, Python 3.14)      │
+        │  ┌───────────────────────────────────────────┐ │
+        │  │  Tool dispatcher (per-module)             │ │
+        │  ├───────────────┬──────────────┬────────────┤ │
+        │  │  Network      │  Protect     │  Access    │ │
+        │  │  (default)    │  (opt-in)    │  (opt-in)  │ │
+        │  └──────┬────────┴──────┬───────┴─────┬──────┘ │
+        │         │               │             │        │
+        │  ┌──────▼──────┐   ┌────▼─────────┐   │        │
+        │  │ Safety layer│   │ Audit log    │   │        │
+        │  │ dry_run +   │   │ JSONL,       │   │        │
+        │  │ rollback    │   │ secrets      │   │        │
+        │  │             │   │ scrubbed     │   │        │
+        │  └──────┬──────┘   └──────────────┘   │        │
+        └─────────┼────────────────────────────────┼─────┘
+                  │ X-API-Key (local API)          │
+                  ▼                                ▼
+        ┌────────────────────────────────────────────────┐
+        │  UniFi gateway  (UCG-Fiber / UDM / UniFi OS)   │
+        │  /proxy/network/api  /proxy/protect/api        │
+        │  UniFi Access hub  (:12445, separate API key)  │
+        └────────────────────────────────────────────────┘
 ```
 
-The dispatcher gates which modules are loaded at startup via `MCP_UNIFI_MODULES_ENABLED`; everything else (composite tools, audit log, rollback) is module-agnostic plumbing.
+The dispatcher gates which modules are loaded at startup via `MCP_UNIFI_MODULES_ENABLED`; everything else (composite tools, audit log, rollback) is module-agnostic plumbing. The current per-module tool count is in the auto-generated [Tool Manifest](/mcp-unifi/tools/).

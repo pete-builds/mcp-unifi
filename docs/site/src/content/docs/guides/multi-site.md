@@ -76,11 +76,16 @@ If `controller` is omitted, the call routes to the controller named `default`. I
 
 ## Docker example
 
+The HTTP transport requires a bearer token — see the [Authentication guide](/mcp-unifi/guides/auth/). The examples below mint one with `openssl rand -hex 32` and pass it as `MCP_UNIFI_AUTH_TOKENS`.
+
 ```bash
+export MCP_UNIFI_TOKEN=$(openssl rand -hex 32)
+
 # Mount the YAML and point MCP_UNIFI_CONTROLLERS_FILE at it
 docker run --rm -p 3714:3714 \
   -e STUB_MODE=false \
   -e MCP_UNIFI_CONTROLLERS_FILE=/etc/mcp-unifi/controllers.yaml \
+  -e MCP_UNIFI_AUTH_TOKENS="$MCP_UNIFI_TOKEN" \
   -v ./controllers.yaml:/etc/mcp-unifi/controllers.yaml:ro \
   ghcr.io/pete-builds/mcp-unifi:latest
 ```
@@ -99,9 +104,12 @@ Stub mode honors the YAML config too. This is useful for testing multi-site flow
 ```
 
 ```bash
+export MCP_UNIFI_TOKEN=$(openssl rand -hex 32)
+
 docker run --rm -p 3714:3714 \
   -e STUB_MODE=true \
   -e MCP_UNIFI_CONTROLLERS_FILE=/etc/mcp-unifi/controllers.yaml \
+  -e MCP_UNIFI_AUTH_TOKENS="$MCP_UNIFI_TOKEN" \
   -v ./controllers.yaml:/etc/mcp-unifi/controllers.yaml:ro \
   ghcr.io/pete-builds/mcp-unifi:latest
 ```

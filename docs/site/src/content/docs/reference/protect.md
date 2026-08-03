@@ -1,7 +1,7 @@
 ---
 draft: false
 title: Protect Tools
-description: Full reference for the 11 Protect module tools.
+description: Reference for the Protect module tool surface.
 ---
 
 The Protect module covers UniFi Protect cameras: list / get / configure cameras, fetch motion and smart-detection events, pull snapshots and thumbnails, list recordings, and a `provision_camera` composite that configures recording mode + sensitivity + privacy mask in one call with rollback.

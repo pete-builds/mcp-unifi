@@ -4,15 +4,15 @@ title: Access Setup
 description: Configure mcp-unifi to talk to a UniFi Access hub.
 ---
 
-The Access module covers UniFi Access doors, credentials, visitor passes, badge-scan events, and hub / reader hardware. v0.10 ships **read-only** tools only. Door unlocks, credential issuance, and visitor-pass creation are deferred to a future v0.11+ that introduces session-token auth alongside the API key.
+The Access module covers UniFi Access doors, credentials, visitor passes, badge-scan events, and hub / reader hardware. It currently ships **read-only** tools only. Door unlocks, credential issuance, and visitor-pass creation require session-token auth alongside the API key and are deferred.
 
 ## Why read-only
 
 UniFi Access has a wrinkle that Network and Protect do not: mutations require a local username / password session, not the local API key. The API key only authorises GETs against the read-only endpoints.
 
-v0.10 sticks with API-key reads (Option A in the spec) so the project's API-key-first security posture stays intact. No admin password ever sits in env. The 18 read-only tools cover forensics, audits, summaries, and visibility, which is the bulk of LLM use cases for Access.
+The Access module sticks with API-key reads so the project's API-key-first security posture stays intact. No admin password ever sits in env. The read-only tools cover forensics, audits, summaries, and visibility, which is the bulk of LLM use cases for Access.
 
-When write tools land in a later release, they will require setting `UNIFI_ACCESS_USERNAME` and `UNIFI_ACCESS_PASSWORD` alongside the API key and the bearer token still gates the MCP transport unchanged.
+When write tools land in a later release, they will require setting `UNIFI_ACCESS_USERNAME` and `UNIFI_ACCESS_PASSWORD` alongside the API key. The bearer token still gates the MCP transport unchanged.
 
 ## Enabling the module
 

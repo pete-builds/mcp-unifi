@@ -8,7 +8,7 @@ Starting in **v0.9.0**, the HTTP transport authenticates every incoming MCP requ
 
 ## Why this changed
 
-mcp-unifi exposes 57 Network tools, 11 Protect tools, and 18 Access tools. Many in Network and Protect are destructive: delete a VLAN, rewrite a firewall rule, disable Threat Management, block a client, change a camera's recording mode. Before v0.9.0 the server trusted the LAN, which meant a single compromised IoT device on the same network had admin-equivalent access to the controller. v0.9.0 closes that gap. Access is read-only in v0.10, but the same bearer-token gate still applies to it.
+mcp-unifi exposes a large tool surface across Network, Protect, and Access (see the [Tool Manifest](/mcp-unifi/tools/) for the current per-module count). Many Network and Protect tools are destructive: delete a VLAN, rewrite a firewall rule, disable Threat Management, block a client, change a camera's recording mode. Before v0.9.0 the server trusted the LAN, which meant a single compromised IoT device on the same network had admin-equivalent access to the controller. v0.9.0 closes that gap. Access currently ships read-only, but the same bearer-token gate still applies to it.
 
 ## Generate a token
 

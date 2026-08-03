@@ -12,14 +12,15 @@ Thanks for the interest. `mcp-unifi` is a personal project but PRs are welcome â
 ## Development loop
 
 ```bash
-# Create + activate a venv (Python 3.13 required)
+# Create + activate a venv (Python 3.13+ required)
 uv venv && source .venv/bin/activate
 
 # Install with hash-locked deps
 uv pip sync requirements-dev.lock
 uv pip install -e . --no-deps
 
-# Test suite (380+ tests, ~91% coverage; targets parity per-module)
+# Test suite (currently ~880 tests; run `pytest --collect-only` for the exact
+# count). Coverage is gated at 80% branch coverage in CI.
 pytest
 
 # Lint + type-check
@@ -37,7 +38,7 @@ Use the issue templates. For bugs, include the gateway model + firmware (visible
 
 ## Scope
 
-Currently in scope: Network module, Protect module, the safety substrate (dry-run, audit, rollback), distribution. **Out of scope** for now: UniFi Access, UniFi Drive, UniFi Talk. Open an issue if you want to discuss adding one of these as a new module.
+Currently in scope: Network module, Protect module, Access module (read-only â€” writes deferred until session-token auth lands), the safety substrate (dry-run, audit, rollback), and distribution. **Out of scope** for now: UniFi Drive, UniFi Talk. Open an issue if you want to discuss adding one of these as a new module.
 
 ## License
 

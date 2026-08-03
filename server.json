@@ -63,7 +63,7 @@
         },
         {
           "name": "MCP_UNIFI_MODULES_ENABLED",
-          "description": "Comma-separated list of modules to load. Known values: 'network', 'protect', 'access'. Defaults to 'network'. Set to 'network,protect,access' to enable Protect and Access tools alongside Network. Access is read-only in v0.10.",
+          "description": "Comma-separated list of modules to load. Known values: 'network', 'protect', 'access'. Defaults to 'network'. Set to 'network,protect,access' to enable Protect and Access tools alongside Network. Access currently ships read-only; door unlocks and credential issuance require session-token auth and are deferred.",
           "isRequired": false,
           "default": "network",
           "format": "string"
