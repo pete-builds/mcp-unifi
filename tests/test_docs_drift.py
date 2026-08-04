@@ -33,7 +33,6 @@ HISTORICAL_ALLOWLIST: frozenset[Path] = frozenset(
         # the time and should not be back-edited.
         REPO_ROOT / "docs" / "site" / "src" / "content" / "docs" / "changelog.md",
         REPO_ROOT / "docs" / "v0.10-access-module.md",
-        REPO_ROOT / "SESSION-RESUME.md",
     }
 )
 
@@ -67,8 +66,7 @@ def _load_manifest() -> dict[str, int]:
     for tool in manifest["tools"]:
         name = tool["name"]
         if any(
-            k in name
-            for k in ("door", "credential", "visitor", "access", "badge", "hub", "reader")
+            k in name for k in ("door", "credential", "visitor", "access", "badge", "hub", "reader")
         ):
             counts["access"] += 1
         elif any(
@@ -206,8 +204,7 @@ def test_no_stale_test_counts() -> None:
                 continue
             snippet = _snippet(text, match.start(), match.end())
             offenders.append(
-                f"  {path.relative_to(REPO_ROOT)}: exact test count claim\n"
-                f"    → {snippet}"
+                f"  {path.relative_to(REPO_ROOT)}: exact test count claim\n    → {snippet}"
             )
     if offenders:
         joined = "\n".join(offenders)
@@ -255,8 +252,7 @@ def test_docker_run_examples_carry_auth_token() -> None:
                 continue
             snippet = block.replace("\n", " ⏎ ")[:200]
             offenders.append(
-                f"  {path.relative_to(REPO_ROOT)}: docker run without auth token\n"
-                f"    → {snippet}"
+                f"  {path.relative_to(REPO_ROOT)}: docker run without auth token\n    → {snippet}"
             )
     if offenders:
         joined = "\n".join(offenders)

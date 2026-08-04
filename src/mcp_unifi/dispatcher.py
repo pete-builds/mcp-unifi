@@ -393,9 +393,7 @@ def _iter_registered_tools(mcp: FastMCP) -> list[Any]:
     if components is None:
         return []
     return [
-        obj
-        for key, obj in components.items()
-        if isinstance(key, str) and key.startswith("tool:")
+        obj for key, obj in components.items() if isinstance(key, str) and key.startswith("tool:")
     ]
 
 

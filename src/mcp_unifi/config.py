@@ -213,8 +213,10 @@ class Settings(BaseSettings):
         Used by ``build_server`` to wire the auth provider. Per-client
         module allowlists live on :meth:`auth_client_scopes` alongside.
         """
-        return {token: {"client_id": meta["client_id"], "scopes": []}
-                for token, meta in self._auth_entries().items()}
+        return {
+            token: {"client_id": meta["client_id"], "scopes": []}
+            for token, meta in self._auth_entries().items()
+        }
 
     @property
     def auth_client_scopes(self) -> dict[str, set[str]]:
@@ -227,8 +229,9 @@ class Settings(BaseSettings):
         auth error. The scope map is consumed by
         :class:`mcp_unifi.scoping.ScopeMiddleware`.
         """
-        return {meta["client_id"]: meta["allowed_modules"]
-                for meta in self._auth_entries().values()}
+        return {
+            meta["client_id"]: meta["allowed_modules"] for meta in self._auth_entries().values()
+        }
 
     def _auth_entries(self) -> dict[str, dict[str, Any]]:
         """Parse ``auth_tokens`` once. Internal helper for the two properties above."""

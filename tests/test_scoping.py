@@ -36,9 +36,7 @@ from mcp_unifi.server import build_server
 
 
 def _scopes(tokens: str) -> dict[str, set[str]]:
-    return Settings(
-        stub_mode=True, auth_required=False, auth_tokens=tokens
-    ).auth_client_scopes
+    return Settings(stub_mode=True, auth_required=False, auth_tokens=tokens).auth_client_scopes
 
 
 def test_auth_client_scopes_empty_when_unset() -> None:
@@ -128,18 +126,14 @@ def test_unknown_module_scope_rejected() -> None:
     ``secret:network`` — an unknown 'module' that would give the client an
     empty allow set. Better to refuse to boot.
     """
-    s = Settings(
-        stub_mode=True, auth_required=False, auth_tokens="ops:tok:networks"
-    )
+    s = Settings(stub_mode=True, auth_required=False, auth_tokens="ops:tok:networks")
     with pytest.raises(ValueError, match=r"unknown .*module scope"):
         _ = s.auth_client_scopes
 
 
 def test_colon_in_intended_token_becomes_unknown_scope_and_rejected() -> None:
     """End-to-end check on the exact ``ops:my:secret:network`` misconfig."""
-    s = Settings(
-        stub_mode=True, auth_required=False, auth_tokens="ops:my:secret:network"
-    )
+    s = Settings(stub_mode=True, auth_required=False, auth_tokens="ops:my:secret:network")
     with pytest.raises(ValueError, match=r"unknown .*module scope"):
         _ = s.auth_client_scopes
 
@@ -261,8 +255,10 @@ def _all_tools() -> list[_StubTool]:
 @pytest.mark.asyncio
 async def test_list_tools_returns_everything_when_scope_is_wildcard() -> None:
     mw = ScopeMiddleware(client_scopes={"admin": {WILDCARD}})
+
     async def call_next(ctx: Any) -> list[_StubTool]:
         return _all_tools()
+
     with patch("mcp_unifi.scoping._current_client_id", return_value="admin"):
         out = await mw.on_list_tools(_StubListContext(), call_next)
     assert [t.name for t in out] == ["list_networks", "delete_vlan", "list_cameras", "list_doors"]
@@ -271,8 +267,10 @@ async def test_list_tools_returns_everything_when_scope_is_wildcard() -> None:
 @pytest.mark.asyncio
 async def test_list_tools_filters_to_scoped_modules() -> None:
     mw = ScopeMiddleware(client_scopes={"readonly": {"protect", "access"}})
+
     async def call_next(ctx: Any) -> list[_StubTool]:
         return _all_tools()
+
     with patch("mcp_unifi.scoping._current_client_id", return_value="readonly"):
         out = await mw.on_list_tools(_StubListContext(), call_next)
     assert sorted(t.name for t in out) == ["list_cameras", "list_doors"]
@@ -282,8 +280,10 @@ async def test_list_tools_filters_to_scoped_modules() -> None:
 async def test_list_tools_falls_back_to_wildcard_when_client_unknown() -> None:
     """A configured token with no scope entry (shouldn't happen, but must fail open)."""
     mw = ScopeMiddleware(client_scopes={"admin": {WILDCARD}})
+
     async def call_next(ctx: Any) -> list[_StubTool]:
         return _all_tools()
+
     with patch("mcp_unifi.scoping._current_client_id", return_value="mystery-client"):
         out = await mw.on_list_tools(_StubListContext(), call_next)
     assert len(out) == 4  # falls back to wildcard, no over-restriction
@@ -293,8 +293,10 @@ async def test_list_tools_falls_back_to_wildcard_when_client_unknown() -> None:
 async def test_list_tools_wildcard_when_no_client_id_available() -> None:
     """Stdio / auth-disabled paths return client_id=None → wildcard."""
     mw = ScopeMiddleware(client_scopes={"readonly": {"network"}})
+
     async def call_next(ctx: Any) -> list[_StubTool]:
         return _all_tools()
+
     with patch("mcp_unifi.scoping._current_client_id", return_value=None):
         out = await mw.on_list_tools(_StubListContext(), call_next)
     assert len(out) == 4
@@ -309,12 +311,12 @@ async def test_list_tools_wildcard_when_no_client_id_available() -> None:
 async def test_call_tool_allowed_when_scope_matches() -> None:
     mw = ScopeMiddleware(client_scopes={"readonly": {"protect"}})
     tools = {t.name: t for t in _all_tools()}
+
     async def call_next(ctx: Any) -> str:
         return "ok"
+
     with patch("mcp_unifi.scoping._current_client_id", return_value="readonly"):
-        result = await mw.on_call_tool(
-            _StubCallContext("list_cameras", tools), call_next
-        )
+        result = await mw.on_call_tool(_StubCallContext("list_cameras", tools), call_next)
     assert result == "ok"
 
 
@@ -322,9 +324,11 @@ async def test_call_tool_allowed_when_scope_matches() -> None:
 async def test_call_tool_rejected_when_scope_does_not_match() -> None:
     mw = ScopeMiddleware(client_scopes={"readonly": {"protect"}})
     tools = {t.name: t for t in _all_tools()}
+
     async def call_next(ctx: Any) -> str:
         pytest.fail("call_next must not run for a scope-denied tool")
         return "unreachable"
+
     with (
         patch("mcp_unifi.scoping._current_client_id", return_value="readonly"),
         pytest.raises(ToolError, match="not available"),
@@ -336,12 +340,12 @@ async def test_call_tool_rejected_when_scope_does_not_match() -> None:
 async def test_call_tool_wildcard_bypasses_the_gate() -> None:
     mw = ScopeMiddleware(client_scopes={"admin": {WILDCARD}})
     tools = {t.name: t for t in _all_tools()}
+
     async def call_next(ctx: Any) -> str:
         return "ok"
+
     with patch("mcp_unifi.scoping._current_client_id", return_value="admin"):
-        result = await mw.on_call_tool(
-            _StubCallContext("delete_vlan", tools), call_next
-        )
+        result = await mw.on_call_tool(_StubCallContext("delete_vlan", tools), call_next)
     assert result == "ok"
 
 
@@ -350,8 +354,10 @@ async def test_call_tool_rejection_message_does_not_leak_module_names() -> None:
     """A scoped client shouldn't be able to probe which modules exist."""
     mw = ScopeMiddleware(client_scopes={"readonly": {"network"}})
     tools = {t.name: t for t in _all_tools()}
+
     async def call_next(ctx: Any) -> str:
         return "unreachable"
+
     with (
         patch("mcp_unifi.scoping._current_client_id", return_value="readonly"),
         pytest.raises(ToolError) as exc,

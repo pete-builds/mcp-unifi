@@ -169,11 +169,7 @@ def _install_scope_middleware(mcp: FastMCP, settings: Settings) -> None:
     mcp.add_middleware(ScopeMiddleware(client_scopes=scopes))
     logger.info(
         "per-client tool scoping enabled",
-        extra={
-            "scopes": {
-                client_id: sorted(modules) for client_id, modules in scopes.items()
-            }
-        },
+        extra={"scopes": {client_id: sorted(modules) for client_id, modules in scopes.items()}},
     )
 
 
