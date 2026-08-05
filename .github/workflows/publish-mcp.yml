@@ -28,7 +28,7 @@ jobs:
     name: Publish server.json to MCP Registry
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Verify server.json matches the tag
         # release.yml's verify step already enforces this for tag builds, but
