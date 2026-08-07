@@ -82,6 +82,19 @@ def test_three_part_token_tolerates_whitespace() -> None:
     assert result == {"ops": {"network", "protect"}}
 
 
+def test_three_part_token_empty_scope_rejected() -> None:
+    """`readonly:tok:` (trailing colon, empty scope) must fail loudly, not silently
+    collapse to wildcard access. The three-part form is an explicit scoping request.
+    """
+    with pytest.raises(ValueError, match="empty scope list"):
+        _scopes("readonly:tok-r:")
+
+
+def test_three_part_token_whitespace_only_scope_rejected() -> None:
+    with pytest.raises(ValueError, match="empty scope list"):
+        _scopes("readonly:tok-r:   ")
+
+
 def test_duplicate_client_ids_rejected() -> None:
     """Two entries with the same client_id would ambiguate the scope map."""
     s = Settings(
@@ -277,8 +290,8 @@ async def test_list_tools_filters_to_scoped_modules() -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_tools_falls_back_to_wildcard_when_client_unknown() -> None:
-    """A configured token with no scope entry (shouldn't happen, but must fail open)."""
+async def test_list_tools_denies_when_client_unknown() -> None:
+    """A client_id not in the scope map is an anomaly — fail closed, don't grant wildcard."""
     mw = ScopeMiddleware(client_scopes={"admin": {WILDCARD}})
 
     async def call_next(ctx: Any) -> list[_StubTool]:
@@ -286,12 +299,14 @@ async def test_list_tools_falls_back_to_wildcard_when_client_unknown() -> None:
 
     with patch("mcp_unifi.scoping._current_client_id", return_value="mystery-client"):
         out = await mw.on_list_tools(_StubListContext(), call_next)
-    assert len(out) == 4  # falls back to wildcard, no over-restriction
+    assert out == []
 
 
 @pytest.mark.asyncio
-async def test_list_tools_wildcard_when_no_client_id_available() -> None:
-    """Stdio / auth-disabled paths return client_id=None → wildcard."""
+async def test_list_tools_denies_when_no_client_id_available() -> None:
+    """Middleware isn't installed on stdio, so client_id=None here means the auth
+    context is broken or missing — deny rather than fall through to wildcard.
+    """
     mw = ScopeMiddleware(client_scopes={"readonly": {"network"}})
 
     async def call_next(ctx: Any) -> list[_StubTool]:
@@ -299,7 +314,7 @@ async def test_list_tools_wildcard_when_no_client_id_available() -> None:
 
     with patch("mcp_unifi.scoping._current_client_id", return_value=None):
         out = await mw.on_list_tools(_StubListContext(), call_next)
-    assert len(out) == 4
+    assert out == []
 
 
 # ---------------------------------------------------------------------------
@@ -365,6 +380,42 @@ async def test_call_tool_rejection_message_does_not_leak_module_names() -> None:
         await mw.on_call_tool(_StubCallContext("list_cameras", tools), call_next)
     assert "protect" not in str(exc.value).lower()
     assert "access" not in str(exc.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_call_tool_denied_when_client_id_is_none() -> None:
+    """Unresolved identity denies calls, not silently permits them."""
+    mw = ScopeMiddleware(client_scopes={"readonly": {"network"}})
+    tools = {t.name: t for t in _all_tools()}
+
+    async def call_next(ctx: Any) -> str:
+        pytest.fail("call_next must not run when identity is unresolved")
+        return "unreachable"
+
+    with (
+        patch("mcp_unifi.scoping._current_client_id", return_value=None),
+        pytest.raises(ToolError, match="not available"),
+    ):
+        await mw.on_call_tool(_StubCallContext("list_vlans", tools), call_next)
+
+
+@pytest.mark.asyncio
+async def test_call_tool_denied_when_client_id_not_in_scope_map() -> None:
+    """A configured token whose client_id isn't in the scope map is anomalous.
+    Fail closed rather than treating the missing entry as wildcard.
+    """
+    mw = ScopeMiddleware(client_scopes={"readonly": {"network"}})
+    tools = {t.name: t for t in _all_tools()}
+
+    async def call_next(ctx: Any) -> str:
+        pytest.fail("call_next must not run for a client not in the scope map")
+        return "unreachable"
+
+    with (
+        patch("mcp_unifi.scoping._current_client_id", return_value="mystery-client"),
+        pytest.raises(ToolError, match="not available"),
+    ):
+        await mw.on_call_tool(_StubCallContext("list_vlans", tools), call_next)
 
 
 # ---------------------------------------------------------------------------
