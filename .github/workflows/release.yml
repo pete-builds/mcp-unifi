@@ -155,9 +155,33 @@ jobs:
           cd dist/dxt
           zip -r "../../mcp-unifi-${VERSION}.dxt" .
 
-      - name: Attach release artifacts (SBOM + .dxt)
+      - name: Extract release notes from CHANGELOG
+        # Reads the CHANGELOG section whose header matches this tag's version
+        # (e.g. "## [0.17.0]") up to the next "## [" header. Writes to
+        # /tmp/release-notes.md so softprops/action-gh-release can consume it
+        # via body_path. Fails closed if the section is missing or empty so
+        # a release without CHANGELOG entries never ships with an empty body.
+        id: notes
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${REF_NAME#v}"
+          awk -v v="${VERSION}" '
+            $0 ~ "^## \\[" v "\\]" {f=1; next}
+            /^## \[/ {f=0}
+            f
+          ' CHANGELOG.md > /tmp/release-notes.md
+          if ! grep -q '[^[:space:]]' /tmp/release-notes.md; then
+            echo "::error::CHANGELOG has no section for ${VERSION}. Add a '## [${VERSION}]' entry before tagging."
+            exit 1
+          fi
+          echo "Extracted $(wc -l < /tmp/release-notes.md) lines of notes for ${VERSION}."
+
+      - name: Attach release artifacts (SBOM + .dxt) and notes
         uses: softprops/action-gh-release@v3
         with:
+          body_path: /tmp/release-notes.md
           files: |
             /tmp/sbom.cyclonedx.json
             mcp-unifi-${{ steps.dxt.outputs.version }}.dxt
