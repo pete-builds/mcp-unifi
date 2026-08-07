@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-08-06
+
+Auth hardening + a new per-client tool-scoping feature. Security-relevant
+changes to the token scope parser: three separate fail-closed fixes and one
+durability fix to the audit log.
+
+### Added
+
+- **Per-client tool scoping by module.** Tokens can now carry an explicit
+  module allow-list via the `client_id:token:module1|module2` scope form, so a
+  caller can be given `network` without also receiving `protect` and `access`.
+  When no scope is specified the token continues to inherit whatever the server
+  has enabled, so existing tokens keep working.
+
+### Security
+
+- **Reject empty explicit scopes and fail closed on unresolved identity.**
+  A token of the form `client_id:token:` (trailing colon, empty module list)
+  is now rejected at parse time rather than being treated as "all modules".
+  Callers whose identity cannot be resolved from the bearer token are denied
+  instead of falling through to a default allow.
+- **Fail closed on unknown module scopes and reserved delimiters.** Scope
+  tokens containing modules the server does not know about, or tokens using
+  reserved delimiters (`:` / `|`) inside the token secret itself, now fail
+  the parse rather than being silently coerced.
+- **Bumped `cryptography` 48.0.1 → 50.0.0** to clear GHSA-g6cj-pr64-35w5.
+- **Audit log durability: `fsync` each JSONL line.** Previously the audit
+  writer buffered lines and only flushed on close, so a crash between calls
+  could lose the last few events. The server's "every tool call is recorded"
+  claim is now true across an unclean shutdown.
+
+### Changed
+
+- Dependency bumps across the python-minor-patch group.
+- `actions/checkout` bumped from 6 to 7 in CI.
+- CI now runs `ruff format` and drops the gitignored `SESSION-RESUME.md`
+  from the allowlist.
+- Dockerfile comments corrected to describe the actual Python version and
+  reproducibility framing.
+
+### Fixed
+
+- Release verify step (added in 0.16.1) now covers this release too — every
+  version surface must match the tag before the build proceeds.
+
 ## [0.16.1] - 2026-08-03
 
 Maintenance and dependency-security release. No tool behaviour changes: every
