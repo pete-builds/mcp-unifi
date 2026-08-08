@@ -572,6 +572,22 @@ def _seed_settings(default_network_id: str) -> dict[str, UniFiRecord]:
     not-yet-materialised setting records).
     """
     return {
+        "guest_access": {
+            "_id": "6a0525dd18ec98252c8a08ba",
+            "key": "guest_access",
+            "site_id": "default",
+            "portal_enabled": True,
+            "auth": "none",
+            "expire": 480,
+            "expire_number": 8,
+            "expire_unit": 60,
+            "portal_customized": False,
+            "redirect_enabled": False,
+            "restricted_subnet_1": "192.168.0.0/16",
+            "payment_enabled": None,
+            "voucher_enabled": None,
+            "facebook_wifi_enabled": None,
+        },
         "ips": {
             "_id": _oid(),
             "key": "ips",
