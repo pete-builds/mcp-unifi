@@ -107,6 +107,33 @@ def _classify(
     status = network.status
 
     if not network.reachable:
+        # The status endpoint itself timed out. That is not automatically
+        # "unknown": a crash-looping app often hangs its own status handler
+        # while the proxy still returns a clean 5xx for real API routes. If
+        # the corroboration probe reached a verdict, use it — evidence from a
+        # real API call outranks a missing self-report.
+        if serving is not None and serving.status is not None and serving.status >= 500:
+            starting = serving.status == 503
+            return {
+                "state": "network_app_starting" if starting else "network_app_down",
+                "unifi_os": "up",
+                "network_app": "starting" if starting else "down",
+                "summary": (
+                    f"UniFi OS is UP and healthy. The Network application's "
+                    f"status endpoint did not respond, and a live Network API "
+                    f"call returned HTTP {serving.status}, so the application "
+                    f"is {'still starting up' if starting else 'DOWN'}. "
+                    f"Routing and internet access are unaffected — UniFi OS "
+                    f"handles the dataplane."
+                ),
+                "next_step": (
+                    "Wait for the application to finish starting, then re-run."
+                    if starting
+                    else "Restart the Network application from the console UI "
+                    "(Settings → System). If it starts and dies repeatedly it is "
+                    "crash-looping; check storage from the console UI or over SSH."
+                ),
+            }
         return {
             "state": "unknown",
             "unifi_os": "up",
