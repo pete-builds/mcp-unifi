@@ -14,6 +14,12 @@ Returns one record per WLAN with ``_id``, ``name``, ``enabled``,
 ``security``, ``wpa_mode``, ``networkconf_id``, ``is_guest``,
 ``hide_ssid``, and ``wlan_band``.
 
+The WPA pre-shared key (``x_passphrase``) is **redacted** to
+``"[REDACTED]"``. This tool cannot reveal it, by design — there is no
+opt-in flag. Tool output routinely lands in transcripts and logs that
+outlive the request, so a PSK returned here is a PSK disclosed. Read
+it from the controller UI if you genuinely need it.
+
 ## Example
 
 ```python
