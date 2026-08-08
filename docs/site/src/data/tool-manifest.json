@@ -1,5 +1,5 @@
 {
-  "tool_count": 132,
+  "tool_count": 134,
   "tools": [
     {
       "description": "Return credentials expiring within ``days_ahead`` days.\n\nSide effects: None (read-only).\n\nIterates ``list_credentials`` client-side and filters to those whose\n``expires_at`` falls inside the window ``[now, now + days_ahead]``.\nCredentials with no ``expires_at`` (typical for mobile credentials)\nare excluded. Each entry includes ``days_until_expiry`` so the LLM\ncan sort and summarise without re-doing the math.\n\nExample: audit_expiring_credentials(days_ahead=14)",
@@ -1541,6 +1541,21 @@
       "name": "get_gateway_stats"
     },
     {
+      "description": "Show the guest captive-portal configuration for the site.\n\nThe portal is a **site setting** (``guest_access``), not a property of\nany WLAN. Turning a WLAN off \"Hotspot\" mode does not disable the\nportal \u2014 check and change it here.\n\nSide effects: None (read-only).\n\nReturns ``portal_enabled`` (the click-through page toggle), ``auth``\n(``\"none\"`` means a bare Connect button with no credential),\n``expire``/``expire_number``/``expire_unit`` (how long an authorised\nguest session lasts before the page reappears), ``redirect_enabled``\nand ``redirect_url``, the ``restricted_subnet_*`` entries, and the\npayment/voucher/Facebook toggles. ``portal_enabled`` and ``auth`` are\nindependent axes.\n\nExample: get_guest_portal(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "get_guest_portal"
+    },
+    {
       "description": "Show one network's full record, grouped into readable sections.\n\nSide effects: None (read-only). This is the deep view that complements\n``list_networks`` (the summary). Use it to inspect a network's DHCP\nscope, IPv6 configuration, and VPN fields before editing with\n``update_vlan`` / ``set_lan_ipv6``.\n\nResolve the network by ``network_id`` (preferred, from\n``list_networks``) or by ``name`` (case-insensitive; errors if the name\nis ambiguous). Returns:\n\n- ``network``: identity fields (``_id``, ``name``, ``purpose``,\n  ``vlan``, ``vlan_enabled``, ``ip_subnet``, ``enabled``,\n  ``networkgroup``).\n- ``dhcp``: every ``dhcpd_*`` key (lease window, gateway/DNS toggles,\n  lease time, NTP/WINS) plus the IPv6 DHCP (``dhcpdv6_*``) keys.\n- ``ipv6``: the LAN IPv6 view: ``ipv6_interface_type``,\n  ``ipv6_ra_enabled``, ``ipv6_client_address_assignment``,\n  ``ipv6_pd_start`` / ``ipv6_pd_stop`` (the delegated-prefix window),\n  and the RA tuning keys. Empty section on a network with no IPv6.\n- ``vpn``: VPN-related keys (``vpn_type``, ``*_vpn_*``,\n  ``remote_vpn_*``) when the network is a VPN; empty otherwise.\n- ``raw``: the complete unfiltered record, so nothing is hidden.\n\nExample: get_network_details(name=\"Default\")",
       "input_schema": {
         "additionalProperties": false,
@@ -2761,6 +2776,62 @@
         "type": "object"
       },
       "name": "set_camera_recording_mode"
+    },
+    {
+      "description": "Change the guest captive-portal configuration.\n\nSet ``portal_enabled=False`` to remove the click-through \"Connect\"\npage that guests see on every reconnection.\n\nSide effects:\n- Read-modify-writes the site's ``guest_access`` setting. Only the\n  fields you pass are altered; the rest of the record is written back\n  unchanged (full-object write, never a partial body).\n- **Does not weaken network isolation** when isolation is enforced by\n  firewall rules or a guest VLAN. The portal is an interstitial\n  authorisation page, not a security boundary. Disabling it changes\n  who sees a login screen, not who can reach what.\n- Guests already authorised keep their existing session until it\n  expires; the change affects subsequent authorisations.\n- Returns a before/after diff so any collateral edit by the controller\n  is visible rather than silent.\n- Mutates controller state. ``dry_run=True`` previews; otherwise this\n  returns a confirmation token that must be passed to\n  ``confirm_destructive_action`` to commit.\n\nIdempotent: applying the same values twice leaves the same state.\n\nExample: set_guest_portal(portal_enabled=False)",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "auth": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Portal authentication mode: ``\"none\"`` (click-through, no\ncredential), ``\"hotspot\"``, or ``\"custom\"``. ``None``\n(default) leaves it alone. Independent of ``portal_enabled``."
+          },
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it. Returns the\npredicted patch and no confirmation token.",
+            "type": "boolean"
+          },
+          "expire_minutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "How long an authorised guest session lasts before\nthe portal reappears, in minutes (e.g. ``480`` for 8 hours).\n``None`` (default) leaves it alone."
+          },
+          "portal_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "``False`` disables the captive portal entirely.\n``True`` re-enables it. ``None`` (default) leaves it alone."
+          }
+        },
+        "type": "object"
+      },
+      "name": "set_guest_portal"
     },
     {
       "description": "Set the IPv6 configuration of one LAN/VLAN network.\n\nSide effects:\n- Changes how this network gets and advertises IPv6. Turning on\n  ``interface_type=\"pd\"`` plus ``ra_enabled=True`` is what makes the\n  LAN's clients receive global IPv6 addresses from the prefix\n  delegated by the WAN. Toggling router advertisements\n  (``ra_enabled``) or the address-assignment mode causes clients on\n  this network to re-acquire IPv6; IPv4 is unaffected.\n- Only the IPv6 keys you supply change; every other field on the\n  network record is read first and written back unchanged (strict\n  read-modify-write).\n- Mutates controller state. Use dry_run=True to preview the before/\n  after diff without applying.\n\nPrefix-delegation binding: when ``interface_type=\"pd\"`` the controller\nREQUIRES the LAN to reference which DHCPv6 WAN's delegation to draw\nfrom. ``ipv6_interface_type=pd`` on its own returns HTTP 400\n``api.err.PdRequiresAssignedDhcpv6Wan``. This tool auto-binds the LAN to\nthe WAN that actually has DHCPv6-PD enabled (on a single-uplink gateway\nthat is the only internet uplink) by emitting ``ipv6_pd_interface`` =\nthat WAN's networkgroup (e.g. ``\"wan\"``). No WAN with PD enabled \u2192 a\nclear error instead of a controller 400.\n\nFresh-LAN PD scaffold: a brand-new LAN\n(``ipv6_setting_preference=manual``, every ipv6 key unset) has no PD\nwindow, DHCPv6 lease window, or RA lifetimes. Enabling PD on it without\nthose returns HTTP 400 ``api.err.InvalidIpv6Addr`` (the merged record\ncarries ``ipv6_pd_start: null``). When enabling PD, this tool fills the\nCOMPLETE required scaffold with the controller's standard defaults\n(``ipv6_pd_start=::2``, ``ipv6_pd_stop=::7d1``, matching DHCPv6 lease\nwindow, ``ipv6_ra_priority=high``, RA lifetimes) \u2014 but ONLY for keys the\nlive record lacks and the caller did not set explicitly, so an\nalready-configured PD LAN keeps its own window untouched.\n\nCarving a DISTINCT /64 for a SECOND PD LAN (``prefix_id``): on UniFi\nNetwork 10.4.57 the controller's ``auto`` IPv6 mode hands the primary\nsub-prefix (id 0) to ONE LAN (the Default/MGMT LAN) and leaves a second\nauto PD LAN with an empty ``ipv6_subnets`` \u2014 it never carves its own /64\n(probed live 2026-06-14). To give a second LAN its own slice, pass an\nexplicit ``prefix_id`` (e.g. ``1``). When ``prefix_id`` is supplied the\ntool writes ``ipv6_pd_prefixid=<id>`` AND pins\n``ipv6_setting_preference=\"manual\"`` (it does NOT flip to ``auto``),\nbecause only manual mode honours an operator-pinned sub-prefix. Both keys\nsurvive the strict read-modify-write and the scaffold-fill. Omitting\n``prefix_id`` keeps the legacy ``auto`` behaviour unchanged.\n\nRead first: call ``list_networks`` to find the ``network_id`` and see\nthe current ``ipv6_*`` state (now surfaced inline).\n\nExample: set_lan_ipv6(network_id=\"65f...\", interface_type=\"pd\", ra_enabled=True, dry_run=True)",
