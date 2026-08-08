@@ -7,6 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-08-08
+
+Written during a live UniFi Network outage. The theme is a single defect
+class with three faces: **this server reported failures as benign-looking
+successes.** Cleartext where redaction was promised, `[]` where a 404
+occurred, and an opaque upstream error where a diagnosis belonged.
+
+### Added
+
+- **`get_console_health`** — the tool this release exists for. Probes UniFi OS
+  and the UniFi Network application as two independent layers and returns a
+  plain-language verdict: `healthy`, `network_app_starting`,
+  `network_app_down`, `credentials_invalid`, `console_unreachable`, or
+  `unknown`. During the 2026-08-08 outage every one of the ~130 existing tools
+  returned the same opaque failure, because all of them wrap
+  `/proxy/network/api/s/<site>/*`, which *is* the Network application. One
+  call now answers "is the box down, is the app down, or are my credentials
+  wrong" — three very different problems that previously looked identical.
+- **`get_console_info`** — console identity and connectivity (model, MAC,
+  device state, internet/cloud reachability, installed apps) from the UniFi OS
+  layer, so it keeps answering while Network is down.
+- **`get_console_firmware`** — firmware/update state via a console session.
+  Response shape is **UNVERIFIED**: the endpoint is confirmed present on
+  UniFi OS 5.1.19 (401 rather than 404 without a session) but no console
+  credentials were available to observe its body, so the raw payload is passed
+  through rather than reshaped against a guessed schema.
+- **UniFi OS session auth** — optional `UNIFI_OS_USERNAME` / `UNIFI_OS_PASSWORD`
+  as a second credential path alongside `UNIFI_API_KEY`. The Network API key
+  does **not** authenticate the UniFi OS layer (verified live: `/api/users/self`
+  and `/api/notifications` answer 401 with a valid Network key). Absent
+  credentials degrade to a clear "not configured" message, never a bare 401.
+- `mcp_unifi.clients.unifi_os` — new client for the console layer, carrying the
+  full probed endpoint map and the proxy short-circuit warning in its docstring.
+
+### Fixed
+
+- **SECURITY: `list_wlans` leaked every WLAN's `x_passphrase` in cleartext.**
+  Redaction existed for the audit log and for stub mode, but the real-mode
+  **read path** passed controller records straight through — while
+  `update_wlan`'s docstring and the README both advertised passphrase
+  scrubbing. The same leak affected `list_dynamic_dns` /
+  `get_dynamic_dns_details` (provider `x_password`), whose docstring likewise
+  claimed the password "comes back redacted". Redaction rules moved to a new
+  `mcp_unifi.redaction` module shared by the audit, logging, and **output**
+  paths, and are now applied to every WLAN and Dynamic DNS read and write
+  response, including `dry_run` previews. Secrets are redacted on read with no
+  opt-in flag to reveal them. Regression tests assert on rendered tool output.
+- **`list_events` fabricated a plausible negative.** A shared client helper
+  converted HTTP 404/400 into an empty list, so `list_events` answered "no
+  events" when the truth was "this endpoint no longer exists on this
+  firmware". An empty result is indistinguishable from a quiet network, and
+  during the outage this was misread as "the dead app cannot report on
+  itself". The helper now raises `UniFiUnsupportedError`; the tool surfaces an
+  explicit error naming the limitation. A silently wrong tool is more
+  dangerous than a loudly broken one.
+- **`list_alarms` regressed on Network 10.5.67.** `GET /list/alarm` worked on
+  10.4.57 and now answers 400 `api.err.InvalidObject`. Re-probed on a settled
+  controller with `stat/sysinfo` 200 as the control; no working alarm route was
+  found on this version, so the tool now returns an explicit
+  "unsupported on this controller version" error.
+
+### Notes
+
+- **No disk-usage metric is available.** A Network app that reaches "Starting"
+  and dies is most often out of disk, but 15+ candidate UniFi OS storage
+  endpoints were probed and all returned 404 on this firmware. Reported
+  honestly rather than fabricated; read storage from the console UI or SSH.
+- **`/proxy/network/status` reads counter-intuitively.** A *healthy* controller
+  returns a minimal `{"meta": {"rc": "ok", "uuid": ...}}` envelope with no
+  readiness fields at all; `up`, `server_running`, `db_migrating` and
+  `app_context_status` materialise **only while the app is unhealthy**. Treating
+  a missing `up` key as `False` reports a healthy app as down — a bug caught in
+  this release's own first implementation and corrected by correlating 10
+  consecutive samples against a real `stat/sysinfo` call. The health verdict now
+  corroborates the self-report with an actual authenticated Network API call
+  rather than trusting the envelope alone.
+- **An unauthenticated 401 from `/proxy/network/*` proves nothing.** The UniFi
+  OS proxy short-circuits anonymous requests before they reach the Network
+  backend. Reading that 401 as "the app answered" produced a false all-clear
+  during the outage. Every health probe is authenticated for this reason; the
+  trap is documented in code so it is not re-learned.
+
 ## [0.17.0] - 2026-08-06
 
 Ships a new per-client tool-scoping feature and hardens its token parser
