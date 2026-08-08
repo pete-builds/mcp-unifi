@@ -302,3 +302,67 @@ async def test_list_wlans_real_mode_handles_500(real_server: FastMCP) -> None:
     respx.get(f"{BASE}/rest/wlanconf").mock(return_value=httpx.Response(500))
     result = await _call(real_server, "list_wlans")
     assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# Read-path secret redaction (regression, 2026-08-08)
+# ---------------------------------------------------------------------------
+
+
+@respx.mock
+async def test_real_list_wlans_redacts_passphrase_on_the_read_path(
+    real_server: FastMCP,
+) -> None:
+    """REGRESSION: ``list_wlans`` leaked every WLAN's PSK in cleartext.
+
+    Redaction was implemented for the audit log and for stub mode, but the
+    real-mode READ path passed controller records straight through. So
+    ``list_wlans`` returned ``x_passphrase`` in cleartext to the caller while
+    ``update_wlan``'s docstring and the README both advertised redaction — in
+    a public repository.
+
+    This asserts on the *rendered tool output*, not on an internal helper:
+    the leak was in what reached the caller.
+    """
+    respx.get(f"{BASE}/rest/wlanconf").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "_id": "w1",
+                        "name": "Home",
+                        "security": "wpapsk",
+                        "x_passphrase": "correct-horse-battery-staple",
+                    }
+                ]
+            },
+        )
+    )
+    result = await _call(real_server, "list_wlans")
+
+    assert "correct-horse-battery-staple" not in json.dumps(result)
+    assert result[0]["x_passphrase"] == "[REDACTED]"
+    # Non-secret fields must survive redaction untouched.
+    assert result[0]["name"] == "Home"
+    assert result[0]["_id"] == "w1"
+
+
+@respx.mock
+async def test_real_update_wlan_response_redacts_passphrase(
+    real_server: FastMCP,
+) -> None:
+    """``update_wlan``'s docstring promised a redacted response; now it is true."""
+    respx.put(f"{BASE}/rest/wlanconf/w1").mock(
+        return_value=httpx.Response(
+            200,
+            json={"data": [{"_id": "w1", "name": "Home", "x_passphrase": "leaked-on-write"}]},
+        )
+    )
+    result = await _call(
+        real_server,
+        "update_wlan",
+        {"wlan_id": "w1", "updates": {"x_passphrase": "leaked-on-write"}},
+    )
+    assert "leaked-on-write" not in json.dumps(result)
+    assert result["x_passphrase"] == "[REDACTED]"

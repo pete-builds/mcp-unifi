@@ -41,7 +41,11 @@ async def test_create_dynamic_dns_stub(stub_server: FastMCP, stub_state: StubSta
     result = await _call(stub_server, "create_dynamic_dns", dict(_CREATE_ARGS))
     assert result["service"] == "namecheap"
     assert result["host_name"] == "home.example.com"
-    assert result["x_password"] == "dyndns-token-value"
+    # The provider password must NOT come back in cleartext. This assertion
+    # used to read `== "dyndns-token-value"`, i.e. the test encoded the leak as
+    # expected behaviour while the docstring promised redaction (fixed 0.18.0).
+    assert result["x_password"] == "[REDACTED]"
+    assert "dyndns-token-value" not in json.dumps(result)
     assert result["interface"] == "wan"
     assert result["enabled"] is True
     assert len(stub_state.list_dynamic_dns()) == 1

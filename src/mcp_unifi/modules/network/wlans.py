@@ -18,6 +18,7 @@ from mcp_unifi.modules.network._common import (
     resolve_default_ap_group,
 )
 from mcp_unifi.modules.network._pending import build_preview_envelope, get_pending_actions
+from mcp_unifi.redaction import redact
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -42,6 +43,12 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         ``security``, ``wpa_mode``, ``networkconf_id``, ``is_guest``,
         ``hide_ssid``, and ``wlan_band``.
 
+        The WPA pre-shared key (``x_passphrase``) is **redacted** to
+        ``"[REDACTED]"``. This tool cannot reveal it, by design — there is no
+        opt-in flag. Tool output routinely lands in transcripts and logs that
+        outlive the request, so a PSK returned here is a PSK disclosed. Read
+        it from the controller UI if you genuinely need it.
+
         Example: list_wlans(controller="default")
 
         Args:
@@ -50,7 +57,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         """
         try:
             backend = resolve_backend(registry, controller)
-            return format_json(await backend.list_wlans())
+            # Redact on the READ path, not just in the audit log. See
+            # mcp_unifi.redaction for why this is not optional.
+            return format_json(redact(await backend.list_wlans()))
         except UniFiError as exc:
             logger.exception("list_wlans failed")
             return err(str(exc))
@@ -174,12 +183,12 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 {
                     "dry_run": True,
                     "controller": controller,
-                    "would_create": {"wlan": payload},
+                    "would_create": {"wlan": redact(payload)},
                     "summary": f"Would create WLAN '{name}' on network {network_id}",
                 }
             )
         try:
-            return format_json(await backend.create_wlan(payload))
+            return format_json(redact(await backend.create_wlan(payload)))
         except UniFiError as exc:
             logger.exception("create_wlan failed", extra={"wlan_name": name})
             return err(str(exc))
@@ -221,7 +230,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 {
                     "dry_run": True,
                     "controller": controller,
-                    "would_update": {"wlan_id": wlan_id, "patch": updates},
+                    "would_update": {"wlan_id": wlan_id, "patch": redact(updates)},
                     "summary": f"Would update WLAN {wlan_id} ({len(updates)} field(s))",
                 }
             )
@@ -230,7 +239,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             updated = await backend.update_wlan(wlan_id, updates)
             if updated is None:
                 return err(f"wlan {wlan_id} not found")
-            return format_json(updated)
+            return format_json(redact(updated))
         except UniFiError as exc:
             logger.exception("update_wlan failed", extra={"wlan_id": wlan_id})
             return err(str(exc))

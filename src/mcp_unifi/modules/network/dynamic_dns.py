@@ -33,6 +33,7 @@ from mcp_unifi.modules._params import (
 )
 from mcp_unifi.modules.network._common import format_json, make_err
 from mcp_unifi.modules.network._pending import build_preview_envelope, get_pending_actions
+from mcp_unifi.redaction import redact
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -74,7 +75,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         """
         try:
             backend = resolve_backend(registry, controller)
-            return format_json(await backend.list_dynamic_dns())
+            return format_json(redact(await backend.list_dynamic_dns()))
         except UniFiError as exc:
             logger.exception("list_dynamic_dns failed")
             return err(str(exc))
@@ -106,7 +107,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
         if target is None:
             return err(f"dynamic DNS config {ddns_id} not found")
-        return format_json(target)
+        return format_json(redact(target))
 
     @mcp.tool()
     @audited("create_dynamic_dns")
@@ -173,7 +174,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             )
         try:
             backend = resolve_backend(registry, controller)
-            return format_json(await backend.create_dynamic_dns(payload))
+            return format_json(redact(await backend.create_dynamic_dns(payload)))
         except UniFiError as exc:
             logger.exception("create_dynamic_dns failed", extra={"host_name": host_name})
             return err(str(exc))
@@ -228,7 +229,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             updated = await backend.update_dynamic_dns(ddns_id, updates)
             if updated is None:
                 return err(f"dynamic DNS config {ddns_id} not found")
-            return format_json(updated)
+            return format_json(redact(updated))
         except UniFiError as exc:
             logger.exception("update_dynamic_dns failed", extra={"ddns_id": ddns_id})
             return err(str(exc))
