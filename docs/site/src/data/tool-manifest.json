@@ -1,5 +1,5 @@
 {
-  "tool_count": 129,
+  "tool_count": 132,
   "tools": [
     {
       "description": "Return credentials expiring within ``days_ahead`` days.\n\nSide effects: None (read-only).\n\nIterates ``list_credentials`` client-side and filters to those whose\n``expires_at`` falls inside the window ``[now, now + days_ahead]``.\nCredentials with no ``expires_at`` (typical for mobile credentials)\nare excluded. Each entry includes ``days_until_expiry`` so the LLM\ncan sort and summarise without re-doing the math.\n\nExample: audit_expiring_credentials(days_ahead=14)",
@@ -1305,6 +1305,51 @@
       "name": "get_client_stats"
     },
     {
+      "description": "Show UniFi OS firmware and available-update state.\n\nRequires a **console session**, not the Network API key: UniFi OS's own\nendpoints do not accept ``X-API-Key``. Set ``UNIFI_OS_USERNAME`` and\n``UNIFI_OS_PASSWORD`` to enable this tool. Without them it returns a\nclear configuration error rather than a bare 401.\n\nUNVERIFIED RESPONSE SHAPE: the endpoint is confirmed to exist on\nUCG-Fiber / UniFi OS 5.1.19 (it answers 401 rather than 404 without a\nsession), but its response body has not been observed \u2014 no console\ncredentials were available when this tool was written. The raw body is\npassed through untransformed rather than reshaped against a guessed\nschema.\n\nSide effects: None (read-only, plus a login if no session is active).\n\nReturns the console's raw firmware/update record under ``firmware``.\n\nExample: get_console_firmware(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "get_console_firmware"
+    },
+    {
+      "description": "Diagnose the gateway's two layers separately: UniFi OS and Network.\n\nStart here when anything UniFi-related is failing. Every other tool in\nthis server talks to the UniFi Network *application*; this one also\nchecks the UniFi OS *console* underneath it, so it can tell you whether\nthe box is down, the application is down, or your credentials are wrong\n\u2014 three very different problems that otherwise look identical.\n\nSide effects: None (read-only, two GET probes).\n\nReturns a record with:\n- ``state``: one of ``healthy``, ``network_app_starting``,\n  ``network_app_down``, ``credentials_invalid``,\n  ``console_unreachable``, ``unknown``.\n- ``unifi_os`` / ``network_app``: per-layer status words.\n- ``summary``: plain-language explanation of what is wrong.\n- ``next_step``: the recommended action, or ``null`` when healthy.\n- ``checks``: the raw probe results (path + HTTP status) behind the\n  verdict, so the reasoning is auditable.\n- ``network_app_version``: the Network app version, when it reported one.\n\nNote on the ``network_app_down`` verdict: UniFi OS handles routing, so\nthe Network application being down does **not** mean the internet is\ndown. It means configuration and monitoring are unavailable.\n\nExample: get_console_health(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "get_console_health"
+    },
+    {
+      "description": "Show UniFi OS console identity and connectivity, independent of Network.\n\nAnswers from the UniFi OS layer, so it keeps working while the UniFi\nNetwork application is down. Useful for confirming the box itself is\nalive, which model it is, and whether it still has internet and cloud\nconnectivity.\n\nSide effects: None (read-only).\n\nReturns ``model`` (hardware short name), ``name``, ``mac``,\n``device_state``, ``device_error_code``, ``has_internet``,\n``cloud_connected``, ``remote_access_enabled``, ``sso_enabled``, and\n``installed_apps`` (application inventory reported by the console).\n\nThis firmware's UniFi OS API exposes **no CPU, memory, or disk\nmetrics** \u2014 those fields are absent by design here rather than\nfabricated. Read storage from the console UI if you need it.\n\nExample: get_console_info(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "get_console_info"
+    },
+    {
       "description": "Show one content-filtering profile's full record by ``_id``.\n\nSide effects: None (read-only). Call this before\n``update_content_filter`` to see the profile's current categories,\nallow/block lists, and scope (the values you are about to\nread-modify-write).\n\nReturns the profile record, or an error envelope if no profile\nmatches.\n\nExample: get_content_filter_details(filter_id=\"65f...\")",
       "input_schema": {
         "additionalProperties": false,
@@ -2349,7 +2394,7 @@
       "name": "list_visitors"
     },
     {
-      "description": "List every WiFi SSID configured on the controller.\n\nSide effects: None (read-only).\n\nReturns one record per WLAN with ``_id``, ``name``, ``enabled``,\n``security``, ``wpa_mode``, ``networkconf_id``, ``is_guest``,\n``hide_ssid``, and ``wlan_band``.\n\nExample: list_wlans(controller=\"default\")",
+      "description": "List every WiFi SSID configured on the controller.\n\nSide effects: None (read-only).\n\nReturns one record per WLAN with ``_id``, ``name``, ``enabled``,\n``security``, ``wpa_mode``, ``networkconf_id``, ``is_guest``,\n``hide_ssid``, and ``wlan_band``.\n\nThe WPA pre-shared key (``x_passphrase``) is **redacted** to\n``\"[REDACTED]\"``. This tool cannot reveal it, by design \u2014 there is no\nopt-in flag. Tool output routinely lands in transcripts and logs that\noutlive the request, so a PSK returned here is a PSK disclosed. Read\nit from the controller UI if you genuinely need it.\n\nExample: list_wlans(controller=\"default\")",
       "input_schema": {
         "additionalProperties": false,
         "properties": {

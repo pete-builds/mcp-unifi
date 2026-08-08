@@ -25,6 +25,16 @@ class UniFiError(RuntimeError):
     """Raised on any non-2xx response or transport failure."""
 
 
+class UniFiUnsupportedError(UniFiError):
+    """Raised when the controller firmware does not expose the requested route.
+
+    Distinct from a generic :class:`UniFiError` so callers can tell "this
+    controller version cannot answer that question" apart from "the call
+    failed". Both surface to the operator as an error — which is the entire
+    point. See :meth:`UniFiClient._get_or_unsupported` for why.
+    """
+
+
 class UniFiClient:
     """Thin async wrapper around the UniFi controller REST API.
 
@@ -138,15 +148,29 @@ class UniFiClient:
     async def _get(self, path: str) -> Any:
         return await self._request("GET", f"{self._site_path}{path}")
 
-    async def _get_optional(self, path: str, params: dict[str, Any] | None = None) -> Any:
-        """GET that tolerates a route the firmware does not expose.
+    async def _get_or_unsupported(
+        self,
+        path: str,
+        params: dict[str, Any] | None = None,
+        *,
+        feature: str = "",
+    ) -> Any:
+        """GET a route, raising :class:`UniFiUnsupportedError` if it is absent.
 
-        Some legacy endpoints (notably ``/stat/event``) are absent on newer
-        UniFi Network firmware and answer 404 (``api.err.NotFound``) or 400
-        (``api.err.InvalidObject``). For read-only observability calls that have
-        no working alternative on this gateway, we treat those as "no records"
-        rather than surfacing an error, while still raising on genuine transport
-        or auth failures.
+        HISTORY — do not revert this to returning ``[]``. This helper used to
+        swallow 404 (``api.err.NotFound``) and 400 (``api.err.InvalidObject``)
+        and return an empty list, on the theory that "no working alternative"
+        justified a benign-looking answer. It does not. During the 2026-08-08
+        outage ``list_events`` reported "no events" while the real answer was
+        "this endpoint no longer exists on 10.5.67" — a plausible negative that
+        cost real debugging time, because an empty result is indistinguishable
+        from a quiet network.
+
+        A tool that cannot answer must say so. Fabricating a successful-looking
+        empty result is worse than failing loudly: the caller cannot tell the
+        difference between "nothing happened" and "I cannot see anything".
+
+        Genuine transport and auth failures propagate as before.
         """
         query = ""
         if params:
@@ -156,11 +180,17 @@ class UniFiClient:
         except UniFiError as exc:
             text = str(exc)
             if " returned 404" in text or " returned 400" in text:
-                logger.info(
-                    "UniFi endpoint not available on this firmware; returning empty result",
+                label = feature or path
+                logger.warning(
+                    "UniFi route not exposed by this controller version",
                     extra={"path": path, "error": text[:200]},
                 )
-                return []
+                raise UniFiUnsupportedError(
+                    f"{label} is not available on this UniFi Network version. "
+                    f"The controller answered: {text[:200]}. This is a "
+                    f"firmware limitation, not an empty result — do not read "
+                    f"it as 'nothing found'."
+                ) from exc
             raise
 
     async def _post(self, path: str, payload: dict[str, Any]) -> Any:
@@ -562,13 +592,31 @@ class UniFiClient:
         routes (``stat/sta``, ``stat/rogueap``, ``stat/health``) all return 200
         with the same key.
 
-        We attempt the legacy ``GET /stat/event`` for forward compatibility (a
-        future firmware may restore it) and, on the expected NOT_FOUND, return
-        an empty list rather than raising. Alarms (``list_alarms``) remain the
-        working observability surface on this gateway.
+        Re-probed live on **UniFi Network 10.5.67** (2026-08-08), on a settled
+        controller (not mid-restart), with a valid key and ``stat/sysinfo``
+        answering 200 as the control:
+
+        * ``GET  /stat/event``            → 404 ``api.err.NotFound``
+        * ``POST /stat/event``            → 404 ``api.err.NotFound``
+        * ``GET  /rest/event``            → 400 ``api.err.InvalidObject``
+        * ``POST /rest/event``            → 400 ``api.err.InvalidObject``
+        * ``GET  /list/event``            → 400 ``api.err.InvalidObject``
+        * v2 ``/event``, ``/events``, ``/system-log`` → 404
+
+        The 400 ``InvalidObject`` on ``rest/event`` is UniFi's "that is not a
+        REST collection" error, not a request-shape complaint — the whole
+        event surface is gone from the local API-key interface on this version.
+
+        We still attempt ``GET /stat/event`` for forward compatibility, but a
+        missing route now raises :class:`UniFiUnsupportedError` instead of
+        returning ``[]``. Reporting "no events" when the truth is "I cannot
+        see events" is a fabricated negative; see
+        :meth:`_get_or_unsupported`.
         """
-        records = await self._get_optional(
-            "/stat/event", params={"_limit": limit, "_sort": "-time"}
+        records = await self._get_or_unsupported(
+            "/stat/event",
+            params={"_limit": limit, "_sort": "-time"},
+            feature="Controller event log (list_events)",
         )
         return records if isinstance(records, list) else []
 
@@ -588,9 +636,29 @@ class UniFiClient:
         (``user`` / ``sta``), AP MAC (``ap``), ``ssid``, ``subsystem``,
         ``key``, ``msg``, and ``time`` / ``datetime`` fields, which pass
         straight through to callers.
+
+        REGRESSION on **UniFi Network 10.5.67** (re-probed 2026-08-08 on a
+        settled controller, ``stat/sysinfo`` 200 as the control): the route
+        that worked on 10.4.57 now answers 400 ``api.err.InvalidObject``:
+
+        * ``GET  /list/alarm``            → 400 ``api.err.InvalidObject``
+        * ``GET  /list/alarm?archived=…`` → 400 ``api.err.InvalidObject``
+        * ``GET  /rest/alarm``            → 400 ``api.err.InvalidObject``
+        * ``POST /stat/alarm``            → 404 ``api.err.NotFound``
+
+        No working alarm route was found on this version. The call therefore
+        raises :class:`UniFiUnsupportedError` rather than returning ``[]`` —
+        "zero alarms" and "I cannot read alarms" must not look identical to
+        the caller.
         """
         archived_flag = "true" if archived else "false"
-        records = await self._get(f"/list/alarm?archived={archived_flag}") or []
+        records = (
+            await self._get_or_unsupported(
+                f"/list/alarm?archived={archived_flag}",
+                feature="Controller alarm log (list_alarms)",
+            )
+            or []
+        )
         if not isinstance(records, list):
             return []
         filtered = [

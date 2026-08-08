@@ -155,19 +155,57 @@ async def test_real_get_wan_status_unknown_when_missing(real_server: FastMCP) ->
 
 
 @respx.mock
-async def test_real_list_events(real_server: FastMCP) -> None:
-    """On a UCG-Fiber (Network 10.4.57) the legacy event log route is absent and
-    returns 404 ``api.err.NotFound`` (probed live 2026-06-03). The client GETs
-    ``/stat/event`` and, on the firmware's 404, returns an empty list rather
-    than raising. A future firmware that restores the route and returns 200
-    flows records straight through."""
+async def test_real_list_events_404_is_an_error_not_an_empty_list(
+    real_server: FastMCP,
+) -> None:
+    """REGRESSION (2026-08-08): a 404 must NOT be reported as "no events".
+
+    The event-log route is absent on Network 10.5.67 (``GET /stat/event`` →
+    404 ``api.err.NotFound``, re-probed live on a settled controller). The
+    client used to swallow that and return ``[]``, so ``list_events`` answered
+    "no events found" when the truth was "this controller cannot report
+    events at all". That fabricated negative cost real debugging time during
+    the 2026-08-08 outage: an empty list is indistinguishable from a quiet
+    network.
+
+    The tool must now surface an explicit error. Asserting on the *absence*
+    of a benign empty result is the whole point of this test — do not relax
+    it to ``result == []``.
+    """
     respx.get(f"{BASE}/stat/event").mock(
         return_value=httpx.Response(
             404, json={"meta": {"rc": "error", "msg": "api.err.NotFound"}, "data": []}
         )
     )
     result = await _call(real_server, "list_events", {"limit": 5})
-    assert result == []
+
+    assert result != [], "a missing route must never be reported as an empty result"
+    assert isinstance(result, dict), f"expected an error envelope, got {type(result)}"
+    assert "error" in result
+    assert "not available on this UniFi Network version" in result["error"]
+
+
+@respx.mock
+async def test_real_list_alarms_400_is_an_error_not_an_empty_list(
+    real_server: FastMCP,
+) -> None:
+    """REGRESSION (2026-08-08): the alarm route regressed on 10.5.67.
+
+    ``GET /list/alarm`` worked on 10.4.57 and now answers 400
+    ``api.err.InvalidObject``. "Zero alarms" and "I cannot read alarms" must
+    not look identical to the caller.
+    """
+    respx.get(f"{BASE}/list/alarm").mock(
+        return_value=httpx.Response(
+            400, json={"meta": {"rc": "error", "msg": "api.err.InvalidObject"}, "data": []}
+        )
+    )
+    result = await _call(real_server, "list_alarms", {"limit": 5})
+
+    assert result != [], "a broken route must never be reported as zero alarms"
+    assert isinstance(result, dict)
+    assert "error" in result
+    assert "not available on this UniFi Network version" in result["error"]
 
 
 @respx.mock
