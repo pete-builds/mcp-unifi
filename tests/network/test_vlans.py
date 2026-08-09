@@ -91,7 +91,9 @@ async def test_update_vlan_stub(stub_server: FastMCP, stub_state: StubState) -> 
         "update_vlan",
         {"network_id": net_id, "updates": {"name": "Renamed"}},
     )
-    assert result["name"] == "Renamed"
+    assert result["network"]["name"] == "Renamed"
+    assert result["verification"]["verified"] is True
+    assert result["verification"]["persisted_fields"] == ["name"]
 
 
 async def test_update_vlan_missing(stub_server: FastMCP) -> None:
@@ -155,6 +157,13 @@ async def test_real_list_networks(real_server: FastMCP) -> None:
 
 @respx.mock
 async def test_real_update_vlan(real_server: FastMCP) -> None:
+    # Verification re-reads the collection before and after the write.
+    respx.get(f"{BASE}/rest/networkconf").mock(
+        side_effect=[
+            httpx.Response(200, json={"data": [{"_id": "n1", "name": "Old"}]}),
+            httpx.Response(200, json={"data": [{"_id": "n1", "name": "Up"}]}),
+        ]
+    )
     respx.put(f"{BASE}/rest/networkconf/n1").mock(
         return_value=httpx.Response(200, json={"data": [{"_id": "n1", "name": "Up"}]})
     )
@@ -163,7 +172,8 @@ async def test_real_update_vlan(real_server: FastMCP) -> None:
         "update_vlan",
         {"network_id": "n1", "updates": {"name": "Up"}},
     )
-    assert result["name"] == "Up"
+    assert result["network"]["name"] == "Up"
+    assert result["verification"]["verified"] is True
 
 
 @respx.mock
@@ -194,6 +204,7 @@ async def test_create_vlan_real_mode_handles_500(real_server: FastMCP) -> None:
 
 @respx.mock
 async def test_update_vlan_real_mode_handles_404(real_server: FastMCP) -> None:
+    respx.get(f"{BASE}/rest/networkconf").mock(return_value=httpx.Response(200, json={"data": []}))
     respx.put(f"{BASE}/rest/networkconf/missing").mock(
         return_value=httpx.Response(404, text="not found")
     )

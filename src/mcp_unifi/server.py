@@ -51,6 +51,7 @@ from mcp_unifi.clients.unifi import UniFiClient
 from mcp_unifi.config import Settings, load_settings
 from mcp_unifi.dispatcher import build_registry, register_modules
 from mcp_unifi.logging_setup import configure_logging
+from mcp_unifi.responses import AdaptiveResponseMiddleware
 from mcp_unifi.scoping import WILDCARD, ScopeMiddleware
 
 logger = logging.getLogger("mcp_unifi.server")
@@ -150,7 +151,24 @@ def build_server(
 
     register_modules(mcp, settings, registry)
     _install_scope_middleware(mcp, settings)
+    _install_adaptive_response_middleware(mcp, settings)
     return mcp
+
+
+def _install_adaptive_response_middleware(mcp: FastMCP, settings: Settings) -> None:
+    """Register the compact-text + ``structuredContent`` response shaper.
+
+    Installed unconditionally (including on stdio): the middleware decides
+    per-request from the revision the client negotiated, and a client that
+    negotiated an older revision passes through untouched. There is no
+    transport for which "always send the full JSON as text" is the right
+    default when the client can read structured data.
+    """
+    mcp.add_middleware(
+        AdaptiveResponseMiddleware(force_full_text=settings.force_full_text_responses)
+    )
+    if settings.force_full_text_responses:
+        logger.info("adaptive responses disabled; every client gets full JSON text")
 
 
 def _install_scope_middleware(mcp: FastMCP, settings: Settings) -> None:

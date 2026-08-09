@@ -47,49 +47,15 @@ logger = logging.getLogger("mcp_unifi.audit")
 # Secret scrubbing
 # ---------------------------------------------------------------------------
 
-#: Substrings (case-insensitive) that mark a dict key as sensitive. A key
-#: matches if any pattern is a substring of the lowercased key. This catches
-#: ``api_key``, ``X-API-Key``, ``unifi_api_key``, ``passphrase``,
-#: ``x_passphrase``, ``password``, ``Password``, ``auth_token``, ``Bearer``-
-#: style ``token`` keys, and ``client_secret``.
-SENSITIVE_KEY_PATTERNS: frozenset[str] = frozenset(
-    {
-        "passphrase",
-        "x_passphrase",
-        "api_key",
-        "password",
-        "secret",
-        "token",
-    }
+# The redaction rules now live in mcp_unifi.redaction, which is shared with
+# the tool **output** path. They used to live here, which is precisely why the
+# read path leaked: redaction was scoped to auditing instead of to every
+# emitter. Re-exported so existing importers of `audit.scrub` keep working.
+from mcp_unifi.redaction import (  # noqa: E402
+    REDACTED,
+    SENSITIVE_KEY_PATTERNS,
+    scrub,
 )
-
-REDACTED = "***"
-
-
-def _is_sensitive(key: str) -> bool:
-    lowered = key.lower()
-    return any(pattern in lowered for pattern in SENSITIVE_KEY_PATTERNS)
-
-
-def scrub(value: Any) -> Any:
-    """Recursively redact sensitive values inside dicts/lists.
-
-    Dict values whose key matches a pattern in :data:`SENSITIVE_KEY_PATTERNS`
-    are replaced with :data:`REDACTED`. All other values pass through. Lists
-    and tuples are walked element-wise. Non-container values are returned
-    as-is.
-
-    The returned structure is always a fresh object — callers may mutate it
-    without affecting their input.
-    """
-    if isinstance(value, dict):
-        return {k: (REDACTED if _is_sensitive(str(k)) else scrub(v)) for k, v in value.items()}
-    if isinstance(value, list):
-        return [scrub(item) for item in value]
-    if isinstance(value, tuple):
-        return tuple(scrub(item) for item in value)
-    return value
-
 
 # ---------------------------------------------------------------------------
 # Event envelope

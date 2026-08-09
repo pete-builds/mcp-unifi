@@ -1,5 +1,5 @@
 {
-  "tool_count": 129,
+  "tool_count": 134,
   "tools": [
     {
       "description": "Return credentials expiring within ``days_ahead`` days.\n\nSide effects: None (read-only).\n\nIterates ``list_credentials`` client-side and filters to those whose\n``expires_at`` falls inside the window ``[now, now + days_ahead]``.\nCredentials with no ``expires_at`` (typical for mobile credentials)\nare excluded. Each entry includes ``days_until_expiry`` so the LLM\ncan sort and summarise without re-doing the math.\n\nExample: audit_expiring_credentials(days_ahead=14)",
@@ -1305,6 +1305,51 @@
       "name": "get_client_stats"
     },
     {
+      "description": "Show UniFi OS firmware and available-update state.\n\nRequires a **console session**, not the Network API key: UniFi OS's own\nendpoints do not accept ``X-API-Key``. Set ``UNIFI_OS_USERNAME`` and\n``UNIFI_OS_PASSWORD`` to enable this tool. Without them it returns a\nclear configuration error rather than a bare 401.\n\nUNVERIFIED RESPONSE SHAPE: the endpoint is confirmed to exist on\nUCG-Fiber / UniFi OS 5.1.19 (it answers 401 rather than 404 without a\nsession), but its response body has not been observed \u2014 no console\ncredentials were available when this tool was written. The raw body is\npassed through untransformed rather than reshaped against a guessed\nschema.\n\nSide effects: None (read-only, plus a login if no session is active).\n\nReturns the console's raw firmware/update record under ``firmware``.\n\nExample: get_console_firmware(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "get_console_firmware"
+    },
+    {
+      "description": "Diagnose the gateway's two layers separately: UniFi OS and Network.\n\nStart here when anything UniFi-related is failing. Every other tool in\nthis server talks to the UniFi Network *application*; this one also\nchecks the UniFi OS *console* underneath it, so it can tell you whether\nthe box is down, the application is down, or your credentials are wrong\n\u2014 three very different problems that otherwise look identical.\n\nSide effects: None (read-only, two GET probes).\n\nReturns a record with:\n- ``state``: one of ``healthy``, ``network_app_starting``,\n  ``network_app_down``, ``credentials_invalid``,\n  ``console_unreachable``, ``unknown``.\n- ``unifi_os`` / ``network_app``: per-layer status words.\n- ``summary``: plain-language explanation of what is wrong.\n- ``next_step``: the recommended action, or ``null`` when healthy.\n- ``checks``: the raw probe results (path + HTTP status) behind the\n  verdict, so the reasoning is auditable.\n- ``network_app_version``: the Network app version, when it reported one.\n\nNote on the ``network_app_down`` verdict: UniFi OS handles routing, so\nthe Network application being down does **not** mean the internet is\ndown. It means configuration and monitoring are unavailable.\n\nExample: get_console_health(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "get_console_health"
+    },
+    {
+      "description": "Show UniFi OS console identity and connectivity, independent of Network.\n\nAnswers from the UniFi OS layer, so it keeps working while the UniFi\nNetwork application is down. Useful for confirming the box itself is\nalive, which model it is, and whether it still has internet and cloud\nconnectivity.\n\nSide effects: None (read-only).\n\nReturns ``model`` (hardware short name), ``name``, ``mac``,\n``device_state``, ``device_error_code``, ``has_internet``,\n``cloud_connected``, ``remote_access_enabled``, ``sso_enabled``, and\n``installed_apps`` (application inventory reported by the console).\n\nThis firmware's UniFi OS API exposes **no CPU, memory, or disk\nmetrics** \u2014 those fields are absent by design here rather than\nfabricated. Read storage from the console UI if you need it.\n\nExample: get_console_info(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "get_console_info"
+    },
+    {
       "description": "Show one content-filtering profile's full record by ``_id``.\n\nSide effects: None (read-only). Call this before\n``update_content_filter`` to see the profile's current categories,\nallow/block lists, and scope (the values you are about to\nread-modify-write).\n\nReturns the profile record, or an error envelope if no profile\nmatches.\n\nExample: get_content_filter_details(filter_id=\"65f...\")",
       "input_schema": {
         "additionalProperties": false,
@@ -1494,6 +1539,21 @@
         "type": "object"
       },
       "name": "get_gateway_stats"
+    },
+    {
+      "description": "Show the guest captive-portal configuration for the site.\n\nThe portal is a **site setting** (``guest_access``), not a property of\nany WLAN. Turning a WLAN off \"Hotspot\" mode does not disable the\nportal \u2014 check and change it here.\n\nSide effects: None (read-only).\n\nReturns ``portal_enabled`` (the click-through page toggle), ``auth``\n(``\"none\"`` means a bare Connect button with no credential),\n``expire``/``expire_number``/``expire_unit`` (how long an authorised\nguest session lasts before the page reappears), ``redirect_enabled``\nand ``redirect_url``, the ``restricted_subnet_*`` entries, and the\npayment/voucher/Facebook toggles. ``portal_enabled`` and ``auth`` are\nindependent axes.\n\nExample: get_guest_portal(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "get_guest_portal"
     },
     {
       "description": "Show one network's full record, grouped into readable sections.\n\nSide effects: None (read-only). This is the deep view that complements\n``list_networks`` (the summary). Use it to inspect a network's DHCP\nscope, IPv6 configuration, and VPN fields before editing with\n``update_vlan`` / ``set_lan_ipv6``.\n\nResolve the network by ``network_id`` (preferred, from\n``list_networks``) or by ``name`` (case-insensitive; errors if the name\nis ambiguous). Returns:\n\n- ``network``: identity fields (``_id``, ``name``, ``purpose``,\n  ``vlan``, ``vlan_enabled``, ``ip_subnet``, ``enabled``,\n  ``networkgroup``).\n- ``dhcp``: every ``dhcpd_*`` key (lease window, gateway/DNS toggles,\n  lease time, NTP/WINS) plus the IPv6 DHCP (``dhcpdv6_*``) keys.\n- ``ipv6``: the LAN IPv6 view: ``ipv6_interface_type``,\n  ``ipv6_ra_enabled``, ``ipv6_client_address_assignment``,\n  ``ipv6_pd_start`` / ``ipv6_pd_stop`` (the delegated-prefix window),\n  and the RA tuning keys. Empty section on a network with no IPv6.\n- ``vpn``: VPN-related keys (``vpn_type``, ``*_vpn_*``,\n  ``remote_vpn_*``) when the network is a VPN; empty otherwise.\n- ``raw``: the complete unfiltered record, so nothing is hidden.\n\nExample: get_network_details(name=\"Default\")",
@@ -2349,7 +2409,7 @@
       "name": "list_visitors"
     },
     {
-      "description": "List every WiFi SSID configured on the controller.\n\nSide effects: None (read-only).\n\nReturns one record per WLAN with ``_id``, ``name``, ``enabled``,\n``security``, ``wpa_mode``, ``networkconf_id``, ``is_guest``,\n``hide_ssid``, and ``wlan_band``.\n\nExample: list_wlans(controller=\"default\")",
+      "description": "List every WiFi SSID configured on the controller.\n\nSide effects: None (read-only).\n\nReturns one record per WLAN with ``_id``, ``name``, ``enabled``,\n``security``, ``wpa_mode``, ``networkconf_id``, ``is_guest``,\n``hide_ssid``, and ``wlan_band``.\n\nThe WPA pre-shared key (``x_passphrase``) is **redacted** to\n``\"[REDACTED]\"``. This tool cannot reveal it, by design \u2014 there is no\nopt-in flag. Tool output routinely lands in transcripts and logs that\noutlive the request, so a PSK returned here is a PSK disclosed. Read\nit from the controller UI if you genuinely need it.\n\nExample: list_wlans(controller=\"default\")",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -2716,6 +2776,62 @@
         "type": "object"
       },
       "name": "set_camera_recording_mode"
+    },
+    {
+      "description": "Change the guest captive-portal configuration.\n\nSet ``portal_enabled=False`` to remove the click-through \"Connect\"\npage that guests see on every reconnection.\n\nSide effects:\n- Read-modify-writes the site's ``guest_access`` setting. Only the\n  fields you pass are altered; the rest of the record is written back\n  unchanged (full-object write, never a partial body).\n- **Does not weaken network isolation** when isolation is enforced by\n  firewall rules or a guest VLAN. The portal is an interstitial\n  authorisation page, not a security boundary. Disabling it changes\n  who sees a login screen, not who can reach what.\n- Guests already authorised keep their existing session until it\n  expires; the change affects subsequent authorisations.\n- Returns a before/after diff so any collateral edit by the controller\n  is visible rather than silent.\n- Mutates controller state. ``dry_run=True`` previews; otherwise this\n  returns a confirmation token that must be passed to\n  ``confirm_destructive_action`` to commit.\n\nIdempotent: applying the same values twice leaves the same state.\n\nExample: set_guest_portal(portal_enabled=False)",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "auth": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Portal authentication mode: ``\"none\"`` (click-through, no\ncredential), ``\"hotspot\"``, or ``\"custom\"``. ``None``\n(default) leaves it alone. Independent of ``portal_enabled``."
+          },
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it. Returns the\npredicted patch and no confirmation token.",
+            "type": "boolean"
+          },
+          "expire_minutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "How long an authorised guest session lasts before\nthe portal reappears, in minutes (e.g. ``480`` for 8 hours).\n``None`` (default) leaves it alone."
+          },
+          "portal_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "``False`` disables the captive portal entirely.\n``True`` re-enables it. ``None`` (default) leaves it alone."
+          }
+        },
+        "type": "object"
+      },
+      "name": "set_guest_portal"
     },
     {
       "description": "Set the IPv6 configuration of one LAN/VLAN network.\n\nSide effects:\n- Changes how this network gets and advertises IPv6. Turning on\n  ``interface_type=\"pd\"`` plus ``ra_enabled=True`` is what makes the\n  LAN's clients receive global IPv6 addresses from the prefix\n  delegated by the WAN. Toggling router advertisements\n  (``ra_enabled``) or the address-assignment mode causes clients on\n  this network to re-acquire IPv6; IPv4 is unaffected.\n- Only the IPv6 keys you supply change; every other field on the\n  network record is read first and written back unchanged (strict\n  read-modify-write).\n- Mutates controller state. Use dry_run=True to preview the before/\n  after diff without applying.\n\nPrefix-delegation binding: when ``interface_type=\"pd\"`` the controller\nREQUIRES the LAN to reference which DHCPv6 WAN's delegation to draw\nfrom. ``ipv6_interface_type=pd`` on its own returns HTTP 400\n``api.err.PdRequiresAssignedDhcpv6Wan``. This tool auto-binds the LAN to\nthe WAN that actually has DHCPv6-PD enabled (on a single-uplink gateway\nthat is the only internet uplink) by emitting ``ipv6_pd_interface`` =\nthat WAN's networkgroup (e.g. ``\"wan\"``). No WAN with PD enabled \u2192 a\nclear error instead of a controller 400.\n\nFresh-LAN PD scaffold: a brand-new LAN\n(``ipv6_setting_preference=manual``, every ipv6 key unset) has no PD\nwindow, DHCPv6 lease window, or RA lifetimes. Enabling PD on it without\nthose returns HTTP 400 ``api.err.InvalidIpv6Addr`` (the merged record\ncarries ``ipv6_pd_start: null``). When enabling PD, this tool fills the\nCOMPLETE required scaffold with the controller's standard defaults\n(``ipv6_pd_start=::2``, ``ipv6_pd_stop=::7d1``, matching DHCPv6 lease\nwindow, ``ipv6_ra_priority=high``, RA lifetimes) \u2014 but ONLY for keys the\nlive record lacks and the caller did not set explicitly, so an\nalready-configured PD LAN keeps its own window untouched.\n\nCarving a DISTINCT /64 for a SECOND PD LAN (``prefix_id``): on UniFi\nNetwork 10.4.57 the controller's ``auto`` IPv6 mode hands the primary\nsub-prefix (id 0) to ONE LAN (the Default/MGMT LAN) and leaves a second\nauto PD LAN with an empty ``ipv6_subnets`` \u2014 it never carves its own /64\n(probed live 2026-06-14). To give a second LAN its own slice, pass an\nexplicit ``prefix_id`` (e.g. ``1``). When ``prefix_id`` is supplied the\ntool writes ``ipv6_pd_prefixid=<id>`` AND pins\n``ipv6_setting_preference=\"manual\"`` (it does NOT flip to ``auto``),\nbecause only manual mode honours an operator-pinned sub-prefix. Both keys\nsurvive the strict read-modify-write and the scaffold-fill. Omitting\n``prefix_id`` keeps the legacy ``auto`` behaviour unchanged.\n\nRead first: call ``list_networks`` to find the ``network_id`` and see\nthe current ``ipv6_*`` state (now surfaced inline).\n\nExample: set_lan_ipv6(network_id=\"65f...\", interface_type=\"pd\", ra_enabled=True, dry_run=True)",
@@ -3403,7 +3519,7 @@
       "name": "update_firewall_rule"
     },
     {
-      "description": "Patch fields on an existing port-forward rule.\n\nSide effects:\n- Modifies the named forward in place. Only fields supplied in\n  ``updates`` change.\n- Takes effect immediately on the next inbound packet.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: update_port_forward(forward_id=\"65f...\", updates={\"enabled\": False})",
+      "description": "Patch fields on an existing port-forward rule.\n\nSide effects:\n- Modifies the named forward in place. Only fields supplied in\n  ``updates`` change.\n- Takes effect immediately on the next inbound packet.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nVerified write: after applying, the rule is re-read from the\ncontroller and the response carries a ``verification`` block listing\n``persisted_fields``, ``unchanged_fields`` (already correct before\nthe write), ``dropped_fields`` (silently discarded by the\ncontroller), ``coerced_fields`` (stored with a different value or\ntype), and ``unverifiable_fields``. ``fwd_ip`` is a known drop site\non some firmware. A response with ``verified: false`` and\n``mutation_applied: true`` means the controller accepted the write\nbut did not store it exactly \u2014 that is **not a rollback**, and the\nrule may be in a mixed state. Re-check before assuming a port is\nclosed.\n\nExample: update_port_forward(forward_id=\"65f...\", updates={\"enabled\": False})",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -3636,7 +3752,7 @@
       "name": "update_traffic_rule"
     },
     {
-      "description": "Patch fields on an existing VLAN/network record.\n\nSide effects:\n- Modifies the named network in place. Only fields supplied in\n  ``updates`` change; everything else is preserved.\n- Changes to ``vlan`` or ``ip_subnet`` may disconnect clients on the\n  affected network.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: update_vlan(network_id=\"65f...\", updates={\"enabled\": False})",
+      "description": "Patch fields on an existing VLAN/network record.\n\nSide effects:\n- Modifies the named network in place. Only fields supplied in\n  ``updates`` change; everything else is preserved.\n- Changes to ``vlan`` or ``ip_subnet`` may disconnect clients on the\n  affected network.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nVerified write: after applying, the network is re-read from the\ncontroller and the response carries a ``verification`` block listing\n``persisted_fields``, ``unchanged_fields`` (already correct before\nthe write), ``dropped_fields`` (silently discarded by the\ncontroller), ``coerced_fields`` (stored with a different value or\ntype), and ``unverifiable_fields``. ``purpose`` is a known coercion\nsite: controllers running the zone-based firewall model may accept\n``purpose=\"guest\"`` and store ``\"corporate\"``. A response with\n``verified: false`` and ``mutation_applied: true`` means the\ncontroller accepted the write but did not store it exactly \u2014 that is\n**not a rollback**, and the record may be in a mixed state.\n\nExample: update_vlan(network_id=\"65f...\", updates={\"enabled\": False})",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -3669,7 +3785,7 @@
       "name": "update_vlan"
     },
     {
-      "description": "Patch fields on an existing WiFi SSID.\n\nSide effects:\n- Modifies the named WLAN in place. Only fields supplied in\n  ``updates`` change; everything else is preserved.\n- Changes to ``security``, ``wpa_mode``, or ``x_passphrase`` may\n  disconnect connected clients until they re-authenticate.\n- Passphrases passed via ``x_passphrase`` are redacted in the\n  response.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: update_wlan(wlan_id=\"65f...\", updates={\"enabled\": False})",
+      "description": "Patch fields on an existing WiFi SSID.\n\nSide effects:\n- Modifies the named WLAN in place. Only fields supplied in\n  ``updates`` change; everything else is preserved.\n- Changes to ``security``, ``wpa_mode``, or ``x_passphrase`` may\n  disconnect connected clients until they re-authenticate.\n- Passphrases passed via ``x_passphrase`` are redacted in the\n  response.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nVerified write: after applying, the WLAN is re-read from the\ncontroller and the response carries a ``verification`` block listing\n``persisted_fields``, ``unchanged_fields`` (already correct before\nthe write), ``dropped_fields`` (silently discarded by the\ncontroller), ``coerced_fields`` (stored with a different value or\ntype), and ``unverifiable_fields``. ``x_passphrase`` is always\nunverifiable because it reads back redacted. A response with\n``verified: false`` and ``mutation_applied: true`` means the\ncontroller accepted the write but did not store it exactly \u2014 that is\n**not a rollback**, and the record may be in a mixed state.\n\nExample: update_wlan(wlan_id=\"65f...\", updates={\"enabled\": False})",
       "input_schema": {
         "additionalProperties": false,
         "properties": {

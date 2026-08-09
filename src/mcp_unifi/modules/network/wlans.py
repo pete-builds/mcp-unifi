@@ -18,6 +18,8 @@ from mcp_unifi.modules.network._common import (
     resolve_default_ap_group,
 )
 from mcp_unifi.modules.network._pending import build_preview_envelope, get_pending_actions
+from mcp_unifi.modules.network._verify import verified_update
+from mcp_unifi.redaction import redact
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -42,6 +44,12 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         ``security``, ``wpa_mode``, ``networkconf_id``, ``is_guest``,
         ``hide_ssid``, and ``wlan_band``.
 
+        The WPA pre-shared key (``x_passphrase``) is **redacted** to
+        ``"[REDACTED]"``. This tool cannot reveal it, by design — there is no
+        opt-in flag. Tool output routinely lands in transcripts and logs that
+        outlive the request, so a PSK returned here is a PSK disclosed. Read
+        it from the controller UI if you genuinely need it.
+
         Example: list_wlans(controller="default")
 
         Args:
@@ -50,7 +58,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         """
         try:
             backend = resolve_backend(registry, controller)
-            return format_json(await backend.list_wlans())
+            # Redact on the READ path, not just in the audit log. See
+            # mcp_unifi.redaction for why this is not optional.
+            return format_json(redact(await backend.list_wlans()))
         except UniFiError as exc:
             logger.exception("list_wlans failed")
             return err(str(exc))
@@ -174,12 +184,12 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 {
                     "dry_run": True,
                     "controller": controller,
-                    "would_create": {"wlan": payload},
+                    "would_create": {"wlan": redact(payload)},
                     "summary": f"Would create WLAN '{name}' on network {network_id}",
                 }
             )
         try:
-            return format_json(await backend.create_wlan(payload))
+            return format_json(redact(await backend.create_wlan(payload)))
         except UniFiError as exc:
             logger.exception("create_wlan failed", extra={"wlan_name": name})
             return err(str(exc))
@@ -204,6 +214,17 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         - Mutates controller state. Use dry_run=True to preview the change
           without applying.
 
+        Verified write: after applying, the WLAN is re-read from the
+        controller and the response carries a ``verification`` block listing
+        ``persisted_fields``, ``unchanged_fields`` (already correct before
+        the write), ``dropped_fields`` (silently discarded by the
+        controller), ``coerced_fields`` (stored with a different value or
+        type), and ``unverifiable_fields``. ``x_passphrase`` is always
+        unverifiable because it reads back redacted. A response with
+        ``verified: false`` and ``mutation_applied: true`` means the
+        controller accepted the write but did not store it exactly — that is
+        **not a rollback**, and the record may be in a mixed state.
+
         Example: update_wlan(wlan_id="65f...", updates={"enabled": False})
 
         Args:
@@ -221,16 +242,28 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 {
                     "dry_run": True,
                     "controller": controller,
-                    "would_update": {"wlan_id": wlan_id, "patch": updates},
+                    "would_update": {"wlan_id": wlan_id, "patch": redact(updates)},
                     "summary": f"Would update WLAN {wlan_id} ({len(updates)} field(s))",
                 }
             )
         try:
             backend = resolve_backend(registry, controller)
-            updated = await backend.update_wlan(wlan_id, updates)
-            if updated is None:
+            outcome = await verified_update(
+                lister=backend.list_wlans,
+                updater=lambda: backend.update_wlan(wlan_id, updates),
+                record_id=wlan_id,
+                updates=updates,
+            )
+            if outcome is None:
                 return err(f"wlan {wlan_id} not found")
-            return format_json(updated)
+            record, verification = outcome
+            return format_json(
+                {
+                    "wlan_id": wlan_id,
+                    "verification": verification,
+                    "wlan": redact(record),
+                }
+            )
         except UniFiError as exc:
             logger.exception("update_wlan failed", extra={"wlan_id": wlan_id})
             return err(str(exc))

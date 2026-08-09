@@ -18,6 +18,7 @@ from mcp_unifi.modules.network._common import (
     subnet_to_dhcp,
 )
 from mcp_unifi.modules.network._pending import build_preview_envelope, get_pending_actions
+from mcp_unifi.modules.network._verify import verified_update
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -260,6 +261,18 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         - Mutates controller state. Use dry_run=True to preview the change
           without applying.
 
+        Verified write: after applying, the network is re-read from the
+        controller and the response carries a ``verification`` block listing
+        ``persisted_fields``, ``unchanged_fields`` (already correct before
+        the write), ``dropped_fields`` (silently discarded by the
+        controller), ``coerced_fields`` (stored with a different value or
+        type), and ``unverifiable_fields``. ``purpose`` is a known coercion
+        site: controllers running the zone-based firewall model may accept
+        ``purpose="guest"`` and store ``"corporate"``. A response with
+        ``verified: false`` and ``mutation_applied: true`` means the
+        controller accepted the write but did not store it exactly — that is
+        **not a rollback**, and the record may be in a mixed state.
+
         Example: update_vlan(network_id="65f...", updates={"enabled": False})
 
         Args:
@@ -284,10 +297,22 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             )
         try:
             backend = resolve_backend(registry, controller)
-            updated = await backend.update_network(network_id, updates)
-            if updated is None:
+            outcome = await verified_update(
+                lister=backend.list_networks,
+                updater=lambda: backend.update_network(network_id, updates),
+                record_id=network_id,
+                updates=updates,
+            )
+            if outcome is None:
                 return err(f"network {network_id} not found")
-            return format_json(updated)
+            record, verification = outcome
+            return format_json(
+                {
+                    "network_id": network_id,
+                    "verification": verification,
+                    "network": record,
+                }
+            )
         except UniFiError as exc:
             logger.exception("update_vlan failed", extra={"network_id": network_id})
             return err(str(exc))

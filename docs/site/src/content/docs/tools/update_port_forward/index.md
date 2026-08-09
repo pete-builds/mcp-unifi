@@ -15,6 +15,18 @@ Side effects:
 - Mutates controller state. Use dry_run=True to preview the change
   without applying.
 
+Verified write: after applying, the rule is re-read from the
+controller and the response carries a ``verification`` block listing
+``persisted_fields``, ``unchanged_fields`` (already correct before
+the write), ``dropped_fields`` (silently discarded by the
+controller), ``coerced_fields`` (stored with a different value or
+type), and ``unverifiable_fields``. ``fwd_ip`` is a known drop site
+on some firmware. A response with ``verified: false`` and
+``mutation_applied: true`` means the controller accepted the write
+but did not store it exactly — that is **not a rollback**, and the
+rule may be in a mixed state. Re-check before assuming a port is
+closed.
+
 ## Example
 
 ```python

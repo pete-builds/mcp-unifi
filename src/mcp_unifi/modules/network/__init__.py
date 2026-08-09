@@ -20,12 +20,14 @@ from mcp_unifi.modules.network import (
     clients,
     composites,
     confirm,
+    console,
     content_filtering,
     devices,
     dhcp,
     drift,
     dynamic_dns,
     firewall,
+    guest_portal,
     honeypot,
     ipv6,
     observability,
@@ -55,9 +57,14 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     ops, leases, port forwards, observability, then composites that compose
     the primitives.
     """
+    # Console health registers first: it is the "start here when something is
+    # broken" tool, and it is the only one that still answers when the UniFi
+    # Network application itself is down.
+    console.register(mcp, settings, registry)
     vlans.register(mcp, settings, registry)
     ipv6.register(mcp, settings, registry)
     wlans.register(mcp, settings, registry)
+    guest_portal.register(mcp, settings, registry)
     firewall.register(mcp, settings, registry)
     routing.register(mcp, settings, registry)
     traffic.register(mcp, settings, registry)

@@ -44,7 +44,8 @@ async def test_create_update_delete_port_forward_stub(
         "update_port_forward",
         {"forward_id": created["_id"], "updates": {"enabled": False}},
     )
-    assert updated["enabled"] is False
+    assert updated["port_forward"]["enabled"] is False
+    assert updated["verification"]["verified"] is True
 
     # v0.7.0: preview first, then confirm.
     preview = await _call(stub_server, "delete_port_forward", {"forward_id": created["_id"]})
@@ -92,13 +93,21 @@ async def test_real_port_forward_crud(real_server: FastMCP) -> None:
     )
     assert created["_id"] == "pf2"
 
+    # Verification re-reads the collection before and after the write.
+    respx.get(f"{BASE}/rest/portforward").mock(
+        side_effect=[
+            httpx.Response(200, json={"data": [{"_id": "pf2", "enabled": True}]}),
+            httpx.Response(200, json={"data": [{"_id": "pf2", "enabled": False}]}),
+        ]
+    )
     respx.put(f"{BASE}/rest/portforward/pf2").mock(
         return_value=httpx.Response(200, json={"data": [{"_id": "pf2", "enabled": False}]})
     )
     updated = await _call(
         real_server, "update_port_forward", {"forward_id": "pf2", "updates": {"enabled": False}}
     )
-    assert updated["enabled"] is False
+    assert updated["port_forward"]["enabled"] is False
+    assert updated["verification"]["verified"] is True
 
     # v0.7.0 delete_port_forward previews via list_port_forwards first.
     # The earlier respx.get(...) mock set up at the top of this test already

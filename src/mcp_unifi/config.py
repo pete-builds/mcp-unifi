@@ -69,6 +69,21 @@ class ControllerConfig(BaseModel):
     )
     access_port: int = Field(default=12445, ge=1, le=65535)
 
+    # UniFi OS console-session credentials. Separate from ``api_key`` on
+    # purpose: the Network API key authenticates the Network application
+    # *through* the UniFi OS proxy, but does NOT authenticate UniFi OS's own
+    # ``/api/*`` endpoints (verified live — those answer 401 with a valid
+    # Network key). Optional; console-session tools degrade with a clear
+    # "not configured" message when these are absent.
+    os_username: str = Field(
+        default="",
+        description="UniFi OS console local-admin username. Empty disables console-session tools.",
+    )
+    os_password: SecretStr | None = Field(
+        default=None,
+        description="UniFi OS console local-admin password. Wrapped in SecretStr; never logged.",
+    )
+
 
 class Settings(BaseSettings):
     """Runtime configuration for the MCP UniFi server.
@@ -93,6 +108,20 @@ class Settings(BaseSettings):
         description=(
             "If True, the server returns mock data from an in-memory state "
             "machine. If False, it talks to a real UniFi gateway."
+        ),
+    )
+
+    # ------------------------------------------------------------------
+    # Response shaping
+    # ------------------------------------------------------------------
+    force_full_text_responses: bool = Field(
+        default=False,
+        description=(
+            "If True, always return the full JSON payload as the text block, "
+            "even to clients that negotiated MCP 2025-06-18 or later. The "
+            "escape hatch for a client that advertises structuredContent "
+            "support but does not actually read it. Costs tokens; changes no "
+            "data."
         ),
     )
 
@@ -139,6 +168,22 @@ class Settings(BaseSettings):
         description="UniFi Access API key (legacy). Promoted onto ControllerConfig.access_api_key.",
     )
     unifi_access_port: int = Field(default=12445, ge=1, le=65535)
+
+    # ------------------------------------------------------------------
+    # Legacy single-controller UniFi OS console credentials (v0.18+).
+    # Promoted onto the ``default`` controller's ``os_*`` fields. Optional:
+    # without them the console-session tools return a clear configuration
+    # error, and the two-layer health verdict still works (it needs only the
+    # Network API key plus unauthenticated console endpoints).
+    # ------------------------------------------------------------------
+    unifi_os_username: str = Field(
+        default="",
+        description="UniFi OS console username (legacy). Promoted onto os_username.",
+    )
+    unifi_os_password: str = Field(
+        default="",
+        description="UniFi OS console password (legacy). Promoted onto os_password.",
+    )
 
     # ------------------------------------------------------------------
     # IoT defaults (used by create_iot_network)
@@ -354,6 +399,10 @@ class Settings(BaseSettings):
                             else None
                         ),
                         access_port=self.unifi_access_port,
+                        os_username=self.unifi_os_username,
+                        os_password=(
+                            SecretStr(self.unifi_os_password) if self.unifi_os_password else None
+                        ),
                     )
                 ]
                 logger.info("single-controller env detected, promoted to controllers=[default]")
@@ -410,6 +459,8 @@ class Settings(BaseSettings):
                     "site": c.site,
                     "verify_ssl": c.verify_ssl,
                     "api_key_set": bool(c.api_key.get_secret_value()),
+                    "os_username_set": bool(c.os_username),
+                    "os_password_set": bool(c.os_password and c.os_password.get_secret_value()),
                     "access_host": c.access_host,
                     "access_port": c.access_port,
                     "access_api_key_set": bool(
