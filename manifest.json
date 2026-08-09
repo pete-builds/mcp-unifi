@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "mcp-unifi",
   "display_name": "UniFi Gateway",
-  "version": "0.19.0",
+  "version": "0.19.1",
   "description": "MCP server for self-hosted UniFi gateway management.",
   "long_description": "Self-hosted UniFi gateway management: VLANs, WLANs, firewall, clients, DHCP, observability, UniFi Protect cameras, and UniFi Access doors / credentials / badge events. Multi-site, dry-run on destructive ops, replayable audit log. Stub mode lets you try the full tool surface with no hardware.",
   "author": {
