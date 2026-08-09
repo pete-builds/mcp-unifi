@@ -59,6 +59,12 @@ WORKDIR /app
 COPY --from=builder /wheels /app/site-packages
 RUN chown -R mcp:mcp /app
 
+# Runtime does not use pip: the wheels above are pre-installed and the entrypoint
+# runs `python -m mcp_unifi.server`. Removing pip drops its vendored dependencies
+# (msgpack, setuptools, requests, ...), which Trivy scans as if they were
+# installed packages and flags for CVEs unreachable from this server.
+RUN pip uninstall -y pip
+
 USER mcp
 
 EXPOSE 3714
