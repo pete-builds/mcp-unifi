@@ -64,6 +64,33 @@ caller the truth, and should not charge them a fortune in tokens to hear it.
 
 ### Fixed
 
+- **`set_guest_portal` could silently revert another admin's edit.** The
+  confirm step wrote back the record as it read when the *preview* was
+  generated, and preview tokens live five minutes. Because this is the only
+  confirmable action performing a full-object read-modify-write, anything
+  changed in that window was overwritten with the stale value and reported as
+  an unrelated success. The record is now re-read inside the confirm step and
+  the returned diff is computed against that fresh pre-write state, so it
+  describes the write that actually happened.
+
+- **`get_console_info` reported HTTP failures as a record of nulls.**
+  `ProbeResult.reachable` means "the host answered", which any status
+  satisfies, 401 and 500 included. The body of an error response is still a
+  dict, so every field lookup returned `None` and the tool emitted a
+  well-formed record in which everything was null. That is the same
+  benign-looking-failure shape 0.18.0 was written to remove;
+  `get_console_health` in the same module already gated on 2xx and this tool
+  did not. Both now share an `_is_ok` helper.
+
+- **A failed `/api/apps` probe was passed off as the application inventory.**
+  The error body was returned under `installed_apps` whenever it happened to
+  be a dict. A failed probe now reports `installed_apps: null` alongside an
+  explicit `installed_apps_error`, so "the probe failed" is distinguishable
+  from "no apps are installed".
+
+- Added test coverage for the console and guest-portal modules, which shipped
+  in 0.18.0 with none.
+
 - The synthetic `{"result": "string"}` output schema that FastMCP derives from
   the tools' `-> str` annotation is no longer advertised. It described every
   tool as returning "a string", which is not a useful contract, and it caused

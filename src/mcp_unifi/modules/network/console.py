@@ -66,12 +66,27 @@ CONSOLE_STATES = (
 )
 
 
+def _is_ok(probe: ProbeResult | None) -> bool:
+    """True when a probe returned a 2xx status.
+
+    Distinct from :attr:`ProbeResult.reachable`, which is only "the host
+    answered" and is satisfied by 401, 500, and everything else. Reading a
+    probe body as data without this check turns an HTTP error into a record
+    full of ``None`` that looks like a successful read.
+    """
+    return probe is not None and probe.status is not None and 200 <= probe.status < 300
+
+
 def _classify(
     console: ProbeResult,
     network: ProbeResult,
     serving: ProbeResult | None = None,
 ) -> dict[str, Any]:
     """Turn the probe results into a single plain-language verdict.
+
+    Note for anyone extending this module: :attr:`ProbeResult.reachable` means
+    "the host answered", not "the host answered successfully" — any HTTP status
+    satisfies it. Use :func:`_is_ok` before reading a probe body as data.
 
     ``console`` is the unauthenticated ``/api/system`` probe (UniFi OS layer).
     ``network`` is the **authenticated** ``/proxy/network/status`` probe
@@ -205,7 +220,7 @@ def _classify(
             ),
         }
 
-    if status is not None and 200 <= status < 300:
+    if _is_ok(network):
         meta = {}
         if isinstance(network.body, dict):
             raw_meta = network.body.get("meta")
@@ -240,7 +255,7 @@ def _classify(
         context = str(meta.get("app_context_status") or "").strip()
         declares_state = reported_up is not None or running is not None
 
-        serving_ok = serving is not None and serving.status is not None and serving.status < 300
+        serving_ok = _is_ok(serving)
 
         if serving_ok or (not declares_state and serving is None):
             return {
@@ -464,25 +479,46 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
 
         if not system.reachable:
             return err(f"UniFi OS console is unreachable: {system.error}")
+        # `reachable` is "the host answered at all" — 4xx and 5xx included.
+        # Interpreting an error body as a record produces a tidy row of nulls
+        # and calls it success, which is the defect class this release
+        # exists to remove. Gate on 2xx first, as _classify_health does.
+        if not _is_ok(system):
+            return err(
+                f"UniFi OS /api/system returned HTTP {system.status}. "
+                f"Console identity was not read; this is a failed probe, not "
+                f"an empty console."
+            )
         if not isinstance(system.body, dict):
             return err(f"UniFi OS /api/system returned HTTP {system.status} with no JSON body.")
 
         body = system.body
-        hardware = body.get("hardware") if isinstance(body.get("hardware"), dict) else {}
-        return format_json(
-            {
-                "model": hardware.get("shortname"),
-                "name": body.get("name"),
-                "mac": body.get("mac"),
-                "device_state": body.get("deviceState"),
-                "device_error_code": body.get("deviceErrorCode"),
-                "has_internet": body.get("hasInternet"),
-                "cloud_connected": body.get("cloudConnected"),
-                "remote_access_enabled": body.get("remoteAccessEnabled"),
-                "sso_enabled": body.get("isSsoEnabled"),
-                "installed_apps": apps.body if isinstance(apps.body, dict) else None,
-            }
-        )
+        raw_hardware = body.get("hardware")
+        hardware = raw_hardware if isinstance(raw_hardware, dict) else {}
+        # The apps probe is independent: the console can answer while the
+        # inventory endpoint fails. Report that as a named failure rather than
+        # a null (indistinguishable from "no apps") or, worse, handing back
+        # the error body as though it were the inventory.
+        apps_ok = _is_ok(apps) and isinstance(apps.body, dict)
+        info: dict[str, Any] = {
+            "model": hardware.get("shortname"),
+            "name": body.get("name"),
+            "mac": body.get("mac"),
+            "device_state": body.get("deviceState"),
+            "device_error_code": body.get("deviceErrorCode"),
+            "has_internet": body.get("hasInternet"),
+            "cloud_connected": body.get("cloudConnected"),
+            "remote_access_enabled": body.get("remoteAccessEnabled"),
+            "sso_enabled": body.get("isSsoEnabled"),
+            "installed_apps": apps.body if apps_ok else None,
+        }
+        if not apps_ok:
+            info["installed_apps_error"] = (
+                f"/api/apps probe failed: {apps.error}"
+                if not apps.reachable
+                else f"/api/apps returned HTTP {apps.status} with no usable JSON body."
+            )
+        return format_json(info)
 
     @mcp.tool()
     @audited("get_console_firmware")

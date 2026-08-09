@@ -41,6 +41,15 @@ default materialised (``redirect_url``).
 Every write returns a before/after diff of what *actually* changed, so
 collateral edits are visible to the caller rather than silent. That diff is
 what made the live change safe to confirm.
+
+CONFIRM RE-READS
+----------------
+Because the write is full-object and preview tokens live five minutes, the
+record is re-read inside the confirm step rather than reused from the preview.
+Writing back the preview-time snapshot would restore every stale field and
+silently revert anything another admin changed in the meantime. This is the
+only confirmable action with that exposure: the rest carry an id, not a whole
+record.
 """
 
 from __future__ import annotations
@@ -246,10 +255,6 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 "modify. This site may have no guest network configured."
             )
 
-        # Read-modify-write the FULL object. A partial body was observed to
-        # work but was not proven non-destructive for untouched fields, and a
-        # settings clobber is unrecoverable without a backup.
-        desired = {**_strip_server_owned(current), **patch}
         summary = ", ".join(f"{k}={v!r}" for k, v in sorted(patch.items()))
 
         if dry_run:
@@ -264,6 +269,28 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             )
 
         async def _execute() -> str:
+            # Re-read at confirm time rather than reusing the record captured
+            # for the preview. Tokens live five minutes, and this is the only
+            # confirmable action that writes the FULL object: reusing the
+            # preview-time snapshot would restore every stale field and
+            # silently discard whatever another admin changed in between,
+            # while reporting an unrelated success. The full-object write is
+            # deliberate (a partial body was never proven non-destructive for
+            # untouched fields, and a settings clobber is unrecoverable
+            # without a backup), so the window gets closed here instead.
+            try:
+                fresh = await backend.get_setting(SETTING_KEY)
+            except UniFiError as exc:
+                logger.exception("set_guest_portal confirm re-read failed")
+                return err(str(exc))
+            if not fresh:
+                return err(
+                    "The controller returned no 'guest_access' setting record "
+                    "at confirm time. It may have been removed since the "
+                    "preview was generated; nothing was written."
+                )
+
+            desired = {**_strip_server_owned(fresh), **patch}
             try:
                 updated = await backend.set_setting(SETTING_KEY, desired)
             except UniFiError as exc:
@@ -273,7 +300,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 {
                     "setting_key": SETTING_KEY,
                     "applied": patch,
-                    "diff": _diff(current, updated),
+                    "diff": _diff(fresh, updated),
                     "current": _project(updated),
                 }
             )
