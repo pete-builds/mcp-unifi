@@ -7,6 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-08-08
+
+Two independent changes that share a premise: the server should tell the
+caller the truth, and should not charge them a fortune in tokens to hear it.
+
+### Added
+
+- **Read-back verification on writes.** `update_vlan`, `update_wlan`, and
+  `update_port_forward` now re-read the record from the controller after
+  writing and compare it against what was requested. UniFi accepts a write,
+  answers `rc: ok`, and stores something else: fields get silently dropped,
+  `purpose="guest"` lands as `"corporate"`, a multi-field patch half-applies.
+  None of that is visible to a caller who trusts the `PUT` response, because
+  that response is the controller echoing its own intent rather than a read of
+  what it persisted. Only an independent `GET` can contradict it.
+
+  Every requested field lands in exactly one bucket: `persisted_fields`,
+  `unchanged_fields` (already correct before the write, a satisfied request
+  rather than a failure), `dropped_fields`, `coerced_fields` (including a
+  value that compares equal but changed type, such as `True` stored as `1`),
+  and `unverifiable_fields`. Secrets are always unverifiable: `x_passphrase`
+  reads back redacted, so no honest claim can be made about whether a PSK
+  write landed, and absence of proof is reported as absence of proof.
+
+  A response carrying `verified: false` with `mutation_applied: true` means
+  the controller accepted the write and did not store it exactly. That is
+  **not a rollback**. The record may be in a mixed state, and a blind retry
+  will re-send fields that already applied.
+
+  A failed read-back is not a failed write. The mutation has already happened
+  by that point, so losing the controller afterwards reports the fields as
+  unverifiable instead of raising.
+
+- **The verified delta reaches the audit log.** The verification block rides
+  inside the normal response envelope, so the existing `@audited` decorator
+  records it with no extra wiring. `mcp-unifi-replay` therefore replays
+  against what the controller actually stored rather than what the caller
+  intended to store.
+
+- **Adaptive responses.** Clients that negotiate MCP `2025-06-18` or later now
+  receive a bounded plain-language summary in the text block and the complete
+  payload in `structuredContent`. On a `list_clients` call the text block
+  drops from roughly 1,800 characters to 71, with nothing lost: every field is
+  still reachable through the structured channel. A failed verification is
+  quoted into the summary, so a silently-broken write cannot be missed while
+  skimming.
+
+  Clients on an older revision, and clients whose revision cannot be read,
+  receive exactly the payload they received before. An unknown client is
+  treated as an old client, because guessing high would truncate data for a
+  client with nowhere else to read it while guessing low only costs tokens.
+
+  Set `FORCE_FULL_TEXT_RESPONSES=true` to opt out entirely. That is the escape
+  hatch for a client that advertises support it does not actually implement.
+
+### Fixed
+
+- The synthetic `{"result": "string"}` output schema that FastMCP derives from
+  the tools' `-> str` annotation is no longer advertised. It described every
+  tool as returning "a string", which is not a useful contract, and it caused
+  FastMCP to populate `structuredContent` with the payload double-encoded:
+  the same bytes in the text block and again as a JSON string, costing roughly
+  twice the tokens rather than saving any.
+
+- `charts/mcp-unifi/Chart.yaml` had `appVersion: "0.17.0"` while every other
+  version surface read 0.18.0. Chart version bumped to 0.2.2.
+
 ## [0.18.0] - 2026-08-08
 
 Written during a live UniFi Network outage. The theme is a single defect
