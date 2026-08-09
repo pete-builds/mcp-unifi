@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-08-09
+
+### Fixed
+
+- **SECURITY (image): dropped pip from the runtime layer.** pip 26.2.1 ships
+  msgpack 1.1.2 and setuptools 70.3.0 vendored under `pip/_vendor/`, and Trivy
+  scans those as installed packages — surfacing GHSA-6v7p-g79w-8964 (msgpack
+  OOB read on Unpacker reuse) and CVE-2025-47273 (setuptools PackageIndex path
+  traversal) on the 0.19.0 image. Neither is reachable from the server, but
+  they were present. Runtime never runs pip: wheels are pre-installed into
+  `/app/site-packages` by the builder stage and the entrypoint is a bare
+  `python -m mcp_unifi.server`. Uninstalling pip removes the vendor tree
+  entirely and the image passes Trivy at HIGH/CRITICAL with zero findings.
+  Bumping pip would not have fixed it: 26.2.1 is already the current release
+  and still vendors those versions.
+
 ## [0.19.0] - 2026-08-08
 
 Two independent changes that share a premise: the server should tell the
