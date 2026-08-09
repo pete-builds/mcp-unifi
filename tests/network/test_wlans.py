@@ -63,8 +63,10 @@ async def test_update_wlan_stub(stub_server: FastMCP, stub_state: StubState) -> 
         "update_wlan",
         {"wlan_id": wlan_id, "updates": {"name": "Renamed", "hide_ssid": True}},
     )
-    assert result["name"] == "Renamed"
-    assert result["hide_ssid"] is True
+    assert result["wlan"]["name"] == "Renamed"
+    assert result["wlan"]["hide_ssid"] is True
+    assert result["verification"]["verified"] is True
+    assert set(result["verification"]["persisted_fields"]) == {"name", "hide_ssid"}
 
 
 async def test_update_wlan_redacts_passphrase(stub_server: FastMCP, stub_state: StubState) -> None:
@@ -75,8 +77,12 @@ async def test_update_wlan_redacts_passphrase(stub_server: FastMCP, stub_state: 
         "update_wlan",
         {"wlan_id": wlan_id, "updates": {"x_passphrase": "rotated-secret-xyz"}},
     )
-    assert result["x_passphrase"] == "[REDACTED]"
+    assert result["wlan"]["x_passphrase"] == "[REDACTED]"
     assert "rotated-secret-xyz" not in json.dumps(result)
+    # A secret reads back redacted, so the write cannot be confirmed. Saying
+    # "verified" here would be a lie the audit log then repeats.
+    assert result["verification"]["unverifiable_fields"] == ["x_passphrase"]
+    assert result["verification"]["verified"] is False
 
 
 async def test_update_wlan_missing(stub_server: FastMCP) -> None:
@@ -229,6 +235,13 @@ async def test_real_list_ap_groups_handles_500(real_server: FastMCP) -> None:
 
 @respx.mock
 async def test_real_update_wlan(real_server: FastMCP) -> None:
+    # Verification re-reads the collection before and after the write.
+    respx.get(f"{BASE}/rest/wlanconf").mock(
+        side_effect=[
+            httpx.Response(200, json={"data": [{"_id": "w1", "name": "Old"}]}),
+            httpx.Response(200, json={"data": [{"_id": "w1", "name": "Renamed"}]}),
+        ]
+    )
     respx.put(f"{BASE}/rest/wlanconf/w1").mock(
         return_value=httpx.Response(200, json={"data": [{"_id": "w1", "name": "Renamed"}]})
     )
@@ -237,7 +250,9 @@ async def test_real_update_wlan(real_server: FastMCP) -> None:
         "update_wlan",
         {"wlan_id": "w1", "updates": {"name": "Renamed"}},
     )
-    assert result["name"] == "Renamed"
+    assert result["wlan"]["name"] == "Renamed"
+    assert result["verification"]["verified"] is True
+    assert result["verification"]["persisted_fields"] == ["name"]
 
 
 @respx.mock
@@ -256,6 +271,7 @@ async def test_real_delete_wlan(real_server: FastMCP) -> None:
 
 @respx.mock
 async def test_real_update_wlan_handles_404(real_server: FastMCP) -> None:
+    respx.get(f"{BASE}/rest/wlanconf").mock(return_value=httpx.Response(200, json={"data": []}))
     respx.put(f"{BASE}/rest/wlanconf/missing").mock(
         return_value=httpx.Response(404, text="not found")
     )
@@ -353,6 +369,12 @@ async def test_real_update_wlan_response_redacts_passphrase(
     real_server: FastMCP,
 ) -> None:
     """``update_wlan``'s docstring promised a redacted response; now it is true."""
+    respx.get(f"{BASE}/rest/wlanconf").mock(
+        return_value=httpx.Response(
+            200,
+            json={"data": [{"_id": "w1", "name": "Home", "x_passphrase": "leaked-on-write"}]},
+        )
+    )
     respx.put(f"{BASE}/rest/wlanconf/w1").mock(
         return_value=httpx.Response(
             200,
@@ -365,4 +387,4 @@ async def test_real_update_wlan_response_redacts_passphrase(
         {"wlan_id": "w1", "updates": {"x_passphrase": "leaked-on-write"}},
     )
     assert "leaked-on-write" not in json.dumps(result)
-    assert result["x_passphrase"] == "[REDACTED]"
+    assert result["wlan"]["x_passphrase"] == "[REDACTED]"

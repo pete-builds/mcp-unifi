@@ -18,6 +18,7 @@ from mcp_unifi.modules.network._common import (
     resolve_default_ap_group,
 )
 from mcp_unifi.modules.network._pending import build_preview_envelope, get_pending_actions
+from mcp_unifi.modules.network._verify import verified_update
 from mcp_unifi.redaction import redact
 
 if TYPE_CHECKING:
@@ -213,6 +214,17 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         - Mutates controller state. Use dry_run=True to preview the change
           without applying.
 
+        Verified write: after applying, the WLAN is re-read from the
+        controller and the response carries a ``verification`` block listing
+        ``persisted_fields``, ``unchanged_fields`` (already correct before
+        the write), ``dropped_fields`` (silently discarded by the
+        controller), ``coerced_fields`` (stored with a different value or
+        type), and ``unverifiable_fields``. ``x_passphrase`` is always
+        unverifiable because it reads back redacted. A response with
+        ``verified: false`` and ``mutation_applied: true`` means the
+        controller accepted the write but did not store it exactly — that is
+        **not a rollback**, and the record may be in a mixed state.
+
         Example: update_wlan(wlan_id="65f...", updates={"enabled": False})
 
         Args:
@@ -236,10 +248,22 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             )
         try:
             backend = resolve_backend(registry, controller)
-            updated = await backend.update_wlan(wlan_id, updates)
-            if updated is None:
+            outcome = await verified_update(
+                lister=backend.list_wlans,
+                updater=lambda: backend.update_wlan(wlan_id, updates),
+                record_id=wlan_id,
+                updates=updates,
+            )
+            if outcome is None:
                 return err(f"wlan {wlan_id} not found")
-            return format_json(redact(updated))
+            record, verification = outcome
+            return format_json(
+                {
+                    "wlan_id": wlan_id,
+                    "verification": verification,
+                    "wlan": redact(record),
+                }
+            )
         except UniFiError as exc:
             logger.exception("update_wlan failed", extra={"wlan_id": wlan_id})
             return err(str(exc))

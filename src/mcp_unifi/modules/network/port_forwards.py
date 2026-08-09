@@ -13,6 +13,7 @@ from mcp_unifi.modules._params import (
 )
 from mcp_unifi.modules.network._common import format_json, make_err
 from mcp_unifi.modules.network._pending import build_preview_envelope, get_pending_actions
+from mcp_unifi.modules.network._verify import verified_update
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -133,6 +134,18 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         - Mutates controller state. Use dry_run=True to preview the change
           without applying.
 
+        Verified write: after applying, the rule is re-read from the
+        controller and the response carries a ``verification`` block listing
+        ``persisted_fields``, ``unchanged_fields`` (already correct before
+        the write), ``dropped_fields`` (silently discarded by the
+        controller), ``coerced_fields`` (stored with a different value or
+        type), and ``unverifiable_fields``. ``fwd_ip`` is a known drop site
+        on some firmware. A response with ``verified: false`` and
+        ``mutation_applied: true`` means the controller accepted the write
+        but did not store it exactly — that is **not a rollback**, and the
+        rule may be in a mixed state. Re-check before assuming a port is
+        closed.
+
         Example: update_port_forward(forward_id="65f...", updates={"enabled": False})
 
         Args:
@@ -157,10 +170,22 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             )
         try:
             backend = resolve_backend(registry, controller)
-            updated = await backend.update_port_forward(forward_id, updates)
-            if updated is None:
+            outcome = await verified_update(
+                lister=backend.list_port_forwards,
+                updater=lambda: backend.update_port_forward(forward_id, updates),
+                record_id=forward_id,
+                updates=updates,
+            )
+            if outcome is None:
                 return err(f"port forward {forward_id} not found")
-            return format_json(updated)
+            record, verification = outcome
+            return format_json(
+                {
+                    "forward_id": forward_id,
+                    "verification": verification,
+                    "port_forward": record,
+                }
+            )
         except UniFiError as exc:
             logger.exception("update_port_forward failed", extra={"forward_id": forward_id})
             return err(str(exc))
