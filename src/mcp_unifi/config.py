@@ -112,6 +112,20 @@ class Settings(BaseSettings):
     )
 
     # ------------------------------------------------------------------
+    # Response shaping
+    # ------------------------------------------------------------------
+    force_full_text_responses: bool = Field(
+        default=False,
+        description=(
+            "If True, always return the full JSON payload as the text block, "
+            "even to clients that negotiated MCP 2025-06-18 or later. The "
+            "escape hatch for a client that advertises structuredContent "
+            "support but does not actually read it. Costs tokens; changes no "
+            "data."
+        ),
+    )
+
+    # ------------------------------------------------------------------
     # Multi-controller config
     # ------------------------------------------------------------------
     controllers_file: Path | None = Field(
