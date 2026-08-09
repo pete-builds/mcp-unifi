@@ -54,6 +54,7 @@ class ScopeMiddleware(Middleware):
 
     def __init__(self, client_scopes: dict[str, set[str]]) -> None:
         self._client_scopes = client_scopes
+        self._unresolved_logged: set[str] = set()
 
     async def on_list_tools(
         self,
@@ -85,16 +86,34 @@ class ScopeMiddleware(Middleware):
     def _allowed_modules_for_current_request(self) -> set[str]:
         """Look up the current caller's allowed module set.
 
-        Falls back to :data:`WILDCARD` on stdio (no auth), on tokens without
-        a scope entry, and on any FastMCP dependency surface change — the
-        middleware must fail open on infrastructure hiccups, not lock the
-        server. The upstream auth provider is what gates access; scoping is
-        a layer on top and must not become the single point of failure.
+        Fails CLOSED when identity is unresolvable. This middleware is only
+        installed when scoping is active (see
+        ``server._install_scope_middleware``), so an unresolved caller —
+        ``get_access_token()`` raised, no token in context, or a
+        ``client_id`` not in ``_client_scopes`` — is an anomaly, and a
+        wildcard fallback here would silently defeat the boundary. Stdio
+        and every-client-wildcard modes short-circuit before this
+        middleware is ever added.
         """
         client_id = _current_client_id()
         if client_id is None:
-            return {WILDCARD}
-        return self._client_scopes.get(client_id, {WILDCARD})
+            self._log_unresolved("<no-token>")
+            return set()
+        allowed = self._client_scopes.get(client_id)
+        if allowed is None:
+            self._log_unresolved(client_id)
+            return set()
+        return allowed
+
+    def _log_unresolved(self, key: str) -> None:
+        # Once per distinct key so a hostile client cannot spam logs.
+        if key in self._unresolved_logged:
+            return
+        self._unresolved_logged.add(key)
+        logger.warning(
+            "scope middleware denying request with unresolved client identity",
+            extra={"client_id": key},
+        )
 
 
 def _current_client_id() -> str | None:

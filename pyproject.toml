@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mcp-unifi"
-version = "0.16.1"
+version = "0.17.0"
 description = "MCP server for self-hosted UniFi gateway management."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -23,7 +23,7 @@ classifiers = [
 dependencies = [
     "fastmcp==3.4.5",
     "httpx==0.28.1",
-    "uvicorn==0.52.0",
+    "uvicorn==0.52.1",
     "python-dotenv==1.2.2",
     "pydantic==2.13.4",
     "pydantic-settings==2.14.2",
@@ -36,10 +36,10 @@ dev = [
     "pytest-asyncio==1.4.0",
     "pytest-cov==7.1.0",
     "respx==0.23.1",
-    "ruff==0.16.0",
+    "ruff==0.16.1",
     "mypy==2.3.0",
-    "types-PyYAML==6.0.12.20260518",
-    "hypothesis==6.164.0",
+    "types-PyYAML==6.0.12.20260724",
+    "hypothesis==6.165.0",
 ]
 
 [project.scripts]

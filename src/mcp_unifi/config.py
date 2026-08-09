@@ -254,7 +254,14 @@ class Settings(BaseSettings):
             else:
                 client_id = parts[0].strip()
                 token = parts[1].strip()
-                scope_str = parts[2].strip() or "*"
+                scope_str = parts[2].strip()
+                if not scope_str:
+                    raise ValueError(
+                        f"MCP_UNIFI_AUTH_TOKENS entry {idx}: three-part form "
+                        f"'client_id:token:scopes' has an empty scope list; "
+                        f"use the two-part form 'client_id:token' for "
+                        f"wildcard access."
+                    )
             if not token:
                 raise ValueError(f"MCP_UNIFI_AUTH_TOKENS entry {idx} is missing a token value")
             if not client_id:
