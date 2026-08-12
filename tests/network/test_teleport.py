@@ -12,10 +12,12 @@ import json
 from typing import Any
 
 import httpx
+import pytest
 import respx
 from fastmcp import FastMCP
 
 from mcp_unifi.clients.stubs import StubState
+from mcp_unifi.modules.network import teleport
 from tests.network.conftest import BASE, _call
 
 # ---------------------------------------------------------------------------
@@ -112,3 +114,45 @@ async def test_real_set_teleport_enabled_500(real_server: FastMCP) -> None:
     respx.post(f"{BASE}/set/setting/teleport").mock(return_value=httpx.Response(500))
     result = await _call(real_server, "set_teleport_enabled", {"enabled": True})
     assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# Read-path redaction
+# ---------------------------------------------------------------------------
+
+
+async def test_get_teleport_config_redacts_wireguard_keys(
+    stub_server: FastMCP, stub_state: StubState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Teleport rides on wireguard-server networks, which hold private keys.
+
+    ``_wireguard_vpn_networks`` projects a fixed key list, so the projection
+    alone keeps ``x_private_key`` out today. The projection is the thing under
+    test here: it is monkeypatched to a passthrough, which is exactly what an
+    innocent "surface one more field" edit would produce. The response must
+    still come back redacted, which it only does because the tool calls
+    ``redact`` rather than trusting the projection.
+    """
+    monkeypatch.setattr(teleport, "_wireguard_vpn_networks", lambda nets: list(nets))
+
+    stub_state.create_network(
+        {
+            "name": "Teleport",
+            "purpose": "remote-user-vpn",
+            "vpn_type": "wireguard-server",
+            "ip_subnet": "192.168.2.0/24",
+            "local_port": 51820,
+            "enabled": True,
+            "x_private_key": "wireguard-private-do-not-leak",
+            "x_preshared_key": "wireguard-psk-do-not-leak",
+        }
+    )
+
+    result = await _call(stub_server, "get_teleport_config")
+
+    surfaced = next(n for n in result["vpn_networks"] if n["name"] == "Teleport")
+    assert surfaced["x_private_key"] == "[REDACTED]"
+    assert surfaced["x_preshared_key"] == "[REDACTED]"
+    assert "do-not-leak" not in json.dumps(result)
+    # Non-secret fields still come through, so this is redaction and not a drop.
+    assert surfaced["local_port"] == 51820

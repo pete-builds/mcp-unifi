@@ -15,10 +15,13 @@ static DHCP reservations, and port forwards into one versioned JSON
 envelope. Transient state (clients, devices, observability) is
 excluded.
 
-Secret handling: every WLAN's ``x_passphrase`` is replaced with the
-sentinel ``<redacted-on-backup>``. The envelope flag
-``secrets_stripped: true`` warns ``restore_config`` to force
-restored WLANs to ``enabled=False``.
+Secret handling: every sensitive field on a WLAN or network record
+is replaced with the sentinel ``<redacted-on-backup>`` — WLAN
+``x_passphrase`` and the network VPN keys
+(``x_ipsec_pre_shared_key``, ``x_private_key``, ``x_preshared_key``,
+RADIUS ``x_secret``). The envelope flag ``secrets_stripped: true``
+warns ``restore_config`` to force any restored WLAN or network still
+carrying the sentinel to ``enabled=False``.
 
 Returns the JSON envelope ``{"schema": "1", "controller": str,
 "ts": iso8601, "secrets_stripped": bool, "resources": {...}}``.

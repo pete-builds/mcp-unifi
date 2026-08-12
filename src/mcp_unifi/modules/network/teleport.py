@@ -39,6 +39,7 @@ from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
 from mcp_unifi.modules.network._common import format_json, make_err
+from mcp_unifi.redaction import redact
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -104,18 +105,23 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
         vpn_networks = _wireguard_vpn_networks(list(networks_raw))
+        # ``_wireguard_vpn_networks`` projects a fixed key list today, which is
+        # what keeps ``x_private_key`` off this response. That is one edit away
+        # from being false — redact enforces it regardless of the projection.
         return format_json(
-            {
-                "enabled": bool(record.get("enabled", False)),
-                "vpn_networks": vpn_networks,
-                "clients_via_local_api": False,
-                "notes": [
-                    "Teleport client roster and invitation links are not exposed via "
-                    "the local UniFi Network API on fw 5.1.12.33296. Use the UniFi "
-                    "mobile app on the gateway owner's device to invite or revoke a "
-                    "client; the toggle here only controls the listener."
-                ],
-            }
+            redact(
+                {
+                    "enabled": bool(record.get("enabled", False)),
+                    "vpn_networks": vpn_networks,
+                    "clients_via_local_api": False,
+                    "notes": [
+                        "Teleport client roster and invitation links are not exposed via "
+                        "the local UniFi Network API on fw 5.1.12.33296. Use the UniFi "
+                        "mobile app on the gateway owner's device to invite or revoke a "
+                        "client; the toggle here only controls the listener."
+                    ],
+                }
+            )
         )
 
     @mcp.tool()

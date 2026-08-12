@@ -51,11 +51,22 @@ Behavior depends on transport:
 - The API key is sent in the `X-API-Key` header on every request to the
   gateway. It is never written to disk by this server, never echoed in logs,
   and never returned in MCP responses.
-- The structured logger has a redactor that scrubs known sensitive keys
-  (`api_key`, `passphrase`, `x_passphrase`, `password`, `secret`, `token`)
-  from any log record.
-- The audit log applies the same scrub to tool kwargs and results before
-  writing.
+- One canonical pattern list (`mcp_unifi.redaction.SENSITIVE_KEY_PATTERNS`)
+  covers three emitters: the structured logger, the audit log, and tool
+  responses. It matches `api_key`, `passphrase`/`x_passphrase`,
+  `password`/`x_password`, `secret`, `token`, `psk`,
+  `pre_shared_key`/`preshared_key`, and `private_key`/`privkey`.
+- The structured logger scrubs those keys from any log record, and the audit
+  log applies the same scrub to tool kwargs and results before writing.
+- Read paths that return controller records redact those values to
+  `[REDACTED]` before the response leaves the server: WLANs, networks
+  (WireGuard, site-to-site IPsec, and RADIUS key material), dynamic DNS, the
+  guest portal, Teleport, and Access credentials. `backup_config` substitutes
+  the `<redacted-on-backup>` sentinel instead, which `restore_config`
+  recognises and answers by forcing the restored resource to `enabled=false`.
+- References are deliberately **not** redacted: `radiusprofile_id` names a
+  profile rather than holding its secret, and redacting it would break the
+  tools that resolve it.
 
 ## Container-level hardening
 

@@ -62,6 +62,7 @@ from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
 from mcp_unifi.modules.network._common import format_json, make_err
 from mcp_unifi.modules.network._pending import build_preview_envelope, get_pending_actions
+from mcp_unifi.redaction import redact
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -174,7 +175,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 "The controller returned no 'guest_access' setting record. "
                 "This site may have no guest network configured."
             )
-        return format_json(_project(record))
+        # The projection is an allowlist today, but allowlists grow and
+        # ``guest_access`` is where portal/RADIUS credentials would land.
+        return format_json(redact(_project(record)))
 
     @mcp.tool()
     @audited("set_guest_portal")

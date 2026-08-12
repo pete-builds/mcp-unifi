@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **SECURITY: read paths returned VPN and credential secrets in cleartext.**
+  `mcp_unifi.redaction` has always described itself as the single source of
+  truth for "every path that emits data", and its docstring told the story of
+  the read path being fixed. Only two modules ever called it: `wlans` and
+  `dynamic_dns`. Everything else handed the controller's records back
+  untouched, so `list_networks` and `get_network_details` returned WireGuard
+  `x_private_key` and `x_preshared_key`, site-to-site `x_ipsec_pre_shared_key`,
+  and RADIUS `x_secret` straight into the caller's transcript. `backup_config`
+  did the same inside its envelope, and UniFi Access `list_credentials` /
+  `get_credential` returned enrolment material the same way.
+
+  Two defects, one visible and one not:
+
+  - **Pattern gap.** `SENSITIVE_KEY_PATTERNS` matches by substring, so `psk`
+    catches `wpa_psk` and matches nothing in `x_ipsec_pre_shared_key` or
+    `x_preshared_key` — neither string contains those three letters. Added
+    `pre_shared_key` and `preshared_key` explicitly. A bare `radius` pattern
+    was considered and rejected: it would redact `radiusprofile_id` and profile
+    names, which are references, not secrets, and the tools that resolve them
+    would break. `x_private_key` was already covered by `private_key`.
+  - **Wiring gap.** Nothing intercepts a tool response, so `redact` only runs
+    where a module calls it. Now wired into `list_networks`,
+    `get_network_details`, `get_teleport_config`, `get_guest_portal`,
+    `list_credentials`, and `get_credential`. Teleport and the guest portal
+    were already safe by projection — a fixed key allowlist — which is a
+    guarantee that lasts until someone adds a field; their tests monkeypatch
+    the projection to a passthrough to prove the redaction now holds without it.
+
+  `backup_config` gets the same treatment through its own sentinel. Its secret
+  pass tested for the literal key `x_passphrase`, which covered WLANs and left
+  network records alone; it now matches on `is_sensitive`, the same predicate
+  the log and audit paths use, and runs over networks as well as WLANs.
+  `restore_config` follows: any restored WLAN **or network** still carrying the
+  `<redacted-on-backup>` sentinel in any field is forced to `enabled=false`, so
+  a VPN tunnel is never stood up on a pre-shared key that is a published
+  constant — the same protection WLANs already had against broadcasting a
+  sentinel-passphrase SSID.
+
+  Modules swept and deliberately left alone, because their records carry no
+  field matching the pattern list: clients, devices, stats, DHCP, firewall
+  rules and groups, routing, traffic rules and routes, port forwards, port
+  profiles, content filtering, threat management, observability, honeypots,
+  drift, IPv6, console, and Protect. IPv6, honeypot, threat-management, and
+  console reads are additionally projections over a fixed key list.
+
+  Reported by Adrian Birzu (@adibirzu), who identified the pattern gap and four
+  of the unwired read tools in a fork review.
+
+### Changed
+
+- **`SECURITY.md` and the security guide now state redaction coverage
+  accurately.** Both described the redactor as a logging concern that also
+  scrubbed WLAN passphrases from responses. They now name the shared pattern
+  list, enumerate the read paths it covers, and say plainly that references
+  such as `radiusprofile_id` are left intact on purpose.
+
 ## [0.19.1] - 2026-08-09
 
 ### Fixed

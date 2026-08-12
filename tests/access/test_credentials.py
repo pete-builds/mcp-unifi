@@ -90,3 +90,27 @@ async def test_audit_expiring_credentials_negative_days(access_registry: FastMCP
     result = await _call(access_registry, "audit_expiring_credentials", {"days_ahead": -1})
     assert "error" in result
     assert "days_ahead" in result["error"]
+
+
+async def test_credential_reads_redact_enrolment_material(
+    access_registry: FastMCP, stub_access_state: AccessStubState
+) -> None:
+    """Access credentials are the one Access record type that holds a secret.
+
+    Card and mobile enrolment tokens are the value, not a reference to it: a
+    token in a transcript is a credential in a transcript.
+    """
+    cred = stub_access_state.credentials[0]
+    cred["token"] = "nfc-enrolment-token-do-not-leak"
+    cred["x_secret"] = "credential-secret-do-not-leak"
+    cred_id = cred["id"]
+
+    listed = await _call(access_registry, "list_credentials")
+    single = await _call(access_registry, "get_credential", {"credential_id": cred_id})
+
+    for payload in (next(c for c in listed if c["id"] == cred_id), single):
+        assert payload["token"] == "[REDACTED]"
+        assert payload["x_secret"] == "[REDACTED]"
+        # Identity and type still resolve; this is redaction, not a drop.
+        assert payload["id"] == cred_id
+        assert payload["type"] == "nfc"

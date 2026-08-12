@@ -16,7 +16,9 @@ mcp-unifi is designed to run on a trusted home or homelab LAN, behind your exist
 
 - `UNIFI_API_KEY` and all per-controller `api_key` values are wrapped in Pydantic's `SecretStr`. Reading the cleartext requires `.get_secret_value()`; `repr()` and structured logging never echo the raw key.
 - The startup `safe_repr()` log line includes only an `api_key_set: true/false` boolean per controller, never the key itself.
-- The structured logger has a redactor that scrubs known sensitive keys (`api_key`, `passphrase`, `x_passphrase`, `password`, `secret`) from any log record. WLAN passphrases are scrubbed `[REDACTED]` from every tool response, even in stub mode.
+- One canonical pattern list (`mcp_unifi.redaction.SENSITIVE_KEY_PATTERNS`) covers three emitters: the structured logger, the audit log, and tool responses. It matches `api_key`, `passphrase`/`x_passphrase`, `password`/`x_password`, `secret`, `token`, `psk`, `pre_shared_key`/`preshared_key`, and `private_key`/`privkey`.
+- Read paths that return controller records replace those values with `[REDACTED]` before the response leaves the server, in stub mode and real mode alike: WLANs (`x_passphrase`), networks (WireGuard `x_private_key`/`x_preshared_key`, site-to-site `x_ipsec_pre_shared_key`, RADIUS `x_secret`), dynamic DNS (`x_password`), the guest portal, Teleport, and Access credentials. `backup_config` substitutes its own `<redacted-on-backup>` sentinel so `restore_config` can recognise it and force the restored resource to `enabled=false`.
+- References are deliberately **not** redacted. `radiusprofile_id` names a profile; it is not the shared secret, and redacting it would break the tools that resolve it.
 - The audit log applies the same scrub to tool kwargs before writing.
 
 ## Container-level hardening (baked into the image)

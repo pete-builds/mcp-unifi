@@ -25,6 +25,7 @@ from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
 from mcp_unifi.modules.network._common import format_json, make_err
+from mcp_unifi.redaction import redact
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -209,7 +210,10 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         """
         try:
             backend = resolve_backend(registry, controller, "access")
-            return format_json(await backend.list_credentials())
+            # Credential records carry enrolment material (card/mobile
+            # tokens); redact strips anything matching the canonical
+            # sensitive-key patterns before it reaches the transcript.
+            return format_json(redact(await backend.list_credentials()))
         except UniFiError as exc:
             logger.exception("list_credentials failed")
             return err(str(exc))
@@ -236,7 +240,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             cred = await backend.get_credential(credential_id)
             if cred is None:
                 return err(f"credential {credential_id} not found")
-            return format_json(cred)
+            return format_json(redact(cred))
         except UniFiError as exc:
             logger.exception("get_credential failed", extra={"credential_id": credential_id})
             return err(str(exc))

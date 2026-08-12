@@ -9,9 +9,11 @@ admin's edits can be silently reverted.
 
 from __future__ import annotations
 
+import pytest
 from fastmcp import FastMCP
 
 from mcp_unifi.clients.stubs import StubState
+from mcp_unifi.modules.network import guest_portal
 from tests.network.conftest import _call
 
 SETTING_KEY = "guest_access"
@@ -105,3 +107,32 @@ async def test_rejects_an_empty_patch(stub_server: FastMCP) -> None:
     result = await _call(stub_server, "set_guest_portal", {})
     assert "error" in result
     assert "No changes requested" in result["error"]
+
+
+async def test_get_guest_portal_redacts_projected_secrets(
+    stub_server: FastMCP, stub_state: StubState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``guest_access`` is where portal and RADIUS credentials would live.
+
+    No field in ``_PROJECTED`` is a secret today, so the projection is what
+    keeps this response clean. That is a guarantee held by an allowlist, and
+    allowlists grow: ``_PROJECTED`` is monkeypatched here to include the
+    credential fields a future "surface the portal password too" edit would add.
+    The tool must still redact them.
+    """
+    monkeypatch.setattr(
+        guest_portal,
+        "_PROJECTED",
+        (*guest_portal._PROJECTED, "x_password", "radius_secret"),
+    )
+    record = stub_state.settings.setdefault(SETTING_KEY, {})
+    record["x_password"] = "portal-password-do-not-leak"
+    record["radius_secret"] = "radius-do-not-leak"
+
+    result = await _call(stub_server, "get_guest_portal")
+
+    assert result["x_password"] == "[REDACTED]"
+    assert result["radius_secret"] == "[REDACTED]"
+    assert "do-not-leak" not in str(result)
+    # Operational fields are untouched.
+    assert "portal_enabled" in result
