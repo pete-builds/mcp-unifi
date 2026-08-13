@@ -55,6 +55,8 @@ from fastmcp.server.middleware.middleware import (
 from fastmcp.tools.tool import Tool, ToolResult
 from mcp import types as mt
 
+from mcp_unifi import audit
+
 logger = logging.getLogger("mcp_unifi.scoping")
 
 WILDCARD = "*"
@@ -64,6 +66,14 @@ WILDCARD = "*"
 #: set as the module tags, so :func:`_tool_modules` filters it back out before
 #: any module-scope comparison.
 MUTATING_TAG = "mutating"
+
+#: Values written to :attr:`mcp_unifi.audit.AuditEvent.denied_by` so an
+#: operator can tell the two controls apart in one ``jq`` pass. Read-only mode
+#: is a property of the server; scope is a property of the caller, and the
+#: response to each is different — one is "turn the posture off", the other is
+#: "widen this client's token".
+DENIED_BY_READONLY = "readonly"
+DENIED_BY_SCOPE = "scope"
 
 
 class ScopeMiddleware(Middleware):
@@ -105,8 +115,21 @@ class ScopeMiddleware(Middleware):
             if not tool_modules & allowed:
                 # Never disclose which modules exist — a scoped client
                 # shouldn't be able to enumerate tools it can't see by
-                # brute-forcing names and reading the denial message.
-                raise ToolError(f"Tool {tool_name!r} is not available to this client.")
+                # brute-forcing names and reading the denial message. The
+                # audit record is the opposite side of that wall: the
+                # operator reading the log is entitled to the detail the
+                # caller is not.
+                message = f"Tool {tool_name!r} is not available to this client."
+                await _record_refusal(
+                    context,
+                    tool_name=tool_name,
+                    denied_by=DENIED_BY_SCOPE,
+                    error=(
+                        f"{message} Refused by per-client module scoping "
+                        f"(MCP_UNIFI_AUTH_TOKENS). No call was made to the controller."
+                    ),
+                )
+                raise ToolError(message)
         return await call_next(context)
 
     def _allowed_modules_for_current_request(self) -> set[str]:
@@ -188,6 +211,66 @@ async def _resolve_tool_modules(
     return set() if tool is None else _tool_modules(tool)
 
 
+def _attempted_args(context: MiddlewareContext[mt.CallToolRequestParams]) -> dict[str, Any]:
+    """Return the arguments the caller tried to use, as an audit-shaped dict.
+
+    A non-dict ``arguments`` payload is wrapped rather than dropped: the point
+    of a refusal record is what was attempted, and "the caller sent something
+    malformed" is itself worth keeping. Never returns the caller's object by
+    reference, so scrubbing downstream cannot mutate live request state.
+    """
+    arguments = getattr(context.message, "arguments", None)
+    if isinstance(arguments, dict):
+        return dict(arguments)
+    if arguments is None:
+        return {}
+    return {"_arguments": arguments}
+
+
+async def _record_refusal(
+    context: MiddlewareContext[mt.CallToolRequestParams],
+    *,
+    tool_name: str,
+    denied_by: str,
+    error: str,
+) -> None:
+    """Write a refused call into the audit log.
+
+    The refusal happens above the ``@audited`` decorator, so nothing else in
+    the stack will record it — and a denied mutation attempt is exactly the
+    line an operator reviewing an agent wants to find. The record reuses
+    :meth:`mcp_unifi.audit.AuditLog.emit`, which means the attempted arguments
+    run through the same scrubber as a dispatched call: a refused
+    ``create_wlan`` still arrives carrying the caller's passphrase, and the
+    audit log is a persistent sink like any other.
+
+    ``latency_ms`` is 0.0 rather than a measured value, because no work was
+    done; the gate decided from a tag it already had.
+
+    Failures are swallowed. An audit outage must not convert a clean refusal
+    envelope into a transport-level error — the caller would learn less, not
+    more, and the control itself would appear to have failed open.
+    """
+    try:
+        args = _attempted_args(context)
+        await audit.get_audit_log().emit(
+            controller=str(args.get("controller", "default")),
+            tool=tool_name,
+            args=args,
+            result=None,
+            success=False,
+            latency_ms=0.0,
+            error=error,
+            client_id=_current_client_id(),
+            denied_by=denied_by,
+        )
+    except Exception:  # pragma: no cover - defensive only
+        logger.exception(
+            "failed to record a refused tool call in the audit log",
+            extra={"tool": tool_name, "denied_by": denied_by},
+        )
+
+
 class WriteGateMiddleware(Middleware):
     """Hide and refuse every mutating tool while ``MCP_UNIFI_READONLY`` is on.
 
@@ -246,23 +329,43 @@ class WriteGateMiddleware(Middleware):
                     "resolved": tool is not None,
                 },
             )
-            return self._refusal(tool_name)
+            message = self._refusal_message(tool_name)
+            # The warning above is diagnostic and rotates away with the
+            # container logs. The audit record is the evidence surface, and
+            # "the agent tried to delete a VLAN and was refused" belongs
+            # there — a control that keeps no record of what it denied is
+            # only half a control.
+            await _record_refusal(
+                context,
+                tool_name=tool_name,
+                denied_by=DENIED_BY_READONLY,
+                error=message,
+            )
+            return self._refusal(message)
         return await call_next(context)
 
-    def _refusal(self, tool_name: str) -> ToolResult:
+    @staticmethod
+    def _refusal_message(tool_name: str) -> str:
+        return (
+            f"{tool_name} changes state and this server is running in "
+            f"read-only mode (MCP_UNIFI_READONLY=true). No call was made "
+            f"to the controller. Read tools are unaffected."
+        )
+
+    def _refusal(self, message: str) -> ToolResult:
         payload = json.dumps(
-            {
-                "error": (
-                    f"{tool_name} changes state and this server is running in "
-                    f"read-only mode (MCP_UNIFI_READONLY=true). No call was made "
-                    f"to the controller. Read tools are unaffected."
-                ),
-                "stub_mode": self._stub_mode,
-            },
+            {"error": message, "stub_mode": self._stub_mode},
             indent=2,
             default=str,
         )
         return ToolResult(content=[mt.TextContent(type="text", text=payload)])
 
 
-__all__ = ["MUTATING_TAG", "WILDCARD", "ScopeMiddleware", "WriteGateMiddleware"]
+__all__ = [
+    "DENIED_BY_READONLY",
+    "DENIED_BY_SCOPE",
+    "MUTATING_TAG",
+    "WILDCARD",
+    "ScopeMiddleware",
+    "WriteGateMiddleware",
+]

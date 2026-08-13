@@ -88,6 +88,52 @@ async def test_replay_real_mode_filters_by_controller() -> None:
     assert [c[0] for c in server.calls] == ["list_devices"]
 
 
+async def test_replay_skips_refused_events() -> None:
+    """A refused call was never made; replaying it would make it for real.
+
+    The write gate and the scope gate now write their refusals into the same
+    log replay consumes. Re-issuing one against a live controller would take
+    an action the operator's own policy denied, so denied events are skipped
+    the same way an off-target controller is.
+    """
+    server = _StubServer()
+    denied = _event("delete_vlan", network_id="x")
+    denied.success = False
+    denied.denied_by = "readonly"
+    results = await replay_mod.replay_events(
+        [_event("list_devices"), denied],
+        stub_mode=True,
+        target_controller=None,
+        i_mean_it=False,
+        server=server,
+    )
+    assert results[1].skipped is True
+    assert "readonly" in (results[1].skip_reason or "")
+    assert [c[0] for c in server.calls] == ["list_devices"]
+
+
+def test_parse_jsonl_round_trips_denied_by(tmp_path: Path) -> None:
+    """Replay must read the new field, and tolerate logs written without it."""
+    from mcp_unifi.audit import parse_jsonl
+
+    log = tmp_path / "audit.jsonl"
+    old = {
+        "ts": "2026-05-14T00:00:00.000Z",
+        "controller": "default",
+        "tool": "list_devices",
+        "args": {},
+        "result": None,
+        "success": True,
+        "latency_ms": 1.0,
+    }
+    new = dict(old, tool="delete_vlan", success=False, denied_by="scope")
+    log.write_text(json.dumps(old) + "\n" + json.dumps(new) + "\n")
+
+    events = parse_jsonl(log.read_text().splitlines())
+    assert events[0].denied_by is None
+    assert events[1].denied_by == "scope"
+
+
 async def test_replay_captures_per_event_failures() -> None:
     server = _StubServer(fail_on={"delete_vlan"})
     events = [_event("list_devices"), _event("delete_vlan", network_id="x")]
