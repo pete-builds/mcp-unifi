@@ -6,7 +6,7 @@ x-logging: &default-logging
 
 services:
   mcp-unifi:
-    image: ghcr.io/pete-builds/mcp-unifi:0.20.0
+    image: ghcr.io/pete-builds/mcp-unifi:0.21.0
     container_name: mcp-unifi
     restart: unless-stopped
     read_only: true
