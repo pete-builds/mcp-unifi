@@ -660,3 +660,190 @@ async def test_real_quarantine_client_handles_error(real_server: FastMCP) -> Non
         {"mac": "aa:bb:cc:00:00:01", "reason": "test"},
     )
     assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# Write-path redaction
+#
+# Both composites take a ``passphrase`` and build a WLAN payload around it, so
+# there are three separate places the caller's PSK reaches the transcript: the
+# ``dry_run`` preview echoes the payload, the success response carries the
+# record the controller echoed back, and the rollback response carries the same
+# record under ``partial``. ``wlans`` had redacted all three since 0.19.2;
+# these two tools had not.
+#
+# The stub backend rewrites ``x_passphrase`` to the sentinel inside
+# ``create_wlan``, so a stub-mode test cannot tell redaction from stub
+# behaviour. The created-record and rollback cases are therefore driven in
+# real mode against a respx-mocked controller that echoes the passphrase back
+# the way a real one does.
+# ---------------------------------------------------------------------------
+
+IOT_PSK = "iot-psk-do-not-leak"
+GUEST_PSK = "guest-psk-do-not-leak"
+
+
+async def test_create_iot_network_dry_run_redacts_passphrase(stub_server: FastMCP) -> None:
+    result = await _call(
+        stub_server,
+        "create_iot_network",
+        {"name": "IoT", "vlan_id": 55, "passphrase": IOT_PSK, "dry_run": True},
+    )
+
+    assert result["would_create"]["wlan"]["x_passphrase"] == "[REDACTED]"
+    assert IOT_PSK not in json.dumps(result)
+    # The rest of the predicted change set is intact — this is redaction of
+    # one field, not a hollowed-out preview.
+    assert result["would_create"]["wlan"]["security"] == "wpapsk"
+    assert result["would_create"]["network"]["vlan"] == 55
+    assert result["would_create"]["firewall_rule"]["action"] == "drop"
+
+
+async def test_create_guest_network_dry_run_redacts_passphrase(stub_server: FastMCP) -> None:
+    result = await _call(
+        stub_server,
+        "create_guest_network",
+        {
+            "name": "Guest",
+            "ssid": "guest-wifi",
+            "passphrase": GUEST_PSK,
+            "vlan_id": 65,
+            "dry_run": True,
+        },
+    )
+
+    assert result["would_create"]["wlan"]["x_passphrase"] == "[REDACTED]"
+    assert GUEST_PSK not in json.dumps(result)
+    assert result["would_create"]["wlan"]["is_guest"] is True
+    assert result["would_create"]["wlan"]["name"] == "guest-wifi"
+    assert result["would_create"]["network"]["purpose"] == "guest"
+
+
+def _echoing_wlanconf() -> None:
+    """Mock ``POST /rest/wlanconf`` the way a real controller answers it.
+
+    UniFi returns the stored record, and the stored record contains the
+    passphrase that was just written. Tests that mock this endpoint with a
+    bare ``{"_id": ...}`` cannot observe the leak at all.
+    """
+
+    def _echo(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        return httpx.Response(200, json={"data": [{"_id": "wlan-id", **payload}]})
+
+    respx.post(f"{BASE}/rest/wlanconf").mock(side_effect=_echo)
+
+
+@respx.mock
+async def test_real_iot_network_redacts_created_wlan_record(real_server: FastMCP) -> None:
+    _mock_default_apgroups()
+    respx.post(f"{BASE}/rest/networkconf").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "net-id", "name": "IoT"}]})
+    )
+    _echoing_wlanconf()
+    respx.post(f"{BASE}/rest/firewallrule").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "fw-id"}]})
+    )
+
+    result = await _call(
+        real_server,
+        "create_iot_network",
+        {"name": "IoT", "vlan_id": 56, "passphrase": IOT_PSK},
+    )
+
+    assert result["wlan"]["x_passphrase"] == "[REDACTED]"
+    assert IOT_PSK not in json.dumps(result)
+    # Everything the caller needs to act on the result still comes through.
+    assert result["wlan"]["_id"] == "wlan-id"
+    assert result["network"]["_id"] == "net-id"
+    assert result["firewall_rule"]["_id"] == "fw-id"
+
+
+@respx.mock
+async def test_real_guest_network_redacts_created_wlan_record(real_server: FastMCP) -> None:
+    _mock_default_apgroups()
+    respx.post(f"{BASE}/rest/networkconf").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "gnet-id", "name": "Guest"}]})
+    )
+    _echoing_wlanconf()
+    respx.post(f"{BASE}/rest/firewallrule").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "gfw-id"}]})
+    )
+
+    result = await _call(
+        real_server,
+        "create_guest_network",
+        {
+            "name": "Guest",
+            "ssid": "guest-wifi",
+            "passphrase": GUEST_PSK,
+            "vlan_id": 66,
+        },
+    )
+
+    assert result["wlan"]["x_passphrase"] == "[REDACTED]"
+    assert GUEST_PSK not in json.dumps(result)
+    assert result["wlan"]["_id"] == "wlan-id"
+    assert result["network"]["_id"] == "gnet-id"
+
+
+@respx.mock
+async def test_real_iot_network_rollback_partial_redacts_passphrase(
+    real_server: FastMCP,
+) -> None:
+    """The rollback response carries the created WLAN under ``partial``.
+
+    This is the emission point easiest to overlook, and the worst one to miss:
+    it fires when something has gone wrong, which is exactly when the response
+    gets pasted into an issue or a chat.
+    """
+    _mock_default_apgroups()
+    respx.post(f"{BASE}/rest/networkconf").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "rb-net"}]})
+    )
+    _echoing_wlanconf()
+    respx.post(f"{BASE}/rest/firewallrule").mock(return_value=httpx.Response(500, text="fw boom"))
+    respx.delete(f"{BASE}/rest/wlanconf/wlan-id").mock(return_value=httpx.Response(200))
+    respx.delete(f"{BASE}/rest/networkconf/rb-net").mock(return_value=httpx.Response(200))
+
+    result = await _call(
+        real_server,
+        "create_iot_network",
+        {"name": "IoT", "vlan_id": 57, "passphrase": IOT_PSK},
+    )
+
+    assert result["partial"]["wlan"]["x_passphrase"] == "[REDACTED]"
+    assert IOT_PSK not in json.dumps(result)
+    # The rollback report itself is still usable.
+    assert result["partial"]["wlan"]["_id"] == "wlan-id"
+    assert any(a.get("wlan") == "wlan-id" for a in result["rolled_back"])
+    assert any(a.get("network") == "rb-net" for a in result["rolled_back"])
+
+
+@respx.mock
+async def test_real_guest_network_rollback_partial_redacts_passphrase(
+    real_server: FastMCP,
+) -> None:
+    _mock_default_apgroups()
+    respx.post(f"{BASE}/rest/networkconf").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "grb-net"}]})
+    )
+    _echoing_wlanconf()
+    respx.post(f"{BASE}/rest/firewallrule").mock(return_value=httpx.Response(500, text="fw boom"))
+    respx.delete(f"{BASE}/rest/wlanconf/wlan-id").mock(return_value=httpx.Response(200))
+    respx.delete(f"{BASE}/rest/networkconf/grb-net").mock(return_value=httpx.Response(200))
+
+    result = await _call(
+        real_server,
+        "create_guest_network",
+        {
+            "name": "Guest",
+            "ssid": "guest-wifi",
+            "passphrase": GUEST_PSK,
+            "vlan_id": 67,
+        },
+    )
+
+    assert result["partial"]["wlan"]["x_passphrase"] == "[REDACTED]"
+    assert GUEST_PSK not in json.dumps(result)
+    assert any(a.get("wlan") == "wlan-id" for a in result["rolled_back"])

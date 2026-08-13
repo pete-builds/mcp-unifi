@@ -300,7 +300,11 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 "horizon_days": days_ahead,
                 "now_ms": now_ms,
                 "count": len(expiring),
-                "credentials": expiring,
+                # Same records ``list_credentials`` redacts. This tool reads
+                # them through the backend directly rather than through that
+                # tool, so it needs its own call — the 0.19.2 pass wired the
+                # two obvious credential readers and missed this one.
+                "credentials": redact(expiring),
             }
         )
 
@@ -317,8 +321,12 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
 
         Returns one record per visitor with ``id``, ``first_name``,
         ``last_name``, ``full_name``, ``email``, ``host_user_id``,
-        ``valid_from`` (ms), ``valid_until`` (ms), ``status``, and
-        ``pass_code``.
+        ``valid_from`` (ms), ``valid_until`` (ms), and ``status``.
+
+        ``pass_code`` is **redacted** to ``"[REDACTED]"``. It is the code that
+        opens the door, not the record's identifier — ``id`` is, and ``id``
+        still comes back, so ``get_visitor`` and every other lookup still
+        work. Read the code from the Access UI if you need to reissue it.
 
         Example: list_visitors(controller="default")
 
@@ -327,7 +335,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         """
         try:
             backend = resolve_backend(registry, controller, "access")
-            return format_json(await backend.list_visitors())
+            return format_json(redact(await backend.list_visitors()))
         except UniFiError as exc:
             logger.exception("list_visitors failed")
             return err(str(exc))
@@ -340,7 +348,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         Side effects: None (read-only).
 
         Same shape as one entry from ``list_visitors`` plus any per-pass
-        purpose / notes.
+        purpose / notes, with ``pass_code`` redacted for the same reason.
 
         Example: get_visitor(visitor_id="vis...", controller="default")
 
@@ -353,7 +361,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             visitor = await backend.get_visitor(visitor_id)
             if visitor is None:
                 return err(f"visitor {visitor_id} not found")
-            return format_json(visitor)
+            return format_json(redact(visitor))
         except UniFiError as exc:
             logger.exception("get_visitor failed", extra={"visitor_id": visitor_id})
             return err(str(exc))

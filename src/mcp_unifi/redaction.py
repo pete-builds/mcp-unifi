@@ -37,6 +37,30 @@ Callers are now wired module by module and each one is pinned by a test in
 **if it returns a controller record, it calls** :func:`redact`. Projections
 (fixed key allowlists) are not an excuse to skip it — an allowlist that grows
 later is a leak that ships quietly.
+
+Two failure modes, not one
+--------------------------
+The wiring gap above is the visible one. The second is quieter and worse: a
+tool can call :func:`redact` on a record whose secret field matches no pattern,
+and the call is a no-op that *reads* as coverage. Device records were exactly
+that — ``x_authkey`` and ``x_vwirekey`` are credentials that ``psk``,
+``secret``, ``token`` and the rest all miss, so wrapping ``list_devices``
+alone would have changed nothing while looking fixed in the diff. The same
+held for the Access visitor ``pass_code``.
+
+So a redaction change is only finished when both halves are checked: the read
+path calls :func:`redact`, **and** ``SENSITIVE_KEY_PATTERNS`` actually matches
+the field. The test for a new redaction must fail before the change for the
+right reason — if it would have passed with the pattern alone, or with the
+wiring alone, it is not testing what it claims to.
+
+Write paths count as emitters
+-----------------------------
+A ``dry_run`` preview echoes the payload the caller supplied, and a create
+returns the record the controller echoes back. Both carry the passphrase the
+caller just typed straight into the transcript, which is where it outlives the
+request. ``wlans`` redacts both; the ``composites`` module now does the same,
+including the ``partial`` record surfaced when a composite rolls back.
 """
 
 from __future__ import annotations
@@ -50,22 +74,42 @@ from typing import Any
 #: ``auth_token``, ``Bearer``-style ``token`` keys, ``client_secret``,
 #: RADIUS/PSK material (``x_secret``, ``wpa_psk``, ``radius_secret``), the
 #: site-to-site IPsec key (``x_ipsec_pre_shared_key``) and the WireGuard peer
-#: key (``x_preshared_key``) alongside ``x_private_key``.
+#: key (``x_preshared_key``) alongside ``x_private_key``, the device
+#: management and mesh keys (``x_authkey``, ``x_inform_authkey``,
+#: ``x_vwirekey``), the ``passwd`` spelling of a stored password, and the
+#: Access visitor pass code in both its spellings.
 #:
 #: Substring matching is the whole mechanism, and it cuts both ways. ``psk``
 #: catches ``wpa_psk`` but does **not** catch ``x_ipsec_pre_shared_key`` or
 #: ``x_preshared_key``, because neither contains the literal three letters —
-#: hence the two explicit spellings below. In the other direction, a bare
-#: ``radius`` pattern is deliberately absent: it would swallow
-#: ``radiusprofile_id`` and RADIUS profile names, which are references and
-#: labels, not secrets, and redacting them would break the tools that resolve
-#: them. Add a pattern only when it names a value, never a reference.
+#: hence the two explicit spellings below. ``password`` likewise does not
+#: catch ``passwd``, and ``pass_code`` does not catch ``passcode``. Every
+#: spelling a controller actually uses has to be written out.
+#:
+#: In the other direction, patterns that would swallow references are
+#: deliberately absent, and each one below was a real candidate rejected
+#: against a real near-miss in this codebase:
+#:
+#: * ``radius`` → would redact ``radiusprofile_id`` and RADIUS profile names.
+#: * ``key`` or ``_key`` → would redact ``setting_key`` (the settings-section
+#:   name echoed by every ``set_*`` preview), ``keys_added``/``keys_lost`` in
+#:   the guest-portal diff, and the WireGuard ``public_key``, which is not a
+#:   secret and is exactly what a caller needs to configure a peer.
+#: * ``auth`` → would redact the guest-portal ``auth`` mode (``"none"``,
+#:   ``"hotspot"``) and ``auth_required``. Hence ``authkey``, not ``auth``.
+#: * ``pin`` → would redact ``pin_length`` on an Access credential, and
+#:   substring-matches straight through ``mapping``.
+#: * ``code`` → would redact ``status_code``, ``country_code``, and every
+#:   other ``*_code`` field. Hence the two exact pass-code spellings.
+#:
+#: Add a pattern only when it names a value, never a reference.
 SENSITIVE_KEY_PATTERNS: frozenset[str] = frozenset(
     {
         "passphrase",
         "x_passphrase",
         "api_key",
         "password",
+        "passwd",
         "secret",
         "token",
         "psk",
@@ -73,6 +117,10 @@ SENSITIVE_KEY_PATTERNS: frozenset[str] = frozenset(
         "preshared_key",
         "privkey",
         "private_key",
+        "authkey",
+        "vwirekey",
+        "pass_code",
+        "passcode",
     }
 )
 

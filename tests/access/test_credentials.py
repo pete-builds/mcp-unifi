@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from fastmcp import FastMCP
 
 from mcp_unifi.clients.access_stubs import AccessStubState
@@ -114,3 +116,32 @@ async def test_credential_reads_redact_enrolment_material(
         # Identity and type still resolve; this is redaction, not a drop.
         assert payload["id"] == cred_id
         assert payload["type"] == "nfc"
+
+
+async def test_audit_expiring_credentials_redacts_enrolment_material(
+    access_registry: FastMCP, stub_access_state: AccessStubState
+) -> None:
+    """The third credential reader, missed when the other two were wired.
+
+    ``audit_expiring_credentials`` reads ``list_credentials`` off the backend
+    rather than calling the tool, so it never picked up that tool's redaction
+    and handed back the raw records. A module counting as "covered" because
+    its obvious readers are wired is the same failure as a pattern list
+    counting as "covered" because it has entries in it.
+    """
+    cred = stub_access_state.credentials[0]  # the 5-day NFC, inside the window
+    cred["token"] = "nfc-enrolment-token-do-not-leak"
+    cred["x_secret"] = "credential-secret-do-not-leak"
+
+    result = await _call(access_registry, "audit_expiring_credentials")
+
+    assert result["count"] == 1
+    surfaced = result["credentials"][0]
+    assert surfaced["token"] == "[REDACTED]"
+    assert surfaced["x_secret"] == "[REDACTED]"
+    assert "do-not-leak" not in json.dumps(result)
+    # The audit is still an audit: identity, type, and the computed countdown
+    # all survive.
+    assert surfaced["id"] == cred["id"]
+    assert surfaced["type"] == "nfc"
+    assert surfaced["days_until_expiry"] <= 5

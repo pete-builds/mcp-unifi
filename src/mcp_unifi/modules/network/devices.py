@@ -1,4 +1,19 @@
-"""Device tools: list, restart, locate, set_port_state, radio tuning, rename."""
+"""Device tools: list, restart, locate, set_port_state, radio tuning, rename.
+
+Device records carry credentials, which is not obvious from the field names
+and was not covered by the 0.19.2 sweep: ``x_authkey`` is the device's
+management/inform key and ``x_vwirekey`` is the wireless-mesh uplink key.
+Neither matched any entry in ``SENSITIVE_KEY_PATTERNS``, so this module was
+swept and (wrongly) cleared — and wrapping ``list_devices`` in ``redact``
+without first adding the patterns would have been a no-op that looked like a
+fix. Both halves landed together in 0.19.3; see :mod:`mcp_unifi.redaction`.
+
+Every path here that emits a controller-derived device record now redacts:
+``list_devices`` (raw records), ``get_device_radios`` (a projection, which is
+a guarantee only until someone adds a field to it), ``set_port_state`` (the
+real backend returns the device record the PUT echoed back), and the
+``before``/``after`` ``radio_table`` entries the ``set_radio_*`` tools show.
+"""
 
 from __future__ import annotations
 
@@ -12,6 +27,7 @@ from mcp_unifi.modules._params import (
     BoundedName,
 )
 from mcp_unifi.modules.network._common import format_json, make_err
+from mcp_unifi.redaction import redact
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -69,6 +85,46 @@ def _merge_radio_patch(
     return new_table, before, after
 
 
+def _project_radio_view(
+    device_mac: str, device: dict[str, Any], radio_table: list[Any]
+) -> dict[str, Any]:
+    """Build the ``get_device_radios`` response from a device record.
+
+    Split out of the tool body so the "the projection keeps secrets out"
+    claim is testable: a test can monkeypatch this to a passthrough, which is
+    what an innocent "surface one more field" edit amounts to, and assert the
+    response still comes back redacted. The redaction has to hold on its own,
+    not because this allowlist happens not to include a key today.
+    """
+    radios: list[dict[str, Any]] = []
+    for raw in radio_table:
+        if not isinstance(raw, dict):
+            continue
+        radio_id = raw.get("radio")
+        radios.append(
+            {
+                "radio": radio_id,
+                "band": _BAND_BY_RADIO.get(str(radio_id), "unknown"),
+                "channel": raw.get("channel", "auto"),
+                "ht": raw.get("ht"),
+                "tx_power_mode": raw.get("tx_power_mode") or "auto",
+                "tx_power": raw.get("tx_power"),
+                "min_rssi_enabled": raw.get("min_rssi_enabled", False),
+                "min_rssi": raw.get("min_rssi"),
+                "min_txpower": raw.get("min_txpower"),
+                "max_txpower": raw.get("max_txpower"),
+            }
+        )
+    return {
+        "mac": device_mac,
+        "name": device.get("name"),
+        "model": device.get("model"),
+        "type": device.get("type"),
+        "state": device.get("state"),
+        "radios": radios,
+    }
+
+
 async def _fetch_device(backend: Backend, device_mac: str) -> tuple[UniFiRecord, str] | str:
     """Resolve a device record + its ``_id`` by MAC, or an error message."""
     device = await backend.get_device_by_mac(device_mac)
@@ -102,7 +158,10 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         """
         try:
             backend = resolve_backend(registry, controller)
-            return format_json(await backend.list_devices())
+            # Device records carry x_authkey / x_vwirekey. See the module
+            # docstring: the patterns had to be added before this wrapper
+            # meant anything.
+            return format_json(redact(await backend.list_devices()))
         except UniFiError as exc:
             logger.exception("list_devices failed")
             return err(str(exc))
@@ -270,7 +329,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             )
             if updated is None:
                 return err(f"device {device_mac} or port {port_idx} not found")
-            return format_json(updated)
+            # The real backend returns the device record the PUT echoed back,
+            # not just the port. Credential fields ride along with it.
+            return format_json(redact(updated))
         except UniFiError as exc:
             logger.exception(
                 "set_port_state failed",
@@ -310,35 +371,10 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             radio_table = device.get("radio_table")
             if not isinstance(radio_table, list) or not radio_table:
                 return err(f"device {device_mac} has no radios (not an access point?)")
-            radios: list[dict[str, Any]] = []
-            for raw in radio_table:
-                if not isinstance(raw, dict):
-                    continue
-                radio_id = raw.get("radio")
-                radios.append(
-                    {
-                        "radio": radio_id,
-                        "band": _BAND_BY_RADIO.get(str(radio_id), "unknown"),
-                        "channel": raw.get("channel", "auto"),
-                        "ht": raw.get("ht"),
-                        "tx_power_mode": raw.get("tx_power_mode") or "auto",
-                        "tx_power": raw.get("tx_power"),
-                        "min_rssi_enabled": raw.get("min_rssi_enabled", False),
-                        "min_rssi": raw.get("min_rssi"),
-                        "min_txpower": raw.get("min_txpower"),
-                        "max_txpower": raw.get("max_txpower"),
-                    }
-                )
-            return format_json(
-                {
-                    "mac": device_mac,
-                    "name": device.get("name"),
-                    "model": device.get("model"),
-                    "type": device.get("type"),
-                    "state": device.get("state"),
-                    "radios": radios,
-                }
-            )
+            # Redact after projecting, not instead of it. The projection is an
+            # allowlist, and an allowlist that grows later is a leak that ships
+            # quietly.
+            return format_json(redact(_project_radio_view(device_mac, device, radio_table)))
         except UniFiError as exc:
             logger.exception("get_device_radios failed", extra={"mac": device_mac})
             return err(str(exc))
@@ -393,13 +429,16 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                     {
                         "dry_run": True,
                         "controller": controller,
-                        "would_apply": {
-                            "action": action,
-                            "device_mac": device_mac,
-                            "radio": radio,
-                            "before": before,
-                            "after": after,
-                        },
+                        "would_apply": redact(
+                            {
+                                "action": action,
+                                "device_mac": device_mac,
+                                "radio": radio,
+                                # radio_table entries, emitted verbatim.
+                                "before": before,
+                                "after": after,
+                            }
+                        ),
                         "summary": f"Would update {radio} radio on {device_mac}",
                     }
                 )
@@ -412,8 +451,8 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                     "mac": device_mac,
                     "radio": radio,
                     "band": _BAND_BY_RADIO[radio],
-                    "before": before,
-                    "after": after,
+                    # radio_table entries, emitted verbatim.
+                    **redact({"before": before, "after": after}),
                 }
             )
         except UniFiError as exc:
