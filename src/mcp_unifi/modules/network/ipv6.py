@@ -226,7 +226,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         return wans[0]
 
     @mcp.tool()
-    @audited("get_wan_ipv6")
+    @audited("get_wan_ipv6", mutates=False)
     async def get_wan_ipv6(wan_name: str = "", controller: str = "default") -> str:
         """Show the current IPv6 configuration of the WAN uplink(s).
 
@@ -266,7 +266,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         return format_json({"controller": controller, "wan_ipv6": view})
 
     @mcp.tool()
-    @audited("set_wan_ipv6")
+    @audited("set_wan_ipv6", mutates=True)
     async def set_wan_ipv6(
         connection_type: str = "",
         prefix_delegation: str = "",
@@ -417,7 +417,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("set_lan_ipv6")
+    @audited("set_lan_ipv6", mutates=True)
     async def set_lan_ipv6(
         network_id: str,
         interface_type: str = "",

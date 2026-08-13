@@ -34,7 +34,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     err = make_err(settings)
 
     @mcp.tool()
-    @audited("list_networks")
+    @audited("list_networks", mutates=False)
     async def list_networks(controller: str = "default") -> str:
         """List every network/VLAN configured on the controller.
 
@@ -67,7 +67,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("get_network_details")
+    @audited("get_network_details", mutates=False)
     async def get_network_details(
         network_id: str = "",
         name: BoundedName = "",
@@ -169,7 +169,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         return format_json(redact({"controller": controller, **sections}))
 
     @mcp.tool()
-    @audited("create_vlan")
+    @audited("create_vlan", mutates=True)
     async def create_vlan(
         name: BoundedName,
         vlan_id: int,
@@ -251,7 +251,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("update_vlan")
+    @audited("update_vlan", mutates=True)
     async def update_vlan(
         network_id: str,
         updates: dict[str, Any],
@@ -325,7 +325,11 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("delete_vlan")
+    # Classified mutating even though this first phase only mints a preview
+    # token: it is half of one destructive operation, and preview-then-confirm
+    # is an interlock against mistakes, not an access control. Every ``delete_*``
+    # tool is classified the same way, as is ``confirm_destructive_action``.
+    @audited("delete_vlan", mutates=True)
     async def delete_vlan(
         network_id: str,
         controller: str = "default",

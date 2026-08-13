@@ -140,7 +140,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     err = make_err(settings)
 
     @mcp.tool()
-    @audited("get_guest_portal")
+    @audited("get_guest_portal", mutates=False)
     async def get_guest_portal(controller: str = "default") -> str:
         """Show the guest captive-portal configuration for the site.
 
@@ -180,7 +180,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         return format_json(redact(_project(record)))
 
     @mcp.tool()
-    @audited("set_guest_portal")
+    @audited("set_guest_portal", mutates=True)
     async def set_guest_portal(
         portal_enabled: bool | None = None,
         auth: str | None = None,

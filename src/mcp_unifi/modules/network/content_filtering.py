@@ -58,7 +58,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         )
 
     @mcp.tool()
-    @audited("list_content_filters")
+    @audited("list_content_filters", mutates=False)
     async def list_content_filters(controller: str = "default") -> str:
         """List DNS content-filtering profiles (category blocking, safe-search).
 
@@ -84,7 +84,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("get_content_filter_details")
+    @audited("get_content_filter_details", mutates=False)
     async def get_content_filter_details(filter_id: str, controller: str = "default") -> str:
         """Show one content-filtering profile's full record by ``_id``.
 
@@ -114,7 +114,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         return format_json(target)
 
     @mcp.tool()
-    @audited("update_content_filter")
+    @audited("update_content_filter", mutates=True)
     async def update_content_filter(
         filter_id: str,
         updates: dict[str, Any],
@@ -185,7 +185,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("delete_content_filter")
+    @audited("delete_content_filter", mutates=True)
     async def delete_content_filter(
         filter_id: str,
         controller: str = "default",

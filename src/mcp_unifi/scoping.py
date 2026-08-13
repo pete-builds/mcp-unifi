@@ -1,5 +1,12 @@
-"""Per-client tool scoping for the HTTP transport.
+"""Tool-visibility middleware: per-client module scoping and the read-only write gate.
 
+Two filters live here because they are the same shape — decide from a tag the
+dispatcher already applied whether this caller may see and call this tool — and
+differ only in what they key on. :class:`ScopeMiddleware` keys on the caller's
+module allowlist. :class:`WriteGateMiddleware` keys on whether the tool mutates.
+
+Per-client tool scoping (HTTP transport)
+----------------------------------------
 Every tool registered on the FastMCP instance carries a module tag added
 by :func:`mcp_unifi.dispatcher.register_modules` (``"network"``,
 ``"protect"``, or ``"access"``). Every bearer token in
@@ -18,10 +25,23 @@ Why middleware and not per-tool ``auth=`` checks: adding an ``auth=``
 argument to every ``@mcp.tool()`` call site would touch every module.
 The middleware pattern keeps the concern in one file, keyed off tags the
 dispatcher already applies uniformly.
+
+Read-only write gate (both transports)
+--------------------------------------
+:class:`WriteGateMiddleware` is installed only when ``MCP_UNIFI_READONLY``
+is on. It hides and refuses every tool tagged :data:`MUTATING_TAG`, which
+the dispatcher applies from each tool's required
+``@audited(..., mutates=...)`` declaration.
+
+Where scoping asks "may *this caller* use this tool", the write gate asks
+"is *this server* willing to change anything at all". The second question
+has no per-client answer, which is why it keys on a tool property rather
+than on the caller's identity and applies on stdio as well as HTTP.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Sequence
 from typing import Any
@@ -32,12 +52,18 @@ from fastmcp.server.middleware.middleware import (
     Middleware,
     MiddlewareContext,
 )
-from fastmcp.tools.tool import Tool
+from fastmcp.tools.tool import Tool, ToolResult
 from mcp import types as mt
 
 logger = logging.getLogger("mcp_unifi.scoping")
 
 WILDCARD = "*"
+
+#: Tag added by :func:`mcp_unifi.dispatcher.register_modules` to every tool
+#: declared ``@audited(..., mutates=True)``. Lives in the same ``tool.tags``
+#: set as the module tags, so :func:`_tool_modules` filters it back out before
+#: any module-scope comparison.
+MUTATING_TAG = "mutating"
 
 
 class ScopeMiddleware(Middleware):
@@ -127,25 +153,116 @@ def _current_client_id() -> str | None:
 
 
 def _tool_modules(tool: Tool) -> set[str]:
-    return set(getattr(tool, "tags", None) or set())
+    """Return a tool's module tags, excluding the non-module write tag."""
+    return set(getattr(tool, "tags", None) or set()) - {MUTATING_TAG}
+
+
+def _tool_is_mutating(tool: Tool) -> bool:
+    return MUTATING_TAG in (getattr(tool, "tags", None) or set())
+
+
+async def _lookup_tool(
+    context: MiddlewareContext[mt.CallToolRequestParams], tool_name: str
+) -> Tool | None:
+    """Return the registered :class:`Tool` for ``tool_name``, or ``None``.
+
+    Uses the request's FastMCP context to look up the registered tool
+    without touching internal FastMCP state. ``None`` means "could not be
+    resolved" — an unknown name, or a context this middleware cannot read.
+    Both callers treat that as a denial, never as a permit.
+    """
+    fastmcp_ctx = context.fastmcp_context
+    if fastmcp_ctx is None:
+        return None
+    try:
+        return await fastmcp_ctx.fastmcp.get_tool(tool_name)
+    except Exception:
+        return None
 
 
 async def _resolve_tool_modules(
     context: MiddlewareContext[mt.CallToolRequestParams], tool_name: str
 ) -> set[str]:
-    """Return the module tag set for ``tool_name``, or empty set if unknown.
+    """Return the module tag set for ``tool_name``, or empty set if unknown."""
+    tool = await _lookup_tool(context, tool_name)
+    return set() if tool is None else _tool_modules(tool)
 
-    Uses the request's FastMCP context to look up the registered tool
-    without touching internal FastMCP state.
+
+class WriteGateMiddleware(Middleware):
+    """Hide and refuse every mutating tool while ``MCP_UNIFI_READONLY`` is on.
+
+    Installed only when :attr:`mcp_unifi.config.Settings.readonly` is True, so
+    a default deployment pays nothing. When it is installed:
+
+    * ``tools/list`` omits every tool tagged :data:`MUTATING_TAG`, so a model
+      is never shown a capability it cannot use.
+    * ``tools/call`` refuses those same tools before the call reaches the tool
+      body, so a caller that hard-codes a tool name, replays an old manifest,
+      or guesses gets nowhere. Hiding alone would be advisory; the call gate is
+      the control.
+
+    The refusal is the server's normal error envelope
+    (``{"error": ..., "stub_mode": ...}``), not a raised
+    :class:`~fastmcp.exceptions.ToolError`. Every tool in this server reports
+    failure that way — see the ``resolve_backend`` docstring for the same
+    reasoning applied to dispatcher errors — and a caller that already handles
+    tool errors should not need a second code path to handle this one.
+
+    Fail-closed by construction: a tool whose tags cannot be resolved is
+    refused. The classification itself is enforced upstream at registration
+    (:func:`mcp_unifi.dispatcher.register_modules` raises on any unclassified
+    tool), so an unresolvable tool here is an anomaly, and the safe reading of
+    an anomaly in a write gate is "assume it writes".
+
+    Args:
+        stub_mode: Value echoed as ``stub_mode`` in the refusal envelope, so
+            the envelope matches what a real tool would have returned.
     """
-    fastmcp_ctx = context.fastmcp_context
-    if fastmcp_ctx is None:
-        return set()
-    try:
-        tool = await fastmcp_ctx.fastmcp.get_tool(tool_name)
-    except Exception:
-        return set()
-    return _tool_modules(tool)
+
+    def __init__(self, *, stub_mode: bool) -> None:
+        self._stub_mode = stub_mode
+
+    async def on_list_tools(
+        self,
+        context: MiddlewareContext[mt.ListToolsRequest],
+        call_next: CallNext[mt.ListToolsRequest, Sequence[Tool]],
+    ) -> Sequence[Tool]:
+        tools = await call_next(context)
+        return [t for t in tools if not _tool_is_mutating(t)]
+
+    async def on_call_tool(
+        self,
+        context: MiddlewareContext[mt.CallToolRequestParams],
+        call_next: CallNext[mt.CallToolRequestParams, Any],
+    ) -> Any:
+        tool_name = context.message.name
+        tool = await _lookup_tool(context, tool_name)
+        if tool is None or _tool_is_mutating(tool):
+            logger.warning(
+                "read-only mode refused a tool call",
+                extra={
+                    "tool": tool_name,
+                    "client_id": _current_client_id(),
+                    "resolved": tool is not None,
+                },
+            )
+            return self._refusal(tool_name)
+        return await call_next(context)
+
+    def _refusal(self, tool_name: str) -> ToolResult:
+        payload = json.dumps(
+            {
+                "error": (
+                    f"{tool_name} changes state and this server is running in "
+                    f"read-only mode (MCP_UNIFI_READONLY=true). No call was made "
+                    f"to the controller. Read tools are unaffected."
+                ),
+                "stub_mode": self._stub_mode,
+            },
+            indent=2,
+            default=str,
+        )
+        return ToolResult(content=[mt.TextContent(type="text", text=payload)])
 
 
-__all__ = ["WILDCARD", "ScopeMiddleware"]
+__all__ = ["MUTATING_TAG", "WILDCARD", "ScopeMiddleware", "WriteGateMiddleware"]

@@ -405,7 +405,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     err = make_err(settings)
 
     @mcp.tool()
-    @audited("audit_network_drift")
+    @audited("audit_network_drift", mutates=False)
     async def audit_network_drift(
         spec_yaml: BoundedYaml,
         controller: str = "default",

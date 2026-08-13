@@ -58,7 +58,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     # ------------------------------------------------------------------
 
     @mcp.tool()
-    @audited("list_traffic_rules")
+    @audited("list_traffic_rules", mutates=False)
     async def list_traffic_rules(controller: str = "default") -> str:
         """List v2 traffic rules (app/domain/IP-based allow & block policies).
 
@@ -82,7 +82,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("get_traffic_rule_details")
+    @audited("get_traffic_rule_details", mutates=False)
     async def get_traffic_rule_details(rule_id: str, controller: str = "default") -> str:
         """Show one traffic rule's full record by ``_id``.
 
@@ -110,7 +110,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         return format_json(target)
 
     @mcp.tool()
-    @audited("create_traffic_rule")
+    @audited("create_traffic_rule", mutates=True)
     async def create_traffic_rule(
         rule: dict[str, Any],
         controller: str = "default",
@@ -165,7 +165,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("update_traffic_rule")
+    @audited("update_traffic_rule", mutates=True)
     async def update_traffic_rule(
         rule_id: str,
         updates: dict[str, Any],
@@ -222,7 +222,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("toggle_traffic_rule")
+    @audited("toggle_traffic_rule", mutates=True)
     async def toggle_traffic_rule(
         rule_id: str,
         enabled: bool,
@@ -288,7 +288,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     # ------------------------------------------------------------------
 
     @mcp.tool()
-    @audited("list_traffic_routes")
+    @audited("list_traffic_routes", mutates=False)
     async def list_traffic_routes(controller: str = "default") -> str:
         """List v2 traffic routes (policy-based routing, e.g. VPN-client routes).
 
@@ -313,7 +313,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("get_traffic_route_details")
+    @audited("get_traffic_route_details", mutates=False)
     async def get_traffic_route_details(route_id: str, controller: str = "default") -> str:
         """Show one traffic route's full record by ``_id``.
 
@@ -341,7 +341,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         return format_json(target)
 
     @mcp.tool()
-    @audited("update_traffic_route")
+    @audited("update_traffic_route", mutates=True)
     async def update_traffic_route(
         route_id: str,
         updates: dict[str, Any] | None = None,
@@ -411,7 +411,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("toggle_traffic_route")
+    @audited("toggle_traffic_route", mutates=True)
     async def toggle_traffic_route(
         route_id: str,
         enabled: bool,

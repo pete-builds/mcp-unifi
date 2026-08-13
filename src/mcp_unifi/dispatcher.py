@@ -35,6 +35,8 @@ from mcp_unifi.clients.protect import ProtectClient
 from mcp_unifi.clients.protect_stubs import make_protect_stub_state
 from mcp_unifi.clients.stubs import make_stub_state
 from mcp_unifi.clients.unifi import UniFiClient, UniFiError
+from mcp_unifi.modules._audit import tool_mutates
+from mcp_unifi.scoping import MUTATING_TAG
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -57,6 +59,20 @@ class UnknownControllerError(KeyError):
 
 class UnknownModuleError(ValueError):
     """Raised when ``MCP_UNIFI_MODULES_ENABLED`` references an unknown module."""
+
+
+class UnclassifiedToolError(RuntimeError):
+    """Raised when a registered tool never declared whether it mutates.
+
+    The read-only write gate can only be trusted if the classification is
+    total. Rather than default an unclassified tool to "read" (which would
+    ship a read-only mode that silently permits a new mutating tool) or to
+    "write" (which would silently break a new read tool and teach people to
+    distrust the gate), registration fails and the server does not start.
+
+    Fix: add the required ``mutates=`` argument to the tool's ``@audited(...)``
+    decorator.
+    """
 
 
 class ProtectNotAvailableError(RuntimeError):
@@ -347,18 +363,23 @@ def register_modules(
 
     Returns the tuple of module names actually registered (in order).
 
-    Side effect: each newly-registered tool is tagged with its module name
-    (``"network"``, ``"protect"``, ``"access"``) via FastMCP's ``tool.tags``
-    set. The scope-filter middleware
-    (:class:`mcp_unifi.scoping.ScopeMiddleware`) reads those tags at
-    request time to decide which tools a given client_id may see and call.
-    Tagging happens here — at the one place that already knows the
-    module→tool relationship — instead of inside every ``@mcp.tool()``
-    call site across ~20 sub-modules.
+    Side effect: each newly-registered tool is tagged via FastMCP's
+    ``tool.tags`` set with (a) its module name (``"network"``, ``"protect"``,
+    ``"access"``) and (b) :data:`~mcp_unifi.scoping.MUTATING_TAG` when the tool
+    declared ``mutates=True``. The two middlewares in
+    :mod:`mcp_unifi.scoping` read those tags at request time to decide which
+    tools a given client_id may see and call, and which tools are refused in
+    read-only mode. Tagging happens here — at the one place that already
+    enumerates newly-registered tools — instead of inside every
+    ``@mcp.tool()`` call site across ~20 sub-modules.
 
     Raises:
         UnknownModuleError: ``MCP_UNIFI_MODULES_ENABLED`` references a module
             that doesn't exist in ``mcp_unifi.modules``.
+        UnclassifiedToolError: a registered tool has no ``mutates``
+            declaration, or the tool list could not be enumerated at all (in
+            which case no classification could be applied and the write gate
+            would silently have nothing to filter on).
     """
     enabled = _enabled_modules()
     registered: list[str] = []
@@ -371,6 +392,17 @@ def register_modules(
         register_fn(mcp, settings, registry)
         _tag_new_tools(mcp, module_name=name, existing=before)
         registered.append(name)
+    if registered and not _iter_registered_tools(mcp):
+        # Every known module registers tools, so an empty list means
+        # ``_iter_registered_tools`` lost its grip on FastMCP's internals.
+        # Tagging would then be a silent no-op and the write gate would see
+        # no mutating tools to hide. Refuse to start instead.
+        raise UnclassifiedToolError(
+            "registered modules "
+            f"{registered} but could not enumerate any tool on the FastMCP "
+            "instance, so no tool could be tagged. The write gate and per-client "
+            "scoping both depend on those tags; refusing to start."
+        )
     logger.info(
         "registered modules",
         extra={"modules": registered, "controllers": registry.names()},
@@ -403,15 +435,35 @@ def _tool_names(mcp: FastMCP) -> set[str]:
 
 
 def _tag_new_tools(mcp: FastMCP, *, module_name: str, existing: set[str]) -> None:
-    """Add ``module_name`` to ``tool.tags`` for every tool registered since ``existing``."""
+    """Tag every tool registered since ``existing`` with its module and write class.
+
+    Raises:
+        UnclassifiedToolError: the tool declared no ``mutates`` value, or its
+            ``tags`` set is unreadable so no tag could be applied.
+    """
     for tool in _iter_registered_tools(mcp):
         name = getattr(tool, "name", "")
         if not name or name in existing:
             continue
         tags = getattr(tool, "tags", None)
+        mutates = tool_mutates(name)
+        if mutates is None:
+            raise UnclassifiedToolError(
+                f"tool '{name}' (module '{module_name}') did not declare whether "
+                f"it mutates state. Add the required ``mutates=`` argument to its "
+                f"@audited(...) decorator: mutates=True if calling it changes "
+                f"controller config, device state, or makes the controller do "
+                f"work; mutates=False for a pure read."
+            )
         if tags is None:
-            continue
+            raise UnclassifiedToolError(
+                f"tool '{name}' (module '{module_name}') exposes no tags set, so "
+                f"its module and write classification cannot be attached. "
+                f"Per-client scoping and read-only mode both read those tags."
+            )
         tags.add(module_name)
+        if mutates:
+            tags.add(MUTATING_TAG)
 
 
 __all__ = [
@@ -420,6 +472,7 @@ __all__ = [
     "AccessNotAvailableError",
     "ControllerRegistry",
     "ProtectNotAvailableError",
+    "UnclassifiedToolError",
     "UnknownControllerError",
     "UnknownModuleError",
     "build_registry",

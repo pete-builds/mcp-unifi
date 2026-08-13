@@ -45,7 +45,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     err = make_err(settings)
 
     @mcp.tool()
-    @audited("list_routes")
+    @audited("list_routes", mutates=False)
     async def list_routes(controller: str = "default") -> str:
         """List user-defined static (next-hop) routes on the controller.
 
@@ -71,7 +71,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("get_route_details")
+    @audited("get_route_details", mutates=False)
     async def get_route_details(route_id: str, controller: str = "default") -> str:
         """Show one static route's full record by ``_id``.
 
@@ -99,7 +99,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         return format_json(target)
 
     @mcp.tool()
-    @audited("create_route")
+    @audited("create_route", mutates=True)
     async def create_route(
         name: BoundedName,
         destination: str,
@@ -169,7 +169,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("update_route")
+    @audited("update_route", mutates=True)
     async def update_route(
         route_id: str,
         updates: dict[str, Any],
@@ -218,7 +218,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("delete_route")
+    @audited("delete_route", mutates=True)
     async def delete_route(
         route_id: str,
         controller: str = "default",

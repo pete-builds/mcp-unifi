@@ -41,7 +41,12 @@ def register(mcp: FastMCP, settings: Settings, _registry: ControllerRegistry) ->
     err = make_err(settings)
 
     @mcp.tool()
-    @audited("confirm_destructive_action")
+    # Classified mutating, and this is the classification the whole write gate
+    # turns on. The tool's own name carries no write-shaped prefix, so any gate
+    # that keyed on ``create_``/``update_``/``delete_``/``set_`` would leave it
+    # callable — a "read-only" server that still executes a queued delete. It
+    # runs the mutation; it is mutating.
+    @audited("confirm_destructive_action", mutates=True)
     async def confirm_destructive_action(token: str) -> str:
         """Execute a queued destructive action by its preview token.
 

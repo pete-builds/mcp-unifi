@@ -23,7 +23,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     err = make_err(settings)
 
     @mcp.tool()
-    @audited("get_site_health")
+    @audited("get_site_health", mutates=False)
     async def get_site_health(controller: str = "default") -> str:
         """Report per-subsystem health (wan, lan, wlan, www, vpn).
 
@@ -46,7 +46,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("get_wan_status")
+    @audited("get_wan_status", mutates=False)
     async def get_wan_status(controller: str = "default") -> str:
         """Report current WAN status: link, ISP, public IP, throughput, latency.
 
@@ -70,7 +70,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("list_events")
+    @audited("list_events", mutates=False)
     async def list_events(limit: int = 50, controller: str = "default") -> str:
         """List recent controller events (connections, disconnections, etc.).
 
@@ -95,7 +95,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("list_alarms")
+    @audited("list_alarms", mutates=False)
     async def list_alarms(
         limit: int = 50,
         archived: bool = False,
@@ -126,7 +126,13 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("trigger_speedtest")
+    # Classified mutating even though it changes no configuration: it issues a
+    # POST that makes the gateway saturate the WAN for ~30-60s and appends a
+    # result row. "Read-only" has to mean the server cannot make the gateway do
+    # work on command, not merely that it cannot edit config — an agent that can
+    # trigger speed tests in a loop is a denial-of-service on the uplink.
+    # ``get_speedtest_results`` (read) still returns previously-run tests.
+    @audited("trigger_speedtest", mutates=True)
     async def trigger_speedtest(controller: str = "default") -> str:
         """Kick off a UniFi speed test on the WAN link.
 
@@ -149,7 +155,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("get_speedtest_results")
+    @audited("get_speedtest_results", mutates=False)
     async def get_speedtest_results(limit: int = 10, controller: str = "default") -> str:
         """List recent speed-test results, newest first.
 
@@ -175,7 +181,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("list_top_talkers")
+    @audited("list_top_talkers", mutates=False)
     async def list_top_talkers(limit: int = 10, controller: str = "default") -> str:
         """List top clients by total bytes (DPI by-station report).
 

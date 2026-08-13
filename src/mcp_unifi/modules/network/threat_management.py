@@ -68,7 +68,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     err = make_err(settings)
 
     @mcp.tool()
-    @audited("get_threat_management")
+    @audited("get_threat_management", mutates=False)
     async def get_threat_management(controller: str = "default") -> str:
         """Return current Threat Management (IDS/IPS) configuration.
 
@@ -97,7 +97,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         return format_json(_project_get(record))
 
     @mcp.tool()
-    @audited("set_threat_management")
+    @audited("set_threat_management", mutates=True)
     async def set_threat_management(
         enabled: bool,
         mode: str = "ids",

@@ -54,7 +54,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         return next((d for d in entries if isinstance(d, dict) and d.get("_id") == ddns_id), None)
 
     @mcp.tool()
-    @audited("list_dynamic_dns")
+    @audited("list_dynamic_dns", mutates=False)
     async def list_dynamic_dns(controller: str = "default") -> str:
         """List Dynamic DNS update configurations on the controller.
 
@@ -81,7 +81,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("get_dynamic_dns_details")
+    @audited("get_dynamic_dns_details", mutates=False)
     async def get_dynamic_dns_details(ddns_id: str, controller: str = "default") -> str:
         """Show one Dynamic DNS config's full record by ``_id``.
 
@@ -110,7 +110,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         return format_json(redact(target))
 
     @mcp.tool()
-    @audited("create_dynamic_dns")
+    @audited("create_dynamic_dns", mutates=True)
     async def create_dynamic_dns(
         service: str,
         host_name: BoundedHostname,
@@ -180,7 +180,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("update_dynamic_dns")
+    @audited("update_dynamic_dns", mutates=True)
     async def update_dynamic_dns(
         ddns_id: str,
         updates: dict[str, Any],
@@ -235,7 +235,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("delete_dynamic_dns")
+    @audited("delete_dynamic_dns", mutates=True)
     async def delete_dynamic_dns(
         ddns_id: str,
         controller: str = "default",

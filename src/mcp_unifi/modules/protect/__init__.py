@@ -61,7 +61,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     err = make_err(settings)
 
     @mcp.tool()
-    @audited("list_cameras")
+    @audited("list_cameras", mutates=False)
     async def list_cameras(controller: str = "default") -> str:
         """List every camera bonded to the Protect controller.
 
@@ -86,7 +86,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("get_camera")
+    @audited("get_camera", mutates=False)
     async def get_camera(camera_id: str, controller: str = "default") -> str:
         """Fetch a single camera's full record by ID.
 
@@ -114,7 +114,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("list_motion_events")
+    @audited("list_motion_events", mutates=False)
     async def list_motion_events(
         camera_id: str = "",
         limit: int = 50,
@@ -150,7 +150,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("list_smart_detections")
+    @audited("list_smart_detections", mutates=False)
     async def list_smart_detections(
         detection_type: str = "person",
         camera_id: str = "",
@@ -193,7 +193,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("get_snapshot")
+    @audited("get_snapshot", mutates=False)
     async def get_snapshot(camera_id: str, controller: str = "default") -> str:
         """Fetch a current JPEG snapshot from a camera, base64-encoded.
 
@@ -228,7 +228,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("get_event_thumbnail")
+    @audited("get_event_thumbnail", mutates=False)
     async def get_event_thumbnail(event_id: str, controller: str = "default") -> str:
         """Fetch the JPEG thumbnail for a Protect event, base64-encoded.
 
@@ -263,7 +263,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("list_recordings")
+    @audited("list_recordings", mutates=False)
     async def list_recordings(
         camera_id: str,
         hours_back: int = 24,
@@ -294,7 +294,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("set_camera_recording_mode")
+    @audited("set_camera_recording_mode", mutates=True)
     async def set_camera_recording_mode(
         camera_id: str,
         mode: str,
@@ -342,7 +342,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("set_camera_privacy_mode")
+    @audited("set_camera_privacy_mode", mutates=True)
     async def set_camera_privacy_mode(
         camera_id: str,
         enabled: bool,
@@ -392,7 +392,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("set_motion_sensitivity")
+    @audited("set_motion_sensitivity", mutates=True)
     async def set_motion_sensitivity(
         camera_id: str,
         sensitivity: int,
@@ -443,7 +443,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("list_doorbell_messages")
+    @audited("list_doorbell_messages", mutates=False)
     async def list_doorbell_messages(controller: str = "default") -> str:
         """List doorbell cameras (those with ``isDoorbell=True``).
 
@@ -478,7 +478,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("provision_camera")
+    @audited("provision_camera", mutates=True)
     async def provision_camera(
         camera_id: str,
         recording_mode: str = "motion",

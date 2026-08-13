@@ -189,7 +189,9 @@ async def test_audit_records_failure_and_reraises(
     """A tool that raises must produce a success=false audit entry and re-raise."""
     log_path, _ = file_sink_audit_log
 
-    @audited("synthetic_tool")
+    # ``mutates`` is required (v0.21.0 write gate); this synthetic tool is
+    # never registered with FastMCP, so the value only has to be declared.
+    @audited("synthetic_tool", mutates=True)
     async def boom(controller: str = "default", thing: str = "x") -> str:
         raise RuntimeError("explosive disassembly")
 

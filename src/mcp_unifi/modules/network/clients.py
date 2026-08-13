@@ -26,7 +26,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     err = make_err(settings)
 
     @mcp.tool()
-    @audited("list_clients")
+    @audited("list_clients", mutates=False)
     async def list_clients(controller: str = "default") -> str:
         """List currently active wireless and wired clients.
 
@@ -50,7 +50,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("block_client")
+    @audited("block_client", mutates=True)
     async def block_client(
         mac: str,
         controller: str = "default",
@@ -94,7 +94,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("unblock_client")
+    @audited("unblock_client", mutates=True)
     async def unblock_client(
         mac: str,
         controller: str = "default",
@@ -137,7 +137,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("reconnect_client")
+    # Classified mutating: nothing is persisted, but it deauths a live client off
+    # the network. Transient effects on someone's connectivity are still effects.
+    @audited("reconnect_client", mutates=True)
     async def reconnect_client(
         mac: str,
         controller: str = "default",

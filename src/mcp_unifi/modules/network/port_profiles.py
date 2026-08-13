@@ -27,7 +27,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     err = make_err(settings)
 
     @mcp.tool()
-    @audited("list_port_profiles")
+    @audited("list_port_profiles", mutates=False)
     async def list_port_profiles(controller: str = "default") -> str:
         """List switch port profiles configured on the controller.
 
@@ -52,7 +52,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("create_port_profile")
+    @audited("create_port_profile", mutates=True)
     async def create_port_profile(
         name: BoundedName,
         native_networkconf_id: str = "",
@@ -114,7 +114,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("update_port_profile")
+    @audited("update_port_profile", mutates=True)
     async def update_port_profile(
         profile_id: str,
         updates: dict[str, Any],
@@ -166,7 +166,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("delete_port_profile")
+    @audited("delete_port_profile", mutates=True)
     async def delete_port_profile(
         profile_id: str,
         controller: str = "default",

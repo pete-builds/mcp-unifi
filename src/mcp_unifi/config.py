@@ -112,6 +112,21 @@ class Settings(BaseSettings):
     )
 
     # ------------------------------------------------------------------
+    # Read-only write gate (v0.21.0+)
+    # ------------------------------------------------------------------
+    readonly: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("MCP_UNIFI_READONLY", "readonly"),
+        description=(
+            "If True, every tool that changes state is hidden from tools/list "
+            "and refused on tools/call. Defense in depth on top of a read-only "
+            "UniFi API key: the key is the authority, this makes the server "
+            "unable to try. Default False so existing deployments are "
+            "unaffected. Env var: MCP_UNIFI_READONLY."
+        ),
+    )
+
+    # ------------------------------------------------------------------
     # Response shaping
     # ------------------------------------------------------------------
     force_full_text_responses: bool = Field(
@@ -450,6 +465,7 @@ class Settings(BaseSettings):
         """
         return {
             "stub_mode": self.stub_mode,
+            "readonly": self.readonly,
             "controllers_file": str(self.controllers_file) if self.controllers_file else None,
             "controllers": [
                 {

@@ -88,7 +88,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     err = make_err(settings)
 
     @mcp.tool()
-    @audited("list_honeypots")
+    @audited("list_honeypots", mutates=False)
     async def list_honeypots(controller: str = "default") -> str:
         """List configured honeypots and the global honeypot toggle.
 
@@ -122,7 +122,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         )
 
     @mcp.tool()
-    @audited("create_honeypot")
+    @audited("create_honeypot", mutates=True)
     async def create_honeypot(
         network_id: str,
         ip: str,
@@ -203,7 +203,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         return format_json(_enrich(new_entry, networks))
 
     @mcp.tool()
-    @audited("delete_honeypot")
+    @audited("delete_honeypot", mutates=True)
     async def delete_honeypot(
         id: str,
         controller: str = "default",

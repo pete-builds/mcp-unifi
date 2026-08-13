@@ -86,7 +86,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     err = make_err(settings)
 
     @mcp.tool()
-    @audited("create_iot_network")
+    @audited("create_iot_network", mutates=True)
     async def create_iot_network(
         name: BoundedName,
         vlan_id: int,
@@ -297,7 +297,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         )
 
     @mcp.tool()
-    @audited("provision_homelab_service")
+    @audited("provision_homelab_service", mutates=True)
     async def provision_homelab_service(
         name: BoundedName,
         mac: str,
@@ -469,7 +469,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         )
 
     @mcp.tool()
-    @audited("quarantine_client")
+    @audited("quarantine_client", mutates=True)
     async def quarantine_client(
         mac: str,
         reason: BoundedText = "",
@@ -529,7 +529,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("create_guest_network")
+    @audited("create_guest_network", mutates=True)
     async def create_guest_network(
         name: BoundedName,
         ssid: BoundedSsid,
@@ -739,7 +739,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         )
 
     @mcp.tool()
-    @audited("audit_open_ports")
+    @audited("audit_open_ports", mutates=False)
     async def audit_open_ports(controller: str = "default") -> str:
         """Audit WAN-facing exposure (port forwards and WAN_IN accept rules).
 
