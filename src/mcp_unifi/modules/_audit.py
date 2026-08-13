@@ -1,10 +1,36 @@
-"""Audit decorator for MCP tool functions.
+"""Audit decorator and write-classification for MCP tool functions.
 
-Step 4 wires every tool through a small ``@audited("<tool_name>")`` wrapper so
-every invocation emits one :class:`mcp_unifi.audit.AuditEvent` to the configured
-sink. The decorator deliberately lives at the **tool layer** (not the backend
-method layer) so the captured envelope reflects user-facing tool intent: the
-original kwargs, the original tool name, the controller the caller asked for.
+Step 4 wires every tool through a small ``@audited("<tool_name>", mutates=...)``
+wrapper so every invocation emits one :class:`mcp_unifi.audit.AuditEvent` to the
+configured sink. The decorator deliberately lives at the **tool layer** (not the
+backend method layer) so the captured envelope reflects user-facing tool intent:
+the original kwargs, the original tool name, the controller the caller asked for.
+
+Read/write classification (v0.21)
+---------------------------------
+``mutates`` is a **required** keyword argument. It declares whether the tool
+changes state anywhere outside this process — controller configuration, device
+state, or controller-side work. :class:`mcp_unifi.scoping.WriteGateMiddleware`
+uses it to enforce ``MCP_UNIFI_READONLY``.
+
+Why here, and why required:
+
+* It is declared at the registration site, next to the tool body and its
+  ``Side effects:`` docstring, so a reviewer classifies and implements in the
+  same diff.
+* Being required makes the gate fail closed at *import* time. Adding a tool
+  without classifying it raises ``TypeError`` and the server refuses to boot —
+  there is no default that silently leaves a new mutating tool callable while
+  ``MCP_UNIFI_READONLY=true``.
+* It reuses the decorator every tool already carries rather than adding a
+  parallel mechanism.
+
+Classification is recorded in a process-level registry keyed by tool name
+(:func:`tool_mutates`) rather than as an attribute on the wrapped function:
+FastMCP re-wraps tool callables during registration, so an attribute set here
+is not guaranteed to survive onto ``Tool.fn``. The registry is the value the
+dispatcher reads when it tags tools, and it is what the completeness test in
+``tests/test_write_gate.py`` enumerates.
 
 Design notes
 ------------
@@ -34,6 +60,34 @@ from mcp_unifi import audit
 
 P = ParamSpec("P")
 R = TypeVar("R")
+
+#: ``{tool_name: mutates}`` for every tool decorated with :func:`audited`.
+#: Populated at decoration time (i.e. when a module's ``register()`` runs).
+_CLASSIFICATION: dict[str, bool] = {}
+
+
+class ToolClassificationConflictError(ValueError):
+    """Raised when one tool name is declared with two different ``mutates`` values.
+
+    Tool names are globally unique across modules, so two conflicting
+    declarations mean either a copy-paste error or a genuine name collision.
+    Either way the write gate could not answer "is this tool mutating?"
+    deterministically, so we refuse at registration rather than pick one.
+    """
+
+
+def tool_mutates(tool_name: str) -> bool | None:
+    """Return the declared ``mutates`` flag for ``tool_name``, or ``None``.
+
+    ``None`` means "never classified" and is treated as a hard error by
+    :func:`mcp_unifi.dispatcher.register_modules` — never as "read-only".
+    """
+    return _CLASSIFICATION.get(tool_name)
+
+
+def classified_tools() -> dict[str, bool]:
+    """Return a copy of the whole ``{tool_name: mutates}`` registry."""
+    return dict(_CLASSIFICATION)
 
 
 def _current_client_id() -> str | None:
@@ -69,6 +123,8 @@ def _coerce_result(value: Any) -> Any:
 
 def audited(
     tool_name: str,
+    *,
+    mutates: bool,
 ) -> Callable[[Callable[P, Awaitable[R]]], Callable[P, Awaitable[R]]]:
     """Wrap an async tool function so every call emits an audit event.
 
@@ -76,10 +132,25 @@ def audited(
         tool_name: The MCP tool name as registered with FastMCP. Must match
             the function name (or ``@mcp.tool(name=...)`` override) so audit
             log lines line up with what a caller actually invoked.
+        mutates: Required. ``True`` when calling the tool changes state outside
+            this process — controller configuration, device state (an LED, a
+            reboot, a deauth), or controller-side work (a speed test). ``False``
+            only when the tool is a pure read: it may call the controller, but
+            leaves it exactly as it found it. Read the tool's ``Side effects:``
+            docstring section and make them agree. Tools declared ``True`` are
+            hidden and refused when ``MCP_UNIFI_READONLY=true``.
 
     The wrapped function preserves its original signature, so FastMCP's schema
     introspection sees the same parameters it would for the bare function.
     """
+    previous = _CLASSIFICATION.get(tool_name)
+    if previous is not None and previous != mutates:
+        raise ToolClassificationConflictError(
+            f"tool {tool_name!r} was declared with mutates={previous} and again "
+            f"with mutates={mutates}. Tool names must be globally unique and "
+            f"carry one classification."
+        )
+    _CLASSIFICATION[tool_name] = mutates
 
     def decorator(fn: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
         @wraps(fn)
@@ -130,4 +201,9 @@ def audited(
     return decorator
 
 
-__all__ = ["audited"]
+__all__ = [
+    "ToolClassificationConflictError",
+    "audited",
+    "classified_tools",
+    "tool_mutates",
+]

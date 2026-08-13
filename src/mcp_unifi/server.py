@@ -52,7 +52,7 @@ from mcp_unifi.config import Settings, load_settings
 from mcp_unifi.dispatcher import build_registry, register_modules
 from mcp_unifi.logging_setup import configure_logging
 from mcp_unifi.responses import AdaptiveResponseMiddleware
-from mcp_unifi.scoping import WILDCARD, ScopeMiddleware
+from mcp_unifi.scoping import WILDCARD, ScopeMiddleware, WriteGateMiddleware
 
 logger = logging.getLogger("mcp_unifi.server")
 
@@ -152,6 +152,11 @@ def build_server(
     register_modules(mcp, settings, registry)
     _install_scope_middleware(mcp, settings)
     _install_adaptive_response_middleware(mcp, settings)
+    # Added last, so it sits innermost: FastMCP builds the chain in reverse
+    # registration order, which puts the write gate closest to the tool. A
+    # refusal therefore comes back out through the adaptive-response
+    # middleware and is framed exactly like any other tool error envelope.
+    _install_write_gate_middleware(mcp, settings)
     return mcp
 
 
@@ -188,6 +193,27 @@ def _install_scope_middleware(mcp: FastMCP, settings: Settings) -> None:
     logger.info(
         "per-client tool scoping enabled",
         extra={"scopes": {client_id: sorted(modules) for client_id, modules in scopes.items()}},
+    )
+
+
+def _install_write_gate_middleware(mcp: FastMCP, settings: Settings) -> None:
+    """Register the read-only write gate when ``MCP_UNIFI_READONLY`` is set.
+
+    Transport-independent on purpose: read-only is an operator posture for the
+    whole process, not a property of one client's credentials. A stdio install
+    driven by a desktop client benefits from it exactly as much as the
+    container does.
+
+    Not installed at all when the setting is off, so the default deployment
+    keeps ``tools/list`` and ``tools/call`` on the same path they were on
+    before this shipped.
+    """
+    if not settings.readonly:
+        return
+    mcp.add_middleware(WriteGateMiddleware(stub_mode=settings.stub_mode))
+    logger.warning(
+        "read-only mode enabled: every mutating tool is hidden from tools/list "
+        "and refused on tools/call (MCP_UNIFI_READONLY=true)"
     )
 
 

@@ -27,6 +27,12 @@ existingSecret: ""
 
 modulesEnabled: "network"
 
+# Read-only mode (v0.21.0+). When true, every tool that changes state is
+# hidden from tools/list and refused on tools/call; read tools are unaffected.
+# Defense in depth on top of a read-only UniFi API key — pair the two rather
+# than picking one.
+readOnly: false
+
 # HTTP transport authentication (v0.9.0+).
 # `tokens` is a comma-separated list of bearer tokens. Each entry is either a
 # bare token (auto-assigned client_id `client-N`) or a `name:token` pair.

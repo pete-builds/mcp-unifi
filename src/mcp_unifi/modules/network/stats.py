@@ -49,7 +49,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     err = make_err(settings)
 
     @mcp.tool()
-    @audited("get_system_info")
+    @audited("get_system_info", mutates=False)
     async def get_system_info(controller: str = "default") -> str:
         """Report controller/system info: version, uptime, device type.
 
@@ -75,7 +75,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("get_gateway_stats")
+    @audited("get_gateway_stats", mutates=False)
     async def get_gateway_stats(controller: str = "default") -> str:
         """Report gateway resource stats: CPU, memory, temperature, throughput.
 
@@ -101,7 +101,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("get_device_stats")
+    @audited("get_device_stats", mutates=False)
     async def get_device_stats(mac: str, controller: str = "default") -> str:
         """Report per-device stats for one UniFi device by MAC.
 
@@ -131,7 +131,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("get_client_stats")
+    @audited("get_client_stats", mutates=False)
     async def get_client_stats(mac: str, controller: str = "default") -> str:
         """Report per-client traffic, signal, and uptime for one client by MAC.
 
@@ -163,7 +163,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("get_client_sessions")
+    @audited("get_client_sessions", mutates=False)
     async def get_client_sessions(
         mac: str = "",
         hours: int = 24,
@@ -204,7 +204,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("get_anomalies")
+    @audited("get_anomalies", mutates=False)
     async def get_anomalies(controller: str = "default") -> str:
         """List client-impacting anomalies the controller has detected.
 

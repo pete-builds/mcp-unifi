@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Read-only mode (`MCP_UNIFI_READONLY`).** Set it to `true` and the server
+  becomes structurally unable to change anything: every mutating tool is
+  dropped from `tools/list` *and* refused on `tools/call`. Both halves ship
+  together on purpose — hiding a tool only removes the suggestion, and a client
+  that hard-codes a name, replays a cached manifest, or guesses would still
+  reach the tool body. Refusals return the standard
+  `{"error": ..., "stub_mode": ...}` envelope rather than raising a framework
+  error, so no caller needs a second failure path. Default `false`; existing
+  deployments are unaffected. This is defense in depth on top of a read-only
+  UniFi API key, not a replacement for one.
+- **Explicit per-tool write classification.** Every tool now declares
+  `mutates=True` or `mutates=False` on its `@audited(...)` decorator, next to
+  its body and its `Side effects:` docstring. The argument is required, so a
+  tool added without it raises at import and the server refuses to start; a
+  test enumerates the live registration and fails CI on the same condition.
+  There is no default that would let a new mutating tool stay callable in
+  read-only mode.
+
+  Classification is deliberately *not* inferred from tool names. Twelve
+  mutating tools carry none of the write-shaped prefixes a name-based gate
+  would key on: `confirm_destructive_action`, `restore_config`,
+  `block_client`, `unblock_client`, `quarantine_client`, `reconnect_client`,
+  `restart_device`, `rename_device`, `locate_device`, `toggle_traffic_rule`,
+  `toggle_traffic_route`, `trigger_speedtest`. The first of those executes a
+  queued delete, so a prefix-matching gate would have shipped a "read-only"
+  server that still commits deletions.
+
+  Judgment calls are recorded in a comment beside each classification:
+  `trigger_speedtest` and `locate_device` mutate (they make the hardware do
+  work and flash a physical LED, respectively, even though no config changes);
+  `rename_device` mutates (cosmetic but persisted); `backup_config` is a read
+  (a fan-out of GETs returned to the caller, writing nothing to the
+  controller); the console tools are reads despite the login POST; and every
+  `delete_*` tool mutates including its preview phase, because
+  preview-then-confirm is an interlock against mistakes, not an access
+  control.
+
+### Changed
+
+- `register_modules` now raises `UnclassifiedToolError` when a registered tool
+  has no `mutates` declaration, when a tool exposes no tags set, or when the
+  tool list cannot be enumerated at all. Tagging used to be best-effort;
+  per-client scoping and read-only mode both depend on those tags, so a
+  silent no-op is no longer an acceptable outcome.
+
 ## [0.20.0] - 2026-08-12
 
 ### Fixed

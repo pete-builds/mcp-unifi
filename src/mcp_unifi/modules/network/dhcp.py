@@ -28,7 +28,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     err = make_err(settings)
 
     @mcp.tool()
-    @audited("list_dhcp_leases")
+    @audited("list_dhcp_leases", mutates=False)
     async def list_dhcp_leases(controller: str = "default") -> str:
         """List static DHCP reservations on the controller.
 
@@ -52,7 +52,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("create_static_dhcp_lease")
+    @audited("create_static_dhcp_lease", mutates=True)
     async def create_static_dhcp_lease(
         mac: str,
         ip: str,
@@ -113,7 +113,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("update_static_dhcp_lease")
+    @audited("update_static_dhcp_lease", mutates=True)
     async def update_static_dhcp_lease(
         mac: str,
         fixed_ip: str,
@@ -191,7 +191,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("delete_static_dhcp_lease")
+    @audited("delete_static_dhcp_lease", mutates=True)
     async def delete_static_dhcp_lease(
         lease_id: str,
         controller: str = "default",

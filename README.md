@@ -69,6 +69,7 @@ Full guides for each install path live in the [docs site](https://pete-builds.gi
 
 ## Design
 
+- **Read-only mode.** `MCP_UNIFI_READONLY=true` makes the server structurally unable to change anything: mutating tools are hidden from `tools/list` *and* refused on `tools/call`, so naming a hidden tool gets a normal error envelope instead of a write. Classification is declared per tool at registration (`@audited("list_networks", mutates=False)`), never inferred from tool names — twelve mutating tools, `confirm_destructive_action` among them, carry no `create_`/`update_`/`delete_`/`set_` prefix. Registration fails if a tool has not declared a classification, so a new tool cannot default into being callable. Defense in depth on top of a read-only UniFi API key, not a replacement for it.
 - **Safety primitives.** Every destructive tool accepts `dry_run=True` and returns the predicted change set without writing. Composite tools (`create_iot_network`, `create_guest_network`, `provision_homelab_service`, `provision_camera`) capture pre-state and roll back applied steps on partial failure. Every tool call lands in a JSONL audit log with secrets scrubbed; the included `mcp-unifi-replay` CLI can re-issue a log against a fresh controller.
 - **Single image, multi-controller.** One container runs Network, Protect, and Access together. The same process manages multiple UniFi sites in parallel via the `controller` parameter and a YAML controllers file (`MCP_UNIFI_CONTROLLERS_FILE`). No need to run a separate process per controller.
 - **API-key-first auth.** Uses the local API key from Settings → Control Plane → Integrations against the `/proxy/network/api` endpoint. No username/password storage, no cloud account, no Site Manager dependency.
@@ -119,13 +120,14 @@ Generate the API key under **Settings → Control Plane → Integrations → Cre
 
 ## Configuration
 
-All config is read from environment variables (and `.env` when present). The five most common:
+All config is read from environment variables (and `.env` when present). The six most common:
 
 | Variable | Default | Notes |
 |---|---|---|
 | `STUB_MODE` | `true` | When `false`, real-mode controller config is required. |
 | `UNIFI_HOST` | (empty) | Gateway IP or hostname. Required in real mode. |
 | `UNIFI_API_KEY` | (empty) | Local API key. Required in real mode. |
+| `MCP_UNIFI_READONLY` | `false` | When `true`, mutating tools are hidden and refused. See the [Security guide](https://pete-builds.github.io/mcp-unifi/guides/security/#read-only-mode). |
 | `MCP_UNIFI_MODULES_ENABLED` | `network` | Set to `network,protect,access` to enable all three modules. |
 | `MCP_UNIFI_CONTROLLERS_FILE` | (unset) | YAML file with named controllers for multi-site. |
 

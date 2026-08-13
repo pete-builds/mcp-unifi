@@ -388,7 +388,12 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     err = make_err(settings)
 
     @mcp.tool()
-    @audited("backup_config")
+    # Classified read despite producing an artifact: every call is a fan-out of
+    # GETs, the envelope is returned to the caller, and nothing is written to
+    # the controller (this is NOT the UniFi OS ".unf backup file" endpoint,
+    # which would create a file on the console). Taking a backup is exactly
+    # what an operator wants to still be able to do in read-only mode.
+    @audited("backup_config", mutates=False)
     async def backup_config(controller: str = "default") -> str:
         """Snapshot every persistent resource on the controller into one envelope.
 
@@ -462,7 +467,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         return format_json(envelope)
 
     @mcp.tool()
-    @audited("restore_config")
+    @audited("restore_config", mutates=True)
     async def restore_config(
         backup_json: BoundedJson,
         controller: str = "default",

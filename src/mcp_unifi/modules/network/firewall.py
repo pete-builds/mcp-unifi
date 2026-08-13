@@ -32,7 +32,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     err = make_err(settings)
 
     @mcp.tool()
-    @audited("list_firewall_rules")
+    @audited("list_firewall_rules", mutates=False)
     async def list_firewall_rules(controller: str = "default") -> str:
         """List every firewall rule on the controller.
 
@@ -56,7 +56,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("create_firewall_rule")
+    @audited("create_firewall_rule", mutates=True)
     async def create_firewall_rule(
         name: BoundedName,
         ruleset: str,
@@ -169,7 +169,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("update_firewall_rule")
+    @audited("update_firewall_rule", mutates=True)
     async def update_firewall_rule(
         rule_id: str,
         updates: dict[str, Any],
@@ -219,7 +219,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("delete_firewall_rule")
+    @audited("delete_firewall_rule", mutates=True)
     async def delete_firewall_rule(
         rule_id: str,
         controller: str = "default",
@@ -299,7 +299,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     # ------------------------------------------------------------------
 
     @mcp.tool()
-    @audited("list_firewall_groups")
+    @audited("list_firewall_groups", mutates=False)
     async def list_firewall_groups(controller: str = "default") -> str:
         """List reusable firewall groups (address, IPv6-address, and port groups).
 
@@ -326,7 +326,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("get_firewall_group_details")
+    @audited("get_firewall_group_details", mutates=False)
     async def get_firewall_group_details(group_id: str, controller: str = "default") -> str:
         """Show one firewall group's full record by ``_id``.
 
@@ -356,7 +356,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         return format_json(target)
 
     @mcp.tool()
-    @audited("create_firewall_group")
+    @audited("create_firewall_group", mutates=True)
     async def create_firewall_group(
         name: BoundedName,
         group_type: str,
@@ -416,7 +416,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("update_firewall_group")
+    @audited("update_firewall_group", mutates=True)
     async def update_firewall_group(
         group_id: str,
         name: BoundedName = "",
@@ -505,7 +505,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("delete_firewall_group")
+    @audited("delete_firewall_group", mutates=True)
     async def delete_firewall_group(
         group_id: str,
         controller: str = "default",

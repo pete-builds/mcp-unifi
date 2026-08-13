@@ -140,7 +140,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     err = make_err(settings)
 
     @mcp.tool()
-    @audited("list_devices")
+    @audited("list_devices", mutates=False)
     async def list_devices(controller: str = "default") -> str:
         """List every UniFi device adopted by this controller.
 
@@ -167,7 +167,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("restart_device")
+    @audited("restart_device", mutates=True)
     async def restart_device(
         mac: str,
         controller: str = "default",
@@ -213,7 +213,11 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("locate_device")
+    # Classified mutating: no configuration changes, but the device's status LED
+    # physically starts flashing and stays that way until something turns it off.
+    # A control that let an agent change what the hardware is doing in the room
+    # while calling itself read-only would be misnamed.
+    @audited("locate_device", mutates=True)
     async def locate_device(
         mac: str,
         on: bool = True,
@@ -260,7 +264,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("set_port_state")
+    @audited("set_port_state", mutates=True)
     async def set_port_state(
         device_mac: str,
         port_idx: int,
@@ -340,7 +344,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("get_device_radios")
+    @audited("get_device_radios", mutates=False)
     async def get_device_radios(device_mac: str, controller: str = "default") -> str:
         """Show per-radio RF settings for an access point.
 
@@ -460,7 +464,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("set_radio_tx_power")
+    @audited("set_radio_tx_power", mutates=True)
     async def set_radio_tx_power(
         device_mac: str,
         band: str,
@@ -513,7 +517,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         )
 
     @mcp.tool()
-    @audited("set_radio_min_rssi")
+    @audited("set_radio_min_rssi", mutates=True)
     async def set_radio_min_rssi(
         device_mac: str,
         band: str,
@@ -564,7 +568,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         )
 
     @mcp.tool()
-    @audited("set_radio_channel")
+    @audited("set_radio_channel", mutates=True)
     async def set_radio_channel(
         device_mac: str,
         band: str,
@@ -623,7 +627,11 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         )
 
     @mcp.tool()
-    @audited("rename_device")
+    # Classified mutating: the change is cosmetic (display name only, no RF or
+    # traffic impact) but it is still a persisted PUT to the controller's
+    # device record, and it is the identifier every other tool's output and
+    # every dashboard reads back. Cosmetic writes are still writes.
+    @audited("rename_device", mutates=True)
     async def rename_device(
         device_mac: str,
         name: BoundedName,

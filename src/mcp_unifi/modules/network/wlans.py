@@ -34,7 +34,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     err = make_err(settings)
 
     @mcp.tool()
-    @audited("list_wlans")
+    @audited("list_wlans", mutates=False)
     async def list_wlans(controller: str = "default") -> str:
         """List every WiFi SSID configured on the controller.
 
@@ -66,7 +66,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("list_ap_groups")
+    @audited("list_ap_groups", mutates=False)
     async def list_ap_groups(controller: str = "default") -> str:
         """List access-point groups configured on the controller.
 
@@ -94,7 +94,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("create_wlan")
+    @audited("create_wlan", mutates=True)
     async def create_wlan(
         name: BoundedName,
         passphrase: BoundedSecret,
@@ -195,7 +195,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("update_wlan")
+    @audited("update_wlan", mutates=True)
     async def update_wlan(
         wlan_id: str,
         updates: dict[str, Any],
@@ -269,7 +269,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("delete_wlan")
+    @audited("delete_wlan", mutates=True)
     async def delete_wlan(
         wlan_id: str,
         controller: str = "default",

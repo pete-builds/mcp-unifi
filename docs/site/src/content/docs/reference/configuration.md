@@ -63,6 +63,24 @@ The Streamable HTTP transport is secure by default. See the [Authentication guid
 | `MCP_UNIFI_AUTH_REQUIRED` | bool | `true` | no | When `true`, the HTTP transport refuses to start without tokens. Set to `false` only on a loopback-bound single-host deployment. Stdio transport ignores this. |
 | `MCP_UNIFI_AUTH_TOKENS` | CSV string | `""` | HTTP + auth on | Comma-separated bearer tokens. Each entry is one of: a bare token (auto-assigned `client-N`), a `name:token` pair (recommended — name shows up in the audit log), or a `name:token:module1\|module2` triple to scope a client to specific modules. Pipe-separated because comma is the entry delimiter. Known modules: `network`, `protect`, `access`; `*` means all. |
 
+## Read-only mode
+
+| Variable | Type | Default | Required | Notes |
+|---|---|---|---|---|
+| `MCP_UNIFI_READONLY` | bool | `false` | no | When `true`, every tool that changes state is hidden from `tools/list` and refused on `tools/call`. Applies to both transports. Refusals come back as the standard `{"error": ..., "stub_mode": ...}` envelope, so callers need no new error handling. See the [Security guide](/mcp-unifi/guides/security/#read-only-mode). |
+
+Read-only mode is defense in depth on top of a read-only UniFi API key, not a
+replacement for one. The key decides what the controller will accept; this
+setting decides what the server is willing to attempt.
+
+Classification is per tool and explicit: each tool declares `mutates=True` or
+`mutates=False` at registration, and the server refuses to start if any
+registered tool has not declared one. It is not inferred from tool names —
+twelve mutating tools (`confirm_destructive_action`, `restore_config`,
+`block_client`, `restart_device`, `locate_device`, `trigger_speedtest`, and
+others) carry no `create_`/`update_`/`delete_`/`set_` prefix, so a name-based
+gate would leave them callable.
+
 ## Logging
 
 | Variable | Type | Default | Required | Notes |

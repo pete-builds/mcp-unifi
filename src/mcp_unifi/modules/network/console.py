@@ -364,7 +364,12 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         )
 
     @mcp.tool()
-    @audited("get_console_health")
+    # Classified read even though the console-session path may POST /api/auth/login:
+    # authenticating is how this server reads UniFi OS at all, it creates a session
+    # rather than changing any managed state, and the same login backs the other
+    # console read tools. If logging in were classified mutating, read-only mode
+    # would lose the one tool that still answers when Network is down.
+    @audited("get_console_health", mutates=False)
     async def get_console_health(controller: str = "default") -> str:
         """Diagnose the gateway's two layers separately: UniFi OS and Network.
 
@@ -430,7 +435,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         return format_json(verdict)
 
     @mcp.tool()
-    @audited("get_console_info")
+    @audited("get_console_info", mutates=False)
     async def get_console_info(controller: str = "default") -> str:
         """Show UniFi OS console identity and connectivity, independent of Network.
 
@@ -521,7 +526,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         return format_json(info)
 
     @mcp.tool()
-    @audited("get_console_firmware")
+    @audited("get_console_firmware", mutates=False)
     async def get_console_firmware(controller: str = "default") -> str:
         """Show UniFi OS firmware and available-update state.
 

@@ -75,7 +75,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     err = make_err(settings)
 
     @mcp.tool()
-    @audited("get_teleport_config")
+    @audited("get_teleport_config", mutates=False)
     async def get_teleport_config(controller: str = "default") -> str:
         """Return Teleport VPN state and any wireguard-server networks.
 
@@ -125,7 +125,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         )
 
     @mcp.tool()
-    @audited("set_teleport_enabled")
+    @audited("set_teleport_enabled", mutates=True)
     async def set_teleport_enabled(
         enabled: bool,
         controller: str = "default",

@@ -28,7 +28,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     err = make_err(settings)
 
     @mcp.tool()
-    @audited("list_port_forwards")
+    @audited("list_port_forwards", mutates=False)
     async def list_port_forwards(controller: str = "default") -> str:
         """List every port-forward (DNAT) rule on the controller.
 
@@ -51,7 +51,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("create_port_forward")
+    @audited("create_port_forward", mutates=True)
     async def create_port_forward(
         name: BoundedName,
         fwd: str,
@@ -118,7 +118,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("update_port_forward")
+    @audited("update_port_forward", mutates=True)
     async def update_port_forward(
         forward_id: str,
         updates: dict[str, Any],
@@ -191,7 +191,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
     @mcp.tool()
-    @audited("delete_port_forward")
+    @audited("delete_port_forward", mutates=True)
     async def delete_port_forward(
         forward_id: str,
         controller: str = "default",
