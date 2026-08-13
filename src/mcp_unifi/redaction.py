@@ -84,7 +84,10 @@ from typing import Any
 #: ``x_preshared_key``, because neither contains the literal three letters —
 #: hence the two explicit spellings below. ``password`` likewise does not
 #: catch ``passwd``, and ``pass_code`` does not catch ``passcode``. Every
-#: spelling a controller actually uses has to be written out.
+#: spelling a controller actually uses has to be written out. ``api_key``
+#: likewise does not catch the ``X-API-Key`` header spelling — this docstring
+#: claimed it did, and was wrong for as long as it has existed — so
+#: ``api-key`` is listed alongside it.
 #:
 #: In the other direction, patterns that would swallow references are
 #: deliberately absent, and each one below was a real candidate rejected
@@ -108,6 +111,7 @@ SENSITIVE_KEY_PATTERNS: frozenset[str] = frozenset(
         "passphrase",
         "x_passphrase",
         "api_key",
+        "api-key",
         "password",
         "passwd",
         "secret",

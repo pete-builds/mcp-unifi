@@ -45,6 +45,7 @@ SECRET_KEYS = [
     "pass_code",  # access visitor: the code that opens the door
     "passcode",  # access visitor (alternate spelling)
     "api_key",
+    "X-API-Key",  # the header spelling; api_key does not contain it
     "auth_token",
     "client_secret",
 ]
@@ -199,6 +200,35 @@ def test_redact_covers_a_full_device_record() -> None:
     assert out["state"] == 1
     # A fingerprint identifies a key without disclosing it, so it stays.
     assert out["x_fingerprint"] == "aa:bb:cc:dd"
+    assert "do-not-leak" not in repr(out)
+
+
+def test_redact_covers_the_api_key_header_spelling() -> None:
+    """``api_key`` does not contain ``api-key``, and the docstring said it did.
+
+    Found by the same sweep as the device keys: enumerate every literal dict
+    key in ``src/`` and ask which credential-shaped ones ``is_sensitive``
+    misses. Request headers are not emitted through a tool response today, so
+    this is not a live disclosure — but the log and audit scrubbers run the
+    same predicate, and a header dict reaching either of them through an
+    exception or an ``extra={}`` would have gone out intact. A pattern list
+    whose own docstring overstates it is the failure mode this whole pass is
+    about.
+    """
+    headers = {
+        "X-API-Key": "controller-api-key-do-not-leak",
+        "X-CSRF-Token": "csrf-do-not-leak",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+    out = redact(headers)
+
+    assert out["X-API-Key"] == REDACTED_OUTPUT
+    assert out["X-CSRF-Token"] == REDACTED_OUTPUT  # already covered by "token"
+    # Non-credential headers are untouched.
+    assert out["Content-Type"] == "application/json"
+    assert out["Accept"] == "application/json"
     assert "do-not-leak" not in repr(out)
 
 

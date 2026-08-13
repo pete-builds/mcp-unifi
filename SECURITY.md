@@ -53,7 +53,8 @@ Behavior depends on transport:
   and never returned in MCP responses.
 - One canonical pattern list (`mcp_unifi.redaction.SENSITIVE_KEY_PATTERNS`)
   covers three emitters: the structured logger, the audit log, and tool
-  responses. It matches `api_key`, `passphrase`/`x_passphrase`,
+  responses. It matches `api_key` and the `X-API-Key` header spelling,
+  `passphrase`/`x_passphrase`,
   `password`/`passwd`/`x_password`, `secret`, `token`, `psk`,
   `pre_shared_key`/`preshared_key`, `private_key`/`privkey`, the device
   management and mesh keys `authkey`/`vwirekey`, and the Access visitor

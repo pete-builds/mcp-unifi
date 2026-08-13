@@ -132,6 +132,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as a secret, it sits inside an already-redacting path and needs only the
   pattern.
 
+- **SECURITY: `X-API-Key` was never matched, and the docstring said it was.**
+  Third finding from the same sweep, run mechanically this time: enumerate
+  every literal dict key in `src/` and ask which credential-shaped ones
+  `is_sensitive` misses. `api_key` does not contain `api-key`, so the header
+  spelling fell straight through — while `mcp_unifi.redaction`'s own docstring
+  opened by claiming "This catches `api_key`, `X-API-Key`, `unifi_api_key`".
+
+  Not a live disclosure: request headers are built inside the httpx clients
+  and are never emitted through a tool response. It matters anyway, because
+  the structured logger and the audit log run the same predicate, so a header
+  dict reaching either through an exception or an `extra={}` would have gone
+  out intact — and a pattern list whose own docstring overstates it is exactly
+  the defect this pass exists to close. `api-key` added; `X-CSRF-Token` was
+  already covered by `token`.
+
+  The rest of that sweep came back clean, and its results are what the
+  rejected-pattern notes are drawn from: `key`, `setting_key`, `keys_added`,
+  `keys_lost`, `auth`, `auth_required`, `auth_client_ids`, `pin_length`,
+  `credential_id`/`credential_type`, `sso_enabled`, `privacy`, `license`,
+  `signal`, and `assoc_time` are all references, labels, modes, or quotas —
+  correctly unmatched.
+
 ### Changed
 
 - **`SECURITY.md` and the security guide now state redaction coverage
