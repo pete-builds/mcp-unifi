@@ -79,6 +79,19 @@ class AuditEvent:
     #: Replay tools tolerate older logs missing this field via the dataclass
     #: default, so schema stays at "1".
     client_id: str | None = None
+    #: Which control refused this call before it ever reached the tool body
+    #: (v0.21.0+): ``"readonly"`` for the write gate, ``"scope"`` for
+    #: per-client module scoping. ``None`` on every call that was actually
+    #: dispatched, so ``jq 'select(.denied_by)'`` isolates exactly the
+    #: attempts that were blocked.
+    #:
+    #: This is a separate field rather than a convention on ``error``
+    #: because ``success: false`` already means three different things in
+    #: this log — the tool raised, the controller returned an error, or the
+    #: call was never made. Only the third is a security event, and only
+    #: this field distinguishes it without parsing prose. Replay reads it
+    #: to skip refused calls instead of re-issuing them.
+    denied_by: str | None = None
     # Schema version. Bump when the envelope shape changes so replay can
     # reject incompatible logs cleanly.
     schema: str = field(default="1")
@@ -223,8 +236,9 @@ class AuditLog:
         latency_ms: float,
         error: str | None = None,
         client_id: str | None = None,
+        denied_by: str | None = None,
     ) -> AuditEvent:
-        """Record a single tool invocation.
+        """Record a single tool invocation, or a refusal to make one.
 
         Args are scrubbed before serialisation; the live arg dict the caller
         passed is not mutated. The returned :class:`AuditEvent` is convenient
@@ -244,6 +258,7 @@ class AuditLog:
             latency_ms=round(latency_ms, 3),
             error=error,
             client_id=client_id,
+            denied_by=denied_by,
         )
         async with self._lock:
             try:
@@ -348,6 +363,9 @@ def parse_jsonl(lines: Iterable[str]) -> list[AuditEvent]:
                     error=payload.get("error"),
                     schema=str(payload.get("schema", "1")),
                     client_id=payload.get("client_id"),
+                    # Absent in logs written before v0.21.0; a missing field
+                    # correctly reads as "this call was dispatched".
+                    denied_by=payload.get("denied_by"),
                 )
             )
         except KeyError as exc:

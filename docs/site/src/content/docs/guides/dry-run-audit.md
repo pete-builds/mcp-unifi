@@ -83,6 +83,25 @@ Field notes:
 - **`latency_ms`**: end-to-end tool latency including controller round-trip in real mode.
 - **`result_shape`**: structured summary (success/error kind, returned IDs) — not the full response body.
 
+### Refused calls
+
+A call that a control turned away never reaches a tool body, so it would otherwise leave no trace in the log at all. Those attempts are recorded too, with a `denied_by` field naming the control that refused them:
+
+| `denied_by` | Refused by | Fix if it was legitimate |
+|---|---|---|
+| `"readonly"` | The read-only write gate (`MCP_UNIFI_READONLY=true`) | Turn the posture off, or run the change by hand. |
+| `"scope"` | Per-client module scoping (`MCP_UNIFI_AUTH_TOKENS`) | Widen that client's module allowlist. |
+| `null` | Nothing — the call was dispatched | n/a |
+
+```bash
+# What did my agent try to do that it was not allowed to do?
+jq -c 'select(.denied_by) | {ts, client_id, tool, denied_by}' audit.jsonl
+```
+
+Refused records carry `success: false` and `result: null`, and their `args` are scrubbed on exactly the same path as a dispatched call — a refused `create_wlan` does not write the passphrase the caller supplied.
+
+Don't key off `success` alone: it is already `false` when a tool raised or the controller returned an error. `denied_by` is the only field that distinguishes "the call was never made" from "the call was made and failed". `mcp-unifi-replay` reads it too, and skips refused events rather than re-issuing them.
+
 ### Configure the sink
 
 | Env var | Default | What it does |

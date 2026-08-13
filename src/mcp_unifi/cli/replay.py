@@ -107,6 +107,22 @@ async def replay_events(
     srv = server if server is not None else _build_server(stub_mode=stub_mode)
     results: list[ReplayResult] = []
     for event in events:
+        if event.denied_by:
+            # A refused call was never made. The write gate and the scope
+            # gate both write their refusals into this log, and re-issuing
+            # one here would take the exact action the operator's own policy
+            # denied — the log would become a way to launder a denial.
+            results.append(
+                ReplayResult(
+                    tool=event.tool,
+                    controller=event.controller,
+                    success=False,
+                    error=None,
+                    skipped=True,
+                    skip_reason=f"refused at capture time by {event.denied_by}; never dispatched",
+                )
+            )
+            continue
         if (
             not stub_mode
             and target_controller is not None

@@ -20,14 +20,17 @@ the middleware itself and hitting real HTTP would just add flakiness.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
 import pytest
 from fastmcp.exceptions import ToolError
 
+from mcp_unifi.audit import REDACTED, AuditLog, FileSink, set_audit_log
 from mcp_unifi.config import Settings
-from mcp_unifi.scoping import WILDCARD, ScopeMiddleware
+from mcp_unifi.scoping import DENIED_BY_SCOPE, WILDCARD, ScopeMiddleware
 from mcp_unifi.server import build_server
 
 # ---------------------------------------------------------------------------
@@ -240,8 +243,13 @@ class _StubListContext:
 class _StubCallContext:
     """MiddlewareContext stand-in for the on_call_tool path."""
 
-    def __init__(self, tool_name: str, tool_lookup: dict[str, _StubTool]) -> None:
-        self.message = type("_Msg", (), {"name": tool_name})()
+    def __init__(
+        self,
+        tool_name: str,
+        tool_lookup: dict[str, _StubTool],
+        arguments: dict[str, Any] | None = None,
+    ) -> None:
+        self.message = type("_Msg", (), {"name": tool_name, "arguments": arguments or {}})()
 
         class _StubFastmcp:
             async def get_tool(_self, name: str) -> _StubTool:
@@ -468,3 +476,92 @@ def test_scope_middleware_installed_when_any_client_is_scoped() -> None:
     )
     server = build_server(settings)
     assert "ScopeMiddleware" in _middleware_types(server)
+
+
+# ---------------------------------------------------------------------------
+# ScopeMiddleware: refusals land in the audit log
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def audit_log_path(tmp_path: Path) -> Path:
+    """Pin the audit singleton at a per-test file sink and return its path."""
+    path = tmp_path / "scope-refusals.jsonl"
+    set_audit_log(AuditLog(sink=FileSink(path)))
+    return path
+
+
+def _events(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+@pytest.mark.asyncio
+async def test_scope_denial_writes_an_audit_event(audit_log_path: Path) -> None:
+    """Scoping is the sibling control and had the same blind spot.
+
+    An operator reviewing an agent wants one query, not two, for "what was
+    this client refused" — so the record carries the same envelope with a
+    different ``denied_by`` value.
+    """
+    mw = ScopeMiddleware(client_scopes={"readonly": {"protect"}})
+    tools = {t.name: t for t in _all_tools()}
+
+    async def call_next(ctx: Any) -> str:
+        pytest.fail("call_next must not run for a scope-denied tool")
+        return "unreachable"
+
+    with (
+        patch("mcp_unifi.scoping._current_client_id", return_value="readonly"),
+        pytest.raises(ToolError),
+    ):
+        await mw.on_call_tool(_StubCallContext("delete_vlan", tools), call_next)
+
+    events = _events(audit_log_path)
+    assert len(events) == 1
+    ev = events[0]
+    assert ev["tool"] == "delete_vlan"
+    assert ev["denied_by"] == DENIED_BY_SCOPE
+    assert ev["client_id"] == "readonly"
+    assert ev["success"] is False
+
+
+@pytest.mark.asyncio
+async def test_scope_denial_scrubs_the_attempted_arguments(audit_log_path: Path) -> None:
+    """Same redaction discipline as every other emitter on this path."""
+    mw = ScopeMiddleware(client_scopes={"readonly": {"protect"}})
+    tools = {t.name: t for t in _all_tools()}
+    secret = "scope-denied-but-still-a-secret"
+
+    async def call_next(ctx: Any) -> str:
+        return "unreachable"
+
+    with (
+        patch("mcp_unifi.scoping._current_client_id", return_value="readonly"),
+        pytest.raises(ToolError),
+    ):
+        await mw.on_call_tool(
+            _StubCallContext("delete_vlan", tools, {"passphrase": secret, "vlan_id": 7}),
+            call_next,
+        )
+
+    assert secret not in audit_log_path.read_text()
+    ev = _events(audit_log_path)[0]
+    assert ev["args"]["passphrase"] == REDACTED
+    assert ev["args"]["vlan_id"] == 7
+
+
+@pytest.mark.asyncio
+async def test_scope_permitted_call_writes_no_refusal_event(audit_log_path: Path) -> None:
+    """An in-scope call is dispatched; the middleware annotates nothing."""
+    mw = ScopeMiddleware(client_scopes={"readonly": {"protect"}})
+    tools = {t.name: t for t in _all_tools()}
+
+    async def call_next(ctx: Any) -> str:
+        return "ok"
+
+    with patch("mcp_unifi.scoping._current_client_id", return_value="readonly"):
+        assert await mw.on_call_tool(_StubCallContext("list_cameras", tools), call_next) == "ok"
+
+    assert _events(audit_log_path) == []

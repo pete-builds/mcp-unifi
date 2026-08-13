@@ -46,8 +46,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   preview-then-confirm is an interlock against mistakes, not an access
   control.
 
+- **Refused calls are recorded in the audit log.** A denied mutation attempt
+  now writes its own line to `audit.jsonl`, carrying a new `denied_by` field:
+  `"readonly"` when the write gate refused it, `"scope"` when per-client
+  module scoping did. `denied_by` is `null` on every call that was actually
+  dispatched, so `jq 'select(.denied_by)' audit.jsonl` answers "what did my
+  agent try to do that it was not allowed to do" in one pass.
+
+  It is a separate field rather than a convention on the error message
+  because `success: false` already means three different things in this log —
+  the tool raised, the controller returned an error, or the call was never
+  made — and only the third is a security event. The record carries the
+  timestamp, tool name, attempted arguments, and the authenticated
+  `client_id` where the transport has one.
+
+  Refusals are emitted above the `@audited` decorator (the gate turns the
+  call away before it reaches a tool body), but they go through the same
+  `AuditLog.emit` path, so attempted arguments are scrubbed exactly like a
+  dispatched call's: a refused `create_wlan` does not write the caller's
+  passphrase to disk. An audit-sink failure is logged and swallowed rather
+  than surfaced, so it can never turn a clean refusal into a transport error.
+
 ### Changed
 
+- `mcp-unifi-replay` now skips events with `denied_by` set instead of
+  re-issuing them. Those calls were refused and never dispatched; replaying
+  one against a live controller would perform the action the operator's own
+  policy denied. They are reported as skipped, alongside the existing
+  off-target-controller skip.
 - `register_modules` now raises `UnclassifiedToolError` when a registered tool
   has no `mutates` declaration, when a tool exposes no tags set, or when the
   tool list cannot be enumerated at all. Tagging used to be best-effort;

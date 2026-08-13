@@ -26,17 +26,19 @@ still green.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
 from fastmcp import Client, FastMCP
 
+from mcp_unifi.audit import REDACTED, AuditLog, FileSink, set_audit_log
 from mcp_unifi.clients.stubs import StubState
 from mcp_unifi.config import Settings
 from mcp_unifi.dispatcher import UnclassifiedToolError, _tag_new_tools
 from mcp_unifi.modules._audit import audited, classified_tools
 from mcp_unifi.modules.network._common import make_err
-from mcp_unifi.scoping import MUTATING_TAG
+from mcp_unifi.scoping import DENIED_BY_READONLY, MUTATING_TAG
 from mcp_unifi.server import build_server
 
 #: Mutating tools whose names carry none of the write-shaped prefixes a
@@ -359,6 +361,147 @@ async def test_unresolvable_tool_is_refused_not_permitted() -> None:
     result = await gate.on_call_tool(_Ctx(), call_next)  # type: ignore[arg-type]
     assert called is False
     assert "read-only mode" in json.loads(result.content[0].text)["error"]
+
+
+# ---------------------------------------------------------------------------
+# Refusals land in the audit log
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def audit_log_path(tmp_path: Path) -> Path:
+    """Pin the audit singleton at a per-test file sink and return its path."""
+    path = tmp_path / "refusals.jsonl"
+    set_audit_log(AuditLog(sink=FileSink(path)))
+    return path
+
+
+def _events(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+@pytest.mark.asyncio
+async def test_refused_call_writes_an_audit_event(
+    stub_state: StubState, audit_log_path: Path
+) -> None:
+    """A control that leaves no record of what it denied is half a control.
+
+    The refusal happens above the ``@audited`` decorator, so without an
+    explicit emit here the most interesting line in the log — the agent
+    trying to delete a VLAN — would never be written at all.
+    """
+    server = build_server(_settings(readonly=True), stub=stub_state)
+    await server.call_tool("delete_vlan", {"network_id": "net-1"})
+
+    events = _events(audit_log_path)
+    assert len(events) == 1
+    ev = events[0]
+    assert ev["tool"] == "delete_vlan"
+    assert ev["denied_by"] == DENIED_BY_READONLY
+    assert ev["success"] is False
+    assert ev["result"] is None
+    assert "read-only mode" in (ev["error"] or "")
+    assert ev["ts"].endswith("Z")
+    assert "client_id" in ev  # None on stdio, but the field must be present
+
+
+@pytest.mark.asyncio
+async def test_refusal_event_is_distinguishable_from_a_real_call(
+    stub_state: StubState, audit_log_path: Path
+) -> None:
+    """``denied_by`` is the one field an operator has to grep.
+
+    Both records carry ``success: false`` shapes in the wild (a tool that
+    raises records the same), so the answer to "what did my agent try to do
+    that it was not allowed to do" cannot be derived from ``success`` alone.
+    """
+    server = build_server(_settings(readonly=True), stub=stub_state)
+    await server.call_tool("list_networks", {})
+    await server.call_tool("create_vlan", {"name": "X", "vlan_id": 9, "subnet": "10.0.9.0/24"})
+
+    events = _events(audit_log_path)
+    assert [e["tool"] for e in events] == ["list_networks", "create_vlan"]
+    assert events[0]["denied_by"] is None
+    assert events[0]["success"] is True
+    assert [e["tool"] for e in events if e["denied_by"]] == ["create_vlan"]
+
+
+@pytest.mark.asyncio
+async def test_permitted_read_in_readonly_mode_logs_no_refusal(
+    stub_state: StubState, audit_log_path: Path
+) -> None:
+    """Reads pass straight through; the gate must not annotate them."""
+    server = build_server(_settings(readonly=True), stub=stub_state)
+    await server.call_tool("list_networks", {})
+    await server.call_tool("get_site_health", {})
+
+    events = _events(audit_log_path)
+    assert len(events) == 2
+    assert [e["denied_by"] for e in events] == [None, None]
+
+
+@pytest.mark.asyncio
+async def test_refused_call_arguments_are_scrubbed(
+    stub_state: StubState, audit_log_path: Path
+) -> None:
+    """The refusal record is a persistent sink like any other audit line.
+
+    A refused ``create_wlan`` still carries whatever passphrase the caller
+    supplied. Writing it verbatim would reintroduce the exact leak the
+    redaction work closed, in the file operators are most likely to ship
+    off-box.
+    """
+    server = build_server(_settings(readonly=True), stub=stub_state)
+    secret = "do-not-let-this-reach-the-audit-log"
+    await server.call_tool(
+        "create_wlan",
+        {"name": "WhisperNet", "passphrase": secret, "network_id": "net-1"},
+    )
+
+    raw = audit_log_path.read_text()
+    assert secret not in raw, "refused call leaked its passphrase into the audit log"
+    ev = _events(audit_log_path)[0]
+    assert ev["denied_by"] == DENIED_BY_READONLY
+    assert ev["args"]["passphrase"] == REDACTED
+    assert ev["args"]["name"] == "WhisperNet"
+
+
+@pytest.mark.asyncio
+async def test_refusal_record_survives_an_unresolvable_tool(audit_log_path: Path) -> None:
+    """The fail-closed branch must be audited too, not just the tagged one."""
+    from mcp_unifi.scoping import WriteGateMiddleware
+
+    class _Ctx:
+        def __init__(self) -> None:
+            self.message = type("M", (), {"name": "create_vlan", "arguments": {"a": 1}})()
+            self.fastmcp_context = None
+
+    async def call_next(_ctx: Any) -> Any:
+        pytest.fail("call_next must not run for a refused tool")
+
+    await WriteGateMiddleware(stub_mode=True).on_call_tool(_Ctx(), call_next)  # type: ignore[arg-type]
+    ev = _events(audit_log_path)[0]
+    assert ev["tool"] == "create_vlan"
+    assert ev["denied_by"] == DENIED_BY_READONLY
+    assert ev["args"] == {"a": 1}
+
+
+@pytest.mark.asyncio
+async def test_audit_sink_failure_does_not_break_the_refusal(
+    stub_state: StubState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An audit outage must not turn a clean refusal into a transport error."""
+    from mcp_unifi import scoping
+
+    def _boom() -> Any:
+        raise RuntimeError("audit log is unavailable")
+
+    monkeypatch.setattr(scoping.audit, "get_audit_log", _boom)
+    server = build_server(_settings(readonly=True), stub=stub_state)
+    payload = _payload(await server.call_tool("delete_vlan", {"network_id": "net-1"}))
+    assert "read-only mode" in payload["error"]
 
 
 # ---------------------------------------------------------------------------
