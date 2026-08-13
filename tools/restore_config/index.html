@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en" dir="ltr" data-theme="dark" data-has-toc data-has-sidebar class="astro-vdxcvpsm"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>restore_config | mcp-unifi</title><link rel="canonical" href="https://pete-builds.github.io/mcp-unifi/tools/restore_config/"/><link rel="sitemap" href="/mcp-unifi/sitemap-index.xml"/><link rel="shortcut icon" href="/mcp-unifi/favicon.svg" type="image/svg+xml"/><meta name="generator" content="Astro v7.1.6"/><meta name="generator" content="Starlight v0.41.6"/><meta property="og:title" content="restore_config"/><meta property="og:type" content="article"/><meta property="og:url" content="https://pete-builds.github.io/mcp-unifi/tools/restore_config/"/><meta property="og:locale" content="en"/><meta property="og:description" content="Restore controller state from a ``backup_config`` envelope."/><meta property="og:site_name" content="mcp-unifi"/><meta name="twitter:card" content="summary_large_image"/><meta name="description" content="Restore controller state from a ``backup_config`` envelope."/><script>
+<!DOCTYPE html><html lang="en" dir="ltr" data-theme="dark" data-has-toc data-has-sidebar class="astro-vdxcvpsm"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>restore_config | mcp-unifi</title><link rel="canonical" href="https://pete-builds.github.io/mcp-unifi/tools/restore_config/"/><link rel="sitemap" href="/mcp-unifi/sitemap-index.xml"/><link rel="shortcut icon" href="/mcp-unifi/favicon.svg" type="image/svg+xml"/><meta name="generator" content="Astro v7.2.0"/><meta name="generator" content="Starlight v0.41.7"/><meta property="og:title" content="restore_config"/><meta property="og:type" content="article"/><meta property="og:url" content="https://pete-builds.github.io/mcp-unifi/tools/restore_config/"/><meta property="og:locale" content="en"/><meta property="og:description" content="Restore controller state from a ``backup_config`` envelope."/><meta property="og:site_name" content="mcp-unifi"/><meta name="twitter:card" content="summary_large_image"/><meta name="description" content="Restore controller state from a ``backup_config`` envelope."/><script>
 	window.StarlightThemeProvider = (() => {
 		const storedTheme =
 			typeof localStorage !== 'undefined' && localStorage.getItem('starlight-theme');
@@ -86,9 +86,10 @@ stay put when names match).</li>
 differs from the target, the restore proceeds and the response
 includes a warning.</li>
 <li>Stripped secrets: if <code dir="auto">secrets_stripped: true</code>, every restored
-WLAN whose <code dir="auto">x_passphrase</code> still equals the sentinel is forced
-to <code dir="auto">enabled=False</code> so a known-string SSID is never broadcast.
-The operator must reset each passphrase and re-enable manually.</li>
+WLAN or network still carrying the sentinel in any field is forced
+to <code dir="auto">enabled=False</code> so a known-string SSID is never broadcast and
+a VPN tunnel is never stood up on a public pre-shared key. The
+operator must reset each secret and re-enable manually.</li>
 <li>Mutates controller state. Use dry_run=True to preview the change
 without applying.</li>
 <li>Rollback: if any sub-step fails, all prior creates are reverted
