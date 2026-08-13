@@ -54,6 +54,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-client scoping and read-only mode both depend on those tags, so a
   silent no-op is no longer an acceptable outcome.
 
+### Fixed
+
+- **`restore_config`'s stripped-secrets warning named only WLANs.** 0.20.0
+  extended the force-disable to networks, so a restored site-to-site VPN comes
+  back `enabled=false` because its pre-shared key is not in the envelope. The
+  runtime warning still read "WLAN passphrases were stripped … restored WLANs
+  will be force-disabled", so the operator most affected by the change — the
+  one restoring a tunnel — was told only about WiFi. The warning now names
+  both resource types and says why. The behavior was already correct; only the
+  explanation was wrong, which is the harder kind of wrong to notice.
+
 ## [0.20.0] - 2026-08-12
 
 ### Fixed

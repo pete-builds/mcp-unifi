@@ -434,7 +434,15 @@ async def test_stripped_secrets_force_disables_restored_wlans(
 
     result = await _call(fresh_server, "restore_config", {"backup_json": backup_json})
     assert "error" not in result
-    assert any("passphrase" in w.lower() and "disabled" in w.lower() for w in result["warnings"])
+    # The warning must name networks as well as WLANs. 0.20.0 extended the
+    # force-disable to networks (a restored VPN comes back disabled because
+    # its PSK is not in the envelope) while this text still spoke only of
+    # WLAN passphrases, so an operator restoring a site-to-site tunnel was
+    # told nothing about the thing that had actually just been turned off.
+    warning = next(w for w in result["warnings"] if "disabled" in w.lower())
+    assert "wlan" in warning.lower()
+    assert "network" in warning.lower()
+    assert "secret" in warning.lower()
     # The recreated WLAN must be disabled.
     assert len(fresh_state.wlans) == 1
     assert fresh_state.wlans[0]["enabled"] is False
