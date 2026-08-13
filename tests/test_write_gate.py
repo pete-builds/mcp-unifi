@@ -167,6 +167,21 @@ def test_unclassified_tool_refuses_to_register() -> None:
         _tag_new_tools(mcp, module_name="network", existing=set())
 
 
+def test_unenumerable_tool_list_refuses_to_register(monkeypatch: pytest.MonkeyPatch) -> None:
+    """If tools cannot be enumerated, nothing gets tagged — so refuse to start.
+
+    ``_iter_registered_tools`` reads FastMCP internals and used to degrade to
+    an empty list. Degrading silently would leave every tool untagged, which
+    the write gate would read as "no mutating tools to hide" — a read-only
+    server with the gate wide open.
+    """
+    from mcp_unifi import dispatcher
+
+    monkeypatch.setattr(dispatcher, "_iter_registered_tools", lambda _mcp: [])
+    with pytest.raises(UnclassifiedToolError, match="could not enumerate"):
+        build_server(_settings(readonly=True))
+
+
 def test_conflicting_classification_is_rejected() -> None:
     """One tool name cannot carry two answers."""
     from mcp_unifi.modules._audit import ToolClassificationConflictError
