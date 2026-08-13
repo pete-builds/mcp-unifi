@@ -51,11 +51,35 @@ Behavior depends on transport:
 - The API key is sent in the `X-API-Key` header on every request to the
   gateway. It is never written to disk by this server, never echoed in logs,
   and never returned in MCP responses.
-- The structured logger has a redactor that scrubs known sensitive keys
-  (`api_key`, `passphrase`, `x_passphrase`, `password`, `secret`, `token`)
-  from any log record.
-- The audit log applies the same scrub to tool kwargs and results before
-  writing.
+- One canonical pattern list (`mcp_unifi.redaction.SENSITIVE_KEY_PATTERNS`)
+  covers three emitters: the structured logger, the audit log, and tool
+  responses. It matches `api_key` and the `X-API-Key` header spelling,
+  `passphrase`/`x_passphrase`,
+  `password`/`passwd`/`x_password`, `secret`, `token`, `psk`,
+  `pre_shared_key`/`preshared_key`, `private_key`/`privkey`, the device
+  management and mesh keys `authkey`/`vwirekey`, and the Access visitor
+  `pass_code`/`passcode`.
+- The structured logger scrubs those keys from any log record, and the audit
+  log applies the same scrub to tool kwargs and results before writing.
+- Read paths that return controller records redact those values to
+  `[REDACTED]` before the response leaves the server: WLANs, networks
+  (WireGuard, site-to-site IPsec, and RADIUS key material), devices
+  (`x_authkey`, `x_vwirekey`) and the device-stats views built from them,
+  dynamic DNS, the guest portal, Teleport, Access credentials, and Access
+  visitor passes. `backup_config` substitutes the `<redacted-on-backup>`
+  sentinel instead, which `restore_config` recognises and answers by forcing
+  the restored resource to `enabled=false`.
+- Write paths redact too, on both the `dry_run` preview that echoes the
+  caller's payload and the record the controller echoes back: `create_wlan`,
+  `update_wlan`, `create_iot_network`, and `create_guest_network`. The
+  composites also redact the `partial` record surfaced when a multi-step
+  provision rolls back.
+- References are deliberately **not** redacted: `radiusprofile_id` names a
+  profile rather than holding its secret, `setting_key` names a settings
+  section, and a WireGuard `public_key` is meant to be shared. Redacting any
+  of them would break the tools and callers that use them. That is why the
+  list holds `authkey` rather than `auth`, and two exact `pass_code`
+  spellings rather than `code`.
 
 ## Container-level hardening
 

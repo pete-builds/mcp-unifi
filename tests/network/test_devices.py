@@ -9,9 +9,12 @@ import json
 from typing import Any
 
 import httpx
+import pytest
 import respx
 from fastmcp import FastMCP
 
+from mcp_unifi.clients.stubs import StubState
+from mcp_unifi.modules.network import devices
 from tests.network.conftest import BASE, _call
 
 # ---------------------------------------------------------------------------
@@ -563,3 +566,156 @@ async def test_real_set_radio_put_error_is_structured(real_server: FastMCP) -> N
     )
     assert "404" in result["error"]
     assert result["stub_mode"] is False
+
+
+# ---------------------------------------------------------------------------
+# Read-path redaction
+#
+# The interesting part of this section is why the module was cleared in the
+# 0.19.2 sweep and should not have been. Device records carry ``x_authkey``
+# (management/inform key) and ``x_vwirekey`` (mesh uplink key). Neither
+# matched any entry in SENSITIVE_KEY_PATTERNS, so a reviewer checking
+# "does any field here match a pattern?" got "no" and moved on — and wrapping
+# these tools in ``redact`` alone would have been a no-op that read as a fix.
+# The patterns and the wiring only mean anything together.
+# ---------------------------------------------------------------------------
+
+DEVICE_SECRETS = {
+    "x_authkey": "device-authkey-do-not-leak",
+    "x_vwirekey": "device-vwirekey-do-not-leak",
+}
+
+
+async def test_list_devices_redacts_device_credentials(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    stub_state.devices[0].update(DEVICE_SECRETS)
+
+    devices = await _call(stub_server, "list_devices")
+    gateway = next(d for d in devices if d["mac"] == "f4:e2:c6:00:00:01")
+
+    for key in DEVICE_SECRETS:
+        assert gateway[key] == "[REDACTED]", f"{key} leaked from list_devices"
+    assert "do-not-leak" not in json.dumps(devices)
+
+    # Inventory fields survive, so this is redaction and not a drop.
+    assert gateway["model"] == "UCGFiber"
+    assert gateway["ip"] == "192.168.1.1"
+    assert gateway["adopted"] is True
+
+
+async def test_get_device_radios_redacts_when_the_projection_widens(
+    stub_server: FastMCP, stub_state: StubState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``_project_radio_view`` is an allowlist; the redaction must not depend on it.
+
+    Monkeypatching the projection to a passthrough is exactly what an innocent
+    "surface one more device field" edit amounts to. The response has to come
+    back redacted anyway, which it only does because the tool calls ``redact``
+    rather than trusting the allowlist.
+    """
+    ap = next(d for d in stub_state.devices if d["mac"] == AP_MAC)
+    ap.update(DEVICE_SECRETS)
+
+    monkeypatch.setattr(
+        devices,
+        "_project_radio_view",
+        lambda device_mac, device, radio_table: {"mac": device_mac, **device},
+    )
+
+    result = await _call(stub_server, "get_device_radios", {"device_mac": AP_MAC})
+
+    for key in DEVICE_SECRETS:
+        assert result[key] == "[REDACTED]", f"{key} leaked from get_device_radios"
+    assert "do-not-leak" not in json.dumps(result)
+    assert result["model"] == "U7Pro"
+
+
+@respx.mock
+async def test_real_set_port_state_redacts_device_credentials(real_server: FastMCP) -> None:
+    """The real backend returns the device record the PUT echoed back.
+
+    The stub returns just the port entry, so only real mode exercises this.
+    """
+    respx.get(f"{BASE}/stat/device").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "_id": "switch-1",
+                        "mac": "f4:e2:c6:00:00:03",
+                        "port_overrides": [{"port_idx": 1, "enable": True}],
+                        **DEVICE_SECRETS,
+                    }
+                ]
+            },
+        )
+    )
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "_id": "switch-1",
+                        "mac": "f4:e2:c6:00:00:03",
+                        "port_overrides": body["port_overrides"],
+                        **DEVICE_SECRETS,
+                    }
+                ]
+            },
+        )
+
+    respx.put(f"{BASE}/rest/device/switch-1").mock(side_effect=capture)
+
+    result = await _call(
+        real_server,
+        "set_port_state",
+        {"device_mac": "f4:e2:c6:00:00:03", "port_idx": 5, "poe_mode": "off"},
+    )
+
+    for key in DEVICE_SECRETS:
+        assert result[key] == "[REDACTED]", f"{key} leaked from set_port_state"
+    assert "do-not-leak" not in json.dumps(result)
+    # The write result is still legible.
+    assert result["_id"] == "switch-1"
+    overrides = {o["port_idx"]: o for o in result["port_overrides"]}
+    assert overrides[5]["poe_mode"] == "off"
+
+
+async def test_set_radio_tx_power_redacts_radio_table_secrets(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """``before``/``after`` are ``radio_table`` entries, emitted verbatim.
+
+    They are device-record subtrees, so they get the same treatment as the
+    record itself rather than a case-by-case judgement about which firmware
+    puts what in the table.
+    """
+    ap = next(d for d in stub_state.devices if d["mac"] == AP_MAC)
+    ap["radio_table"][1]["x_vwirekey"] = "radio-vwirekey-do-not-leak"
+
+    preview = await _call(
+        stub_server,
+        "set_radio_tx_power",
+        {"device_mac": AP_MAC, "band": "5g", "mode": "low", "dry_run": True},
+    )
+    assert preview["would_apply"]["before"]["x_vwirekey"] == "[REDACTED]"
+    assert preview["would_apply"]["after"]["x_vwirekey"] == "[REDACTED]"
+    assert "do-not-leak" not in json.dumps(preview)
+    # The RF diff the preview exists to show is untouched.
+    assert preview["would_apply"]["before"]["channel"] == 36
+    assert preview["would_apply"]["after"]["tx_power_mode"] == "low"
+
+    applied = await _call(
+        stub_server,
+        "set_radio_tx_power",
+        {"device_mac": AP_MAC, "band": "5g", "mode": "low"},
+    )
+    assert applied["before"]["x_vwirekey"] == "[REDACTED]"
+    assert applied["after"]["x_vwirekey"] == "[REDACTED]"
+    assert "do-not-leak" not in json.dumps(applied)
+    assert applied["after"]["tx_power_mode"] == "low"

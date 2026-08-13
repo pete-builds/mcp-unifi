@@ -17,8 +17,50 @@ truth for both, so a fix in one place covers every emitter.
 
 Threat model note: the caller here is an LLM, and tool output frequently ends
 up in transcripts, logs, and context windows that outlive the request. A WPA
-pre-shared key that reaches any of those is disclosed. Reads get redacted by
-default; there is no read path that legitimately needs a cleartext secret.
+pre-shared key that reaches any of those is disclosed. There is no read path
+that legitimately needs a cleartext secret.
+
+Coverage, stated honestly
+-------------------------
+This module supplies the rule. It cannot enforce it: nothing here intercepts a
+tool response, so a read path is covered only when its module calls
+:func:`redact` on the way out. The first pass wired exactly two modules
+(``wlans`` and ``dynamic_dns``) while this docstring already spoke as though
+reads were redacted by default, so ``list_networks``, ``get_network_details``,
+``backup_config``, and the Access credential reads kept handing back raw
+controller records — WireGuard ``x_private_key``, site-to-site
+``x_ipsec_pre_shared_key``, and RADIUS ``x_secret`` among them. Credit to
+Adrian Birzu (@adibirzu) for finding that gap.
+
+Callers are now wired module by module and each one is pinned by a test in
+``tests/test_redaction.py``. The invariant to preserve when adding a read tool:
+**if it returns a controller record, it calls** :func:`redact`. Projections
+(fixed key allowlists) are not an excuse to skip it — an allowlist that grows
+later is a leak that ships quietly.
+
+Two failure modes, not one
+--------------------------
+The wiring gap above is the visible one. The second is quieter and worse: a
+tool can call :func:`redact` on a record whose secret field matches no pattern,
+and the call is a no-op that *reads* as coverage. Device records were exactly
+that — ``x_authkey`` and ``x_vwirekey`` are credentials that ``psk``,
+``secret``, ``token`` and the rest all miss, so wrapping ``list_devices``
+alone would have changed nothing while looking fixed in the diff. The same
+held for the Access visitor ``pass_code``.
+
+So a redaction change is only finished when both halves are checked: the read
+path calls :func:`redact`, **and** ``SENSITIVE_KEY_PATTERNS`` actually matches
+the field. The test for a new redaction must fail before the change for the
+right reason — if it would have passed with the pattern alone, or with the
+wiring alone, it is not testing what it claims to.
+
+Write paths count as emitters
+-----------------------------
+A ``dry_run`` preview echoes the payload the caller supplied, and a create
+returns the record the controller echoes back. Both carry the passphrase the
+caller just typed straight into the transcript, which is where it outlives the
+request. ``wlans`` redacts both; the ``composites`` module now does the same,
+including the ``partial`` record surfaced when a composite rolls back.
 """
 
 from __future__ import annotations
@@ -29,19 +71,60 @@ from typing import Any
 #: matches if any pattern is a substring of the lowercased key. This catches
 #: ``api_key``, ``X-API-Key``, ``unifi_api_key``, ``passphrase``,
 #: ``x_passphrase``, ``password``, ``x_password``, ``Password``,
-#: ``auth_token``, ``Bearer``-style ``token`` keys, ``client_secret``, and
-#: RADIUS/PSK material (``x_secret``, ``wpa_psk``, ``radius_secret``).
+#: ``auth_token``, ``Bearer``-style ``token`` keys, ``client_secret``,
+#: RADIUS/PSK material (``x_secret``, ``wpa_psk``, ``radius_secret``), the
+#: site-to-site IPsec key (``x_ipsec_pre_shared_key``) and the WireGuard peer
+#: key (``x_preshared_key``) alongside ``x_private_key``, the device
+#: management and mesh keys (``x_authkey``, ``x_inform_authkey``,
+#: ``x_vwirekey``), the ``passwd`` spelling of a stored password, and the
+#: Access visitor pass code in both its spellings.
+#:
+#: Substring matching is the whole mechanism, and it cuts both ways. ``psk``
+#: catches ``wpa_psk`` but does **not** catch ``x_ipsec_pre_shared_key`` or
+#: ``x_preshared_key``, because neither contains the literal three letters —
+#: hence the two explicit spellings below. ``password`` likewise does not
+#: catch ``passwd``, and ``pass_code`` does not catch ``passcode``. Every
+#: spelling a controller actually uses has to be written out. ``api_key``
+#: likewise does not catch the ``X-API-Key`` header spelling — this docstring
+#: claimed it did, and was wrong for as long as it has existed — so
+#: ``api-key`` is listed alongside it.
+#:
+#: In the other direction, patterns that would swallow references are
+#: deliberately absent, and each one below was a real candidate rejected
+#: against a real near-miss in this codebase:
+#:
+#: * ``radius`` → would redact ``radiusprofile_id`` and RADIUS profile names.
+#: * ``key`` or ``_key`` → would redact ``setting_key`` (the settings-section
+#:   name echoed by every ``set_*`` preview), ``keys_added``/``keys_lost`` in
+#:   the guest-portal diff, and the WireGuard ``public_key``, which is not a
+#:   secret and is exactly what a caller needs to configure a peer.
+#: * ``auth`` → would redact the guest-portal ``auth`` mode (``"none"``,
+#:   ``"hotspot"``) and ``auth_required``. Hence ``authkey``, not ``auth``.
+#: * ``pin`` → would redact ``pin_length`` on an Access credential, and
+#:   substring-matches straight through ``mapping``.
+#: * ``code`` → would redact ``status_code``, ``country_code``, and every
+#:   other ``*_code`` field. Hence the two exact pass-code spellings.
+#:
+#: Add a pattern only when it names a value, never a reference.
 SENSITIVE_KEY_PATTERNS: frozenset[str] = frozenset(
     {
         "passphrase",
         "x_passphrase",
         "api_key",
+        "api-key",
         "password",
+        "passwd",
         "secret",
         "token",
         "psk",
+        "pre_shared_key",
+        "preshared_key",
         "privkey",
         "private_key",
+        "authkey",
+        "vwirekey",
+        "pass_code",
+        "passcode",
     }
 )
 

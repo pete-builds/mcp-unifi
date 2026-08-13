@@ -15,6 +15,13 @@ surface on this firmware were deferred rather than shipped as phantom tools:
 * Per-subsystem health — already covered by ``get_site_health`` (it passes the
   full ``/stat/health`` record through), so a separate ``get_network_health``
   is omitted to avoid duplication.
+
+``get_gateway_stats`` and ``get_device_stats`` are device-record readers: both
+start from a ``/stat/device`` record and flatten it through
+:mod:`mcp_unifi.clients.stats_shape`. That shaping is an allowlist, so it
+keeps ``x_authkey`` and ``x_vwirekey`` out today; both tools redact anyway,
+because an allowlist that grows later is a leak that ships quietly. See
+:mod:`mcp_unifi.redaction`.
 """
 
 from __future__ import annotations
@@ -27,6 +34,7 @@ from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
 from mcp_unifi.modules.network._common import format_json, make_err
+from mcp_unifi.redaction import redact
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -87,7 +95,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         """
         try:
             backend = resolve_backend(registry, controller)
-            return format_json(await backend.get_gateway_stats())
+            return format_json(redact(await backend.get_gateway_stats()))
         except UniFiError as exc:
             logger.exception("get_gateway_stats failed")
             return err(str(exc))
@@ -117,7 +125,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             record = await backend.get_device_stats(mac)
             if record is None:
                 return err(f"device {mac} not found")
-            return format_json(record)
+            return format_json(redact(record))
         except UniFiError as exc:
             logger.exception("get_device_stats failed")
             return err(str(exc))

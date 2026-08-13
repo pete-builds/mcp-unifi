@@ -12,8 +12,12 @@ Side effects: None (read-only).
 
 Returns one record per visitor with ``id``, ``first_name``,
 ``last_name``, ``full_name``, ``email``, ``host_user_id``,
-``valid_from`` (ms), ``valid_until`` (ms), ``status``, and
-``pass_code``.
+``valid_from`` (ms), ``valid_until`` (ms), and ``status``.
+
+``pass_code`` is **redacted** to ``"[REDACTED]"``. It is the code that
+opens the door, not the record's identifier — ``id`` is, and ``id``
+still comes back, so ``get_visitor`` and every other lookup still
+work. Read the code from the Access UI if you need to reissue it.
 
 ## Example
 

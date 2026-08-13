@@ -11,7 +11,7 @@ Fetch one visitor pass's full record by ID.
 Side effects: None (read-only).
 
 Same shape as one entry from ``list_visitors`` plus any per-pass
-purpose / notes.
+purpose / notes, with ``pass_code`` redacted for the same reason.
 
 ## Example
 

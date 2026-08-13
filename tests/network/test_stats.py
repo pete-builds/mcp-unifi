@@ -10,12 +10,15 @@ HTTP wiring (``/stat/sysinfo``, ``/stat/device``, ``/stat/sta``,
 
 from __future__ import annotations
 
+import json
 import time
 
 import httpx
+import pytest
 import respx
 from fastmcp import FastMCP
 
+from mcp_unifi import backends
 from mcp_unifi.clients.stats_shape import (
     shape_client_stats,
     shape_device_stats,
@@ -358,3 +361,47 @@ async def test_real_get_anomalies_handles_500(real_server: FastMCP) -> None:
     respx.get(f"{BASE}/stat/anomalies").mock(return_value=httpx.Response(500))
     result = await _call(real_server, "get_anomalies")
     assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# Read-path redaction
+#
+# Both of these start from a ``/stat/device`` record, which carries
+# ``x_authkey`` and ``x_vwirekey``. The shaping functions are allowlists, so
+# they keep both out today. That is a guarantee that holds until someone adds
+# a field, so the shaping is what these tests attack: monkeypatched to a
+# passthrough, the response must still come back redacted.
+# ---------------------------------------------------------------------------
+
+DEVICE_SECRETS = {
+    "x_authkey": "device-authkey-do-not-leak",
+    "x_vwirekey": "device-vwirekey-do-not-leak",
+}
+
+
+async def test_get_device_stats_redacts_when_the_shaping_widens(
+    stub_server: FastMCP, stub_state: StubState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stub_state.devices[1].update(DEVICE_SECRETS)
+    monkeypatch.setattr(backends, "shape_device_stats", lambda raw: dict(raw))
+
+    result = await _call(stub_server, "get_device_stats", {"mac": "f4:e2:c6:00:00:02"})
+
+    for key in DEVICE_SECRETS:
+        assert result[key] == "[REDACTED]", f"{key} leaked from get_device_stats"
+    assert "do-not-leak" not in json.dumps(result)
+    assert result["model"] == "U7Pro"
+
+
+async def test_get_gateway_stats_redacts_when_the_shaping_widens(
+    stub_server: FastMCP, stub_state: StubState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stub_state.devices[0].update(DEVICE_SECRETS)
+    monkeypatch.setattr(backends, "shape_gateway_stats", lambda raw: dict(raw))
+
+    result = await _call(stub_server, "get_gateway_stats")
+
+    for key in DEVICE_SECRETS:
+        assert result[key] == "[REDACTED]", f"{key} leaked from get_gateway_stats"
+    assert "do-not-leak" not in json.dumps(result)
+    assert result["model"] == "UCGFiber"

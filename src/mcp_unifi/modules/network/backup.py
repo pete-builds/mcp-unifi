@@ -29,16 +29,26 @@ Envelope shape (``schema = "1"``):
 
 Secret handling
 ---------------
-On backup, every WLAN's ``x_passphrase`` is replaced with the sentinel
-``<redacted-on-backup>`` and the envelope-level ``secrets_stripped: true`` flag
-is set. The audit log captures resource counts and the envelope schema/version
-only — never the full backup blob (too large; secrets are sentineled but the
-flag still warrants treating the blob as operator-handled output).
+On backup, every sensitive field on a WLAN or network record is replaced with
+the sentinel ``<redacted-on-backup>`` and the envelope-level
+``secrets_stripped: true`` flag is set. Sensitivity is decided by
+:func:`mcp_unifi.redaction.is_sensitive`, the same predicate the read path and
+the audit log use, so this covers WLAN ``x_passphrase`` *and* the network VPN
+keys (``x_ipsec_pre_shared_key``, WireGuard ``x_private_key`` /
+``x_preshared_key``, RADIUS ``x_secret``). It previously matched the literal
+key ``x_passphrase`` and nothing else, which meant a backup envelope — a tool
+response, returned to the caller in full — carried every VPN pre-shared key on
+the controller in cleartext.
 
-On restore, if ``secrets_stripped: true``, restored WLANs are forced
-``enabled=False`` so a sentinel-passphrase SSID is never broadcast. The
-operator must reset each WLAN's passphrase and re-enable it manually. A
-warning is included in the response.
+The audit log captures resource counts and the envelope schema/version only —
+never the full backup blob (too large; secrets are sentineled but the flag
+still warrants treating the blob as operator-handled output).
+
+On restore, if ``secrets_stripped: true``, any restored WLAN or network still
+carrying the sentinel is forced ``enabled=False`` so a sentinel-passphrase SSID
+is never broadcast and a VPN tunnel is never stood up on a pre-shared key that
+is a published constant. The operator must reset each secret and re-enable
+manually. A warning is included in the response.
 
 Identity & ordering
 -------------------
@@ -88,6 +98,7 @@ from mcp_unifi.modules._params import (
     BoundedJson,
 )
 from mcp_unifi.modules.network._common import format_json, make_err
+from mcp_unifi.redaction import is_sensitive
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -181,22 +192,35 @@ def _strip_for_backup(rtype: str, record: dict[str, Any]) -> dict[str, Any]:
     return _strip(record)
 
 
-def _redact_wlans(records: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
-    """Replace every ``x_passphrase`` with the sentinel.
+def _redact_secrets(records: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
+    """Replace every sensitive value with the sentinel.
 
     Returns ``(redacted_records, secrets_were_present)``. The flag drives the
-    envelope's ``secrets_stripped`` field — set ``True`` whenever ANY WLAN
-    carried a passphrase (even the stub's ``[REDACTED]`` placeholder counts;
+    envelope's ``secrets_stripped`` field — set ``True`` whenever ANY record
+    carried a secret (even the stub's ``[REDACTED]`` placeholder counts;
     callers can't tell the source of the placeholder and should be warned to
     rotate keys regardless).
+
+    This used to test for the literal key ``x_passphrase``, which covered WLANs
+    and nothing else. The backup envelope is a tool response, so it lands in
+    the caller's transcript in full — and it carries network records, whose
+    VPN key material (``x_ipsec_pre_shared_key``, ``x_private_key``,
+    ``x_preshared_key``) went out in cleartext. Matching on
+    :func:`~mcp_unifi.redaction.is_sensitive` instead ties this path to the one
+    canonical pattern list, so a pattern added there covers backups too.
+
+    Note the sentinel: this path writes ``<redacted-on-backup>`` rather than
+    ``redact``'s ``[REDACTED]``, because ``restore_config`` recognises it and
+    force-disables any resource still carrying it.
     """
     out: list[dict[str, Any]] = []
     seen_secret = False
     for rec in records:
         clean = dict(rec)
-        if "x_passphrase" in clean:
-            seen_secret = True
-            clean["x_passphrase"] = REDACTED_PASSPHRASE
+        for key in clean:
+            if is_sensitive(str(key)):
+                seen_secret = True
+                clean[key] = REDACTED_PASSPHRASE
         out.append(clean)
     return out, seen_secret
 
@@ -335,14 +359,20 @@ async def _create_by_type(backend: Backend, rtype: str, payload: dict[str, Any])
 
 
 def _force_disable_if_redacted(payload: dict[str, Any], secrets_stripped: bool) -> dict[str, Any]:
-    """If the WLAN payload still carries the redaction sentinel, force disable.
+    """If the payload still carries a redaction sentinel, force disable.
 
-    Protects against broadcasting a sentinel-passphrase SSID on the wire.
-    The operator must reset the passphrase and re-enable manually.
+    Protects against broadcasting a sentinel-passphrase SSID on the wire, and
+    against standing up a VPN network whose pre-shared key is a known public
+    string. The operator must reset the secret and re-enable manually.
+
+    Scoped to WLANs and networks by the caller — those are the two resource
+    types that hold secrets. Any value equal to the sentinel triggers it, not
+    just ``x_passphrase``, so a newly-covered secret field disables its
+    resource on restore instead of restoring a broken credential silently.
     """
     if not secrets_stripped:
         return payload
-    if payload.get("x_passphrase") != REDACTED_PASSPHRASE:
+    if not any(v == REDACTED_PASSPHRASE for v in payload.values()):
         return payload
     out = dict(payload)
     out["enabled"] = False
@@ -369,10 +399,13 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         envelope. Transient state (clients, devices, observability) is
         excluded.
 
-        Secret handling: every WLAN's ``x_passphrase`` is replaced with the
-        sentinel ``<redacted-on-backup>``. The envelope flag
-        ``secrets_stripped: true`` warns ``restore_config`` to force
-        restored WLANs to ``enabled=False``.
+        Secret handling: every sensitive field on a WLAN or network record
+        is replaced with the sentinel ``<redacted-on-backup>`` — WLAN
+        ``x_passphrase`` and the network VPN keys
+        (``x_ipsec_pre_shared_key``, ``x_private_key``, ``x_preshared_key``,
+        RADIUS ``x_secret``). The envelope flag ``secrets_stripped: true``
+        warns ``restore_config`` to force any restored WLAN or network still
+        carrying the sentinel to ``enabled=False``.
 
         Returns the JSON envelope ``{"schema": "1", "controller": str,
         "ts": iso8601, "secrets_stripped": bool, "resources": {...}}``.
@@ -394,8 +427,14 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("backup_config: snapshot failed")
             return err(str(exc))
 
-        wlans_redacted, secrets_stripped = _redact_wlans(resources["wlans"])
-        resources["wlans"] = wlans_redacted
+        # WLANs hold ``x_passphrase``; networks hold VPN key material. Both
+        # go through the same sentinel pass, and either one setting the flag
+        # arms restore's force-disable.
+        secrets_stripped = False
+        for rtype in ("wlans", "networks"):
+            redacted, found = _redact_secrets(resources[rtype])
+            resources[rtype] = redacted
+            secrets_stripped = secrets_stripped or found
 
         envelope: dict[str, Any] = {
             "schema": BACKUP_SCHEMA,
@@ -442,9 +481,10 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
           differs from the target, the restore proceeds and the response
           includes a warning.
         - Stripped secrets: if ``secrets_stripped: true``, every restored
-          WLAN whose ``x_passphrase`` still equals the sentinel is forced
-          to ``enabled=False`` so a known-string SSID is never broadcast.
-          The operator must reset each passphrase and re-enable manually.
+          WLAN or network still carrying the sentinel in any field is forced
+          to ``enabled=False`` so a known-string SSID is never broadcast and
+          a VPN tunnel is never stood up on a public pre-shared key. The
+          operator must reset each secret and re-enable manually.
         - Mutates controller state. Use dry_run=True to preview the change
           without applying.
         - Rollback: if any sub-step fails, all prior creates are reverted
@@ -662,7 +702,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                             if target:
                                 payload["network_id"] = target
 
-                    if rtype == "wlans":
+                    if rtype in ("wlans", "networks"):
                         payload = _force_disable_if_redacted(payload, secrets_stripped)
 
                     record = await _create_by_type(backend, rtype, payload)

@@ -7,6 +7,8 @@ come from ``tests/network/conftest.py``.
 
 from __future__ import annotations
 
+import json
+
 import httpx
 import respx
 from fastmcp import FastMCP
@@ -236,3 +238,73 @@ async def test_list_networks_real_mode_handles_500(real_server: FastMCP) -> None
     respx.get(f"{BASE}/rest/networkconf").mock(return_value=httpx.Response(500))
     result = await _call(real_server, "list_networks")
     assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# Read-path redaction
+#
+# ``list_networks`` and ``get_network_details`` return ``networkconf`` records,
+# which on a gateway running any VPN carry key material. Both returned it in
+# cleartext until 0.19.2. ``get_network_details`` is the worse of the two: it
+# emits a ``vpn`` section built by substring-matching ``"vpn"`` in the key name
+# *and* a ``raw`` copy of the entire record.
+# ---------------------------------------------------------------------------
+
+VPN_NETWORK_SECRETS = {
+    "x_ipsec_pre_shared_key": "ipsec-psk-do-not-leak",
+    "x_preshared_key": "wireguard-psk-do-not-leak",
+    "x_private_key": "wireguard-private-do-not-leak",
+    "x_secret": "radius-secret-do-not-leak",
+}
+
+
+def _seed_vpn_network(stub_state: StubState) -> str:
+    """Add a site-to-site VPN network carrying every secret field. Returns its id."""
+    record = stub_state.create_network(
+        {
+            "name": "Site-to-Site",
+            "purpose": "site-vpn",
+            "vpn_type": "ipsec-vpn",
+            "radiusprofile_id": "6501aaaabbbbccccdddd0001",
+            **VPN_NETWORK_SECRETS,
+        }
+    )
+    return str(record["_id"])
+
+
+async def test_list_networks_redacts_vpn_key_material(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    _seed_vpn_network(stub_state)
+
+    nets = await _call(stub_server, "list_networks")
+    vpn = next(n for n in nets if n["name"] == "Site-to-Site")
+
+    for key in VPN_NETWORK_SECRETS:
+        assert vpn[key] == "[REDACTED]", f"{key} leaked from list_networks"
+    assert "do-not-leak" not in json.dumps(nets)
+
+    # The RADIUS profile reference is not a secret and callers resolve it.
+    assert vpn["radiusprofile_id"] == "6501aaaabbbbccccdddd0001"
+
+
+async def test_get_network_details_redacts_every_section(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    net_id = _seed_vpn_network(stub_state)
+
+    result = await _call(stub_server, "get_network_details", {"network_id": net_id})
+
+    # Note where the key material actually lands. The ``vpn`` section is built
+    # by substring-matching ``"vpn"`` in the key name, and not one of UniFi's
+    # VPN secret fields contains that substring — they reach the caller through
+    # ``raw``, which is the whole record by design ("so nothing is hidden").
+    for key in VPN_NETWORK_SECRETS:
+        assert result["raw"][key] == "[REDACTED]", f"{key} leaked from the raw section"
+    assert "do-not-leak" not in json.dumps(result)
+
+    # ``radiusprofile_id`` lands in the vpn section by prefix match; it must
+    # survive so the caller can still resolve the profile.
+    assert result["vpn"]["radiusprofile_id"] == "6501aaaabbbbccccdddd0001"
+    assert result["vpn"]["vpn_type"] == "ipsec-vpn"
+    assert result["network"]["name"] == "Site-to-Site"

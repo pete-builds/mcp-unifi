@@ -21,6 +21,10 @@ Side effects:
   (firewall_rule → wlan → network) and the response includes
   ``rolled_back`` and ``partial`` keys.
 
+The ``passphrase`` is **redacted** to ``"[REDACTED]"`` everywhere this
+tool emits it: the ``dry_run`` preview, the created WLAN record, and
+the ``partial`` record on a rollback. There is no opt-in flag.
+
 ## Example
 
 ```python

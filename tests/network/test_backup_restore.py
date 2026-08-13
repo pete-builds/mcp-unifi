@@ -615,3 +615,84 @@ async def test_property_restore_converges_to_backup(
     assert _strip_wlan_passphrases(post_view) == _strip_wlan_passphrases(pre_view), (
         f"restore did not converge.\nmutations: {mutations}\npre:  {pre_view}\npost: {post_view}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Envelope secret handling
+#
+# The backup envelope is a tool response: it is returned to the caller in full
+# and lands in the transcript. It carries network records, and the sentinel
+# pass used to match the literal key ``x_passphrase`` — so every VPN pre-shared
+# key on the controller went out in cleartext alongside the redacted WLANs.
+# ---------------------------------------------------------------------------
+
+NETWORK_SECRETS = {
+    "x_ipsec_pre_shared_key": "ipsec-psk-do-not-leak",
+    "x_preshared_key": "wireguard-psk-do-not-leak",
+    "x_private_key": "wireguard-private-do-not-leak",
+    "x_secret": "radius-secret-do-not-leak",
+}
+
+
+async def test_backup_strips_network_vpn_secrets(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    stub_state.create_network(
+        {
+            "name": "Site-to-Site",
+            "purpose": "site-vpn",
+            "vpn_type": "ipsec-vpn",
+            "radiusprofile_id": "6501aaaabbbbccccdddd0001",
+            **NETWORK_SECRETS,
+        }
+    )
+
+    envelope = await _call(stub_server, "backup_config", {})
+
+    vpn = next(n for n in envelope["resources"]["networks"] if n["name"] == "Site-to-Site")
+    for key in NETWORK_SECRETS:
+        assert vpn[key] == REDACTED_PASSPHRASE, f"{key} leaked into the backup envelope"
+    assert "do-not-leak" not in json.dumps(envelope)
+    assert envelope["secrets_stripped"] is True
+    # The RADIUS profile reference is not a secret; restore needs it.
+    assert vpn["radiusprofile_id"] == "6501aaaabbbbccccdddd0001"
+
+
+async def test_restore_disables_networks_carrying_the_sentinel(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """A VPN network whose PSK is a published constant must not come up enabled."""
+    envelope = {
+        "schema": "1",
+        "controller": "default",
+        "ts": "2026-08-12T00:00:00+00:00",
+        "secrets_stripped": True,
+        "resources": {
+            "networks": [
+                {
+                    "_id": "6501aaaabbbbccccdddd9999",
+                    "name": "Restored-VPN",
+                    "purpose": "site-vpn",
+                    "vpn_type": "ipsec-vpn",
+                    "x_ipsec_pre_shared_key": REDACTED_PASSPHRASE,
+                    "enabled": True,
+                }
+            ],
+            "wlans": [],
+            "firewall_rules": [],
+            "port_profiles": [],
+            "dhcp_leases": [],
+            "port_forwards": [],
+        },
+    }
+
+    await _call(
+        stub_server,
+        "restore_config",
+        {"backup_json": json.dumps(envelope)},
+    )
+
+    restored = next(n for n in stub_state.list_networks() if n["name"] == "Restored-VPN")
+    assert restored["enabled"] is False, (
+        "restored a VPN network on a sentinel pre-shared key with the tunnel enabled"
+    )

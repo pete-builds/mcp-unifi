@@ -7,6 +7,171 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **SECURITY: read paths returned VPN and credential secrets in cleartext.**
+  `mcp_unifi.redaction` has always described itself as the single source of
+  truth for "every path that emits data", and its docstring told the story of
+  the read path being fixed. Only two modules ever called it: `wlans` and
+  `dynamic_dns`. Everything else handed the controller's records back
+  untouched, so `list_networks` and `get_network_details` returned WireGuard
+  `x_private_key` and `x_preshared_key`, site-to-site `x_ipsec_pre_shared_key`,
+  and RADIUS `x_secret` straight into the caller's transcript. `backup_config`
+  did the same inside its envelope, and UniFi Access `list_credentials` /
+  `get_credential` returned enrolment material the same way.
+
+  Two defects, one visible and one not:
+
+  - **Pattern gap.** `SENSITIVE_KEY_PATTERNS` matches by substring, so `psk`
+    catches `wpa_psk` and matches nothing in `x_ipsec_pre_shared_key` or
+    `x_preshared_key` — neither string contains those three letters. Added
+    `pre_shared_key` and `preshared_key` explicitly. A bare `radius` pattern
+    was considered and rejected: it would redact `radiusprofile_id` and profile
+    names, which are references, not secrets, and the tools that resolve them
+    would break. `x_private_key` was already covered by `private_key`.
+  - **Wiring gap.** Nothing intercepts a tool response, so `redact` only runs
+    where a module calls it. Now wired into `list_networks`,
+    `get_network_details`, `get_teleport_config`, `get_guest_portal`,
+    `list_credentials`, and `get_credential`. Teleport and the guest portal
+    were already safe by projection — a fixed key allowlist — which is a
+    guarantee that lasts until someone adds a field; their tests monkeypatch
+    the projection to a passthrough to prove the redaction now holds without it.
+
+  `backup_config` gets the same treatment through its own sentinel. Its secret
+  pass tested for the literal key `x_passphrase`, which covered WLANs and left
+  network records alone; it now matches on `is_sensitive`, the same predicate
+  the log and audit paths use, and runs over networks as well as WLANs.
+  `restore_config` follows: any restored WLAN **or network** still carrying the
+  `<redacted-on-backup>` sentinel in any field is forced to `enabled=false`, so
+  a VPN tunnel is never stood up on a pre-shared key that is a published
+  constant — the same protection WLANs already had against broadcasting a
+  sentinel-passphrase SSID.
+
+  Modules swept and deliberately left alone, because their records carry no
+  field matching the pattern list: clients, DHCP, firewall rules and groups,
+  routing, traffic rules and routes, port forwards, port profiles, content
+  filtering, threat management, observability, honeypots, drift, IPv6,
+  console, and Protect. IPv6, honeypot, threat-management, and console reads
+  are additionally projections over a fixed key list.
+
+  Reported by Adrian Birzu (@adibirzu), who identified the pattern gap and four
+  of the unwired read tools in a fork review.
+
+- **SECURITY: `create_iot_network` and `create_guest_network` echoed the
+  passphrase back three ways.** Both take a `passphrase` and build a WLAN
+  payload around it, and `wlans` had redacted the equivalent paths since the
+  fix above while the composites had not. The `dry_run` preview returned the
+  payload verbatim, the success response returned the WLAN record the
+  controller echoes back with the PSK stored in it, and the rollback response
+  returned that same record under `partial`. The rollback case is the worst of
+  the three: it fires when something has already gone wrong, which is when the
+  output gets pasted into an issue or a chat. All three now redact.
+
+  The stub backend rewrites `x_passphrase` to the sentinel inside
+  `create_wlan`, which is why a stub-mode test could not tell redaction from
+  stub behaviour and the created-record regressions are driven in real mode
+  against a controller mock that echoes the payload back the way a real one
+  does.
+
+- **SECURITY: device records carry credentials that matched no pattern at
+  all.** `x_authkey` (device management/inform key) and `x_vwirekey` (wireless
+  mesh uplink key) are secrets, and `psk`, `secret`, `token`, `private_key`
+  and every other entry in the list missed both. That is why the sweep above
+  cleared the devices module: the check was "does any field here match a
+  pattern", and the honest answer was no.
+
+  This is the more dangerous half of the defect, because the repair looks
+  identical to a real one. Wrapping `list_devices` in `redact` without first
+  adding the patterns would have produced a clean diff, a passing test suite,
+  and exactly the same cleartext output. Both halves landed together, and the
+  regression tests are verified to fail with either half reverted on its own.
+
+  Patterns added: `authkey`, `vwirekey`, and `passwd` (which `password` does
+  not catch, and which covers the stored `x_ssh_sha512passwd` hash). Wired
+  into every path that emits a device record or something built from one:
+  `list_devices`, `get_device_radios`, `set_port_state` (the real backend
+  returns the device record the `PUT` echoed back, not just the port), the
+  `before`/`after` `radio_table` entries the three `set_radio_*` tools show,
+  and the `get_gateway_stats` / `get_device_stats` views. The stats views and
+  `get_device_radios` are projections over a fixed key list; as with Teleport,
+  their tests monkeypatch the projection to a passthrough so the redaction has
+  to stand on its own.
+
+  Rejected pattern candidates, each against a real near-miss in this
+  codebase, and each now pinned by a negative test: `key`/`_key` would redact
+  `setting_key` (echoed by every `set_*` preview), the guest-portal
+  `keys_added`/`keys_lost` diff, and the WireGuard `public_key` that callers
+  need to configure a peer; `auth` would redact the guest-portal `auth` mode
+  and `auth_required`, hence `authkey`; `pin` would redact `pin_length` and
+  substring-matches straight through `mapping`; `code` would redact
+  `status_code` and `country_code`.
+
+- **SECURITY: UniFi Access visitor passes and the third credential reader.**
+  Found by re-sweeping specifically for the failure mode above — fields that
+  are secrets but match no pattern, where redaction is a no-op wherever it is
+  applied.
+
+  `list_visitors` and `get_visitor` returned `pass_code`, the code that opens
+  the door, in cleartext; it matched no pattern *and* neither tool called
+  `redact`, while the docstring advertised the field as part of the return
+  shape. Both spellings (`pass_code`, `passcode`) are now patterns and both
+  tools redact. This changes a documented return shape, and it is safe to:
+  the record's identifier is `id`, not `pass_code`, so `get_visitor` and every
+  other lookup still work, and the host link, status, and validity window all
+  still come back.
+
+  `audit_expiring_credentials` reads `list_credentials` off the backend rather
+  than calling the tool, so it never inherited that tool's redaction and
+  handed back raw credential records — a module counting as covered because
+  its two obvious readers were wired. It now redacts too.
+
+  Left alone, and flagged rather than changed: `card_id` on an NFC credential.
+  A reader does authenticate on it, but it is the identifier of a physical
+  card, and `mcp_unifi.redaction`'s own rule is to add a pattern only when it
+  names a value and never when it names a reference. If it should be treated
+  as a secret, it sits inside an already-redacting path and needs only the
+  pattern.
+
+- **SECURITY: `X-API-Key` was never matched, and the docstring said it was.**
+  Third finding from the same sweep, run mechanically this time: enumerate
+  every literal dict key in `src/` and ask which credential-shaped ones
+  `is_sensitive` misses. `api_key` does not contain `api-key`, so the header
+  spelling fell straight through — while `mcp_unifi.redaction`'s own docstring
+  opened by claiming "This catches `api_key`, `X-API-Key`, `unifi_api_key`".
+
+  Not a live disclosure: request headers are built inside the httpx clients
+  and are never emitted through a tool response. It matters anyway, because
+  the structured logger and the audit log run the same predicate, so a header
+  dict reaching either through an exception or an `extra={}` would have gone
+  out intact — and a pattern list whose own docstring overstates it is exactly
+  the defect this pass exists to close. `api-key` added; `X-CSRF-Token` was
+  already covered by `token`.
+
+  The rest of that sweep came back clean, and its results are what the
+  rejected-pattern notes are drawn from: `key`, `setting_key`, `keys_added`,
+  `keys_lost`, `auth`, `auth_required`, `auth_client_ids`, `pin_length`,
+  `credential_id`/`credential_type`, `sso_enabled`, `privacy`, `license`,
+  `signal`, and `assoc_time` are all references, labels, modes, or quotas —
+  correctly unmatched.
+
+### Changed
+
+- **`SECURITY.md` and the security guide now state redaction coverage
+  accurately.** Both described the redactor as a logging concern that also
+  scrubbed WLAN passphrases from responses. They now name the shared pattern
+  list, enumerate the read *and write* paths it covers, and say plainly that
+  references such as `radiusprofile_id`, `setting_key`, and a WireGuard
+  `public_key` are left intact on purpose.
+
+- **`mcp_unifi.redaction`'s docstring now names both failure modes.** It
+  described the wiring gap only. The quieter one is a `redact` call over a
+  record whose secret field matches no pattern: a no-op that reads as
+  coverage in a diff. The module now states that a redaction change is
+  finished only when the read path calls `redact` **and** the pattern list
+  actually matches the field, and that a test which would have passed with
+  either half alone is not testing what it claims to. Each rejected pattern
+  is recorded next to the near-miss that rejected it.
+
 ## [0.19.1] - 2026-08-09
 
 ### Fixed

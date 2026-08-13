@@ -5,6 +5,16 @@
 - ``provision_homelab_service``: lease + firewall + (optional) port forwards.
 - ``quarantine_client``: block + structured log entry.
 - ``audit_open_ports``: read-only summary of WAN exposure.
+
+Every payload and record these tools emit goes through
+:func:`mcp_unifi.redaction.redact` on the way out, matching ``wlans``. The IoT
+and guest composites take a ``passphrase`` argument and build a WLAN payload
+around it, so all three emission points leak it otherwise: the ``dry_run``
+preview echoes the payload back verbatim, the success response carries the
+WLAN record the controller echoes back, and the rollback response carries the
+same record under ``partial``. The rollback path is the one that is easy to
+miss — it fires precisely when something went wrong, which is when the output
+is most likely to be pasted somewhere.
 """
 
 from __future__ import annotations
@@ -30,6 +40,7 @@ from mcp_unifi.modules.network._common import (
     subnet_to_dhcp,
     subnet_to_network_form,
 )
+from mcp_unifi.redaction import redact
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -101,6 +112,10 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         - Rollback: if any sub-step fails, all prior sub-steps are reverted
           (firewall_rule → wlan → network) and the response includes
           ``rolled_back`` and ``partial`` keys.
+
+        The ``passphrase`` is **redacted** to ``"[REDACTED]"`` everywhere this
+        tool emits it: the ``dry_run`` preview, the created WLAN record, and
+        the ``partial`` record on a rollback. There is no opt-in flag.
 
         Example: create_iot_network(name="iot", vlan_id=50, passphrase="hunter2hunter2", main_lan_subnet="192.168.1.0/24")
 
@@ -180,7 +195,8 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 {
                     "dry_run": True,
                     "controller": controller,
-                    "would_create": would_create,
+                    # The WLAN payload carries the caller's passphrase.
+                    "would_create": redact(would_create),
                     "summary": (
                         f"Would create IoT network '{name}' (VLAN {vlan_id}) "
                         f"on {iot_subnet}"
@@ -223,7 +239,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 {
                     "error": f"create_iot_network failed at {step}: {exc}",
                     "stub_mode": settings.stub_mode,
-                    "partial": created,
+                    # ``partial`` holds whatever the controller already
+                    # created, WLAN record and passphrase included.
+                    "partial": redact(created),
                     "rolled_back": rolled_back,
                 }
             )
@@ -272,7 +290,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                     f"IoT network '{name}' (VLAN {vlan_id}) on {iot_subnet}"
                     f"{' with isolation' if isolate else ''}"
                 ),
-                **created,
+                # The controller echoes the WLAN record back with the
+                # passphrase it was just given.
+                **redact(created),
             }
         )
 
@@ -538,6 +558,10 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
           (firewall_rule → wlan → network) and the response includes
           ``rolled_back`` and ``partial`` keys.
 
+        The ``passphrase`` is **redacted** to ``"[REDACTED]"`` everywhere this
+        tool emits it: the ``dry_run`` preview, the created WLAN record, and
+        the ``partial`` record on a rollback. There is no opt-in flag.
+
         Example: create_guest_network(name="guest", ssid="guest-wifi", passphrase="hunter2hunter2", vlan_id=60, main_lan_subnet="192.168.1.0/24")
 
         Args:
@@ -612,11 +636,14 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 {
                     "dry_run": True,
                     "controller": controller,
-                    "would_create": {
-                        "network": net_payload,
-                        "wlan": wlan_payload,
-                        "firewall_rule": fw_payload,
-                    },
+                    # The WLAN payload carries the caller's passphrase.
+                    "would_create": redact(
+                        {
+                            "network": net_payload,
+                            "wlan": wlan_payload,
+                            "firewall_rule": fw_payload,
+                        }
+                    ),
                     "summary": (
                         f"Would create guest network '{name}' (VLAN {vlan_id}) "
                         f"on {guest_subnet}"
@@ -659,7 +686,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 {
                     "error": f"create_guest_network failed at {step}: {exc}",
                     "stub_mode": settings.stub_mode,
-                    "partial": created,
+                    # ``partial`` holds whatever the controller already
+                    # created, WLAN record and passphrase included.
+                    "partial": redact(created),
                     "rolled_back": rolled_back,
                 }
             )
@@ -703,7 +732,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                     f"Guest network '{name}' (VLAN {vlan_id}) on {guest_subnet}"
                     f"{' with schedule' if schedule else ''}"
                 ),
-                **created,
+                # The controller echoes the WLAN record back with the
+                # passphrase it was just given.
+                **redact(created),
             }
         )
 

@@ -19,6 +19,7 @@ from mcp_unifi.modules.network._common import (
 )
 from mcp_unifi.modules.network._pending import build_preview_envelope, get_pending_actions
 from mcp_unifi.modules.network._verify import verified_update
+from mcp_unifi.redaction import redact
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -56,7 +57,11 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         """
         try:
             backend = resolve_backend(registry, controller)
-            return format_json(await backend.list_networks())
+            # Network records carry VPN key material: WireGuard
+            # ``x_private_key`` / ``x_preshared_key``, site-to-site
+            # ``x_ipsec_pre_shared_key``, RADIUS ``x_secret``. See
+            # mcp_unifi.redaction for why this is not optional.
+            return format_json(redact(await backend.list_networks()))
         except UniFiError as exc:
             logger.exception("list_networks failed")
             return err(str(exc))
@@ -159,7 +164,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             },
             "raw": target,
         }
-        return format_json({"controller": controller, **sections})
+        # ``raw`` and ``vpn`` both expose the whole record, key material
+        # included; redact covers every section in one walk.
+        return format_json(redact({"controller": controller, **sections}))
 
     @mcp.tool()
     @audited("create_vlan")

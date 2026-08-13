@@ -19,9 +19,10 @@ Side effects:
   differs from the target, the restore proceeds and the response
   includes a warning.
 - Stripped secrets: if ``secrets_stripped: true``, every restored
-  WLAN whose ``x_passphrase`` still equals the sentinel is forced
-  to ``enabled=False`` so a known-string SSID is never broadcast.
-  The operator must reset each passphrase and re-enable manually.
+  WLAN or network still carrying the sentinel in any field is forced
+  to ``enabled=False`` so a known-string SSID is never broadcast and
+  a VPN tunnel is never stood up on a public pre-shared key. The
+  operator must reset each secret and re-enable manually.
 - Mutates controller state. Use dry_run=True to preview the change
   without applying.
 - Rollback: if any sub-step fails, all prior creates are reverted
