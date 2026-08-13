@@ -3,7 +3,7 @@ httpx==0.28.1
 uvicorn==0.52.1
 python-dotenv==1.2.2
 pydantic==2.13.4
-pydantic-settings==2.14.2
+pydantic-settings==2.15.0
 
 # Security: force-upgrade fastmcp's transitive auth deps past HIGH CVEs
 # (CVE-2026-48526, GHSA-537c-gmf6-5ccf, CVE-2026-49852, CVE-2026-53539).
