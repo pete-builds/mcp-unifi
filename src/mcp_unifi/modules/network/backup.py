@@ -554,9 +554,10 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         secrets_stripped = bool(envelope.get("secrets_stripped"))
         if secrets_stripped:
             warnings.append(
-                "WLAN passphrases were stripped from backup; restored WLANs "
-                "will be force-disabled. Reset each passphrase and re-enable "
-                "manually."
+                "Secrets were stripped from this backup. Any restored WLAN or "
+                "network carrying a stripped secret will be force-disabled — "
+                "that includes VPN networks, whose pre-shared key is not in "
+                "the envelope. Reset each secret and re-enable manually."
             )
 
         try:
