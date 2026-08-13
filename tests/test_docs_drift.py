@@ -28,10 +28,6 @@ MANIFEST_JSON_PATH = REPO_ROOT / "docs" / "site" / "src" / "data" / "tool-manife
 HISTORICAL_ALLOWLIST: frozenset[Path] = frozenset(
     {
         REPO_ROOT / "CHANGELOG.md",
-        # The docs site ships its own changelog page rendered from a copy of
-        # CHANGELOG.md; per-release entries there quote counts current at
-        # the time and should not be back-edited.
-        REPO_ROOT / "docs" / "site" / "src" / "content" / "docs" / "changelog.md",
         REPO_ROOT / "docs" / "v0.10-access-module.md",
     }
 )

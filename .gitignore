@@ -48,3 +48,6 @@ audit.jsonl
 
 # uv side-effect lockfile — project uses requirements*.lock as source of truth
 uv.lock
+
+# Claude Code agent worktrees and local session state (never part of the repo).
+.claude/
