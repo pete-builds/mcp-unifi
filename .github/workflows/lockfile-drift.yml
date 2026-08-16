@@ -1,0 +1,31 @@
+name: lockfile-drift
+
+# Full recompile + diff, the fleet's ONE meaning of "lockfile drift". The fleet used to
+# carry three: full recompile, pin-consistency-only, and no check at all. Pin consistency
+# lets TRANSITIVE dependencies drift arbitrarily far while staying green; measured on the
+# recompile loop's first run, pin-consistency repos had drifted 1 to 35 packages while
+# full-recompile repos sat at 0 to 2. This caller converges the repo on the strict
+# semantics.
+#
+# The implementation is the same one the lockfile-recompile loop uses (fleet-workflows,
+# pinned by SHA below), so the check and the fixer agree structurally about what
+# "current" means: same header-derived command, same fresh-temp-path compile, same
+# comments-stripped compare, same pinned uv.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    name: Lockfile drift (full recompile)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pete-builds/fleet-workflows/lockfile-drift@47303e847995240aca7bd832c282cac38debf8b5 # v1.1.0
+        with:
+          uv-version: '0.12.5'   # must match the lockfile-recompile caller's pin
