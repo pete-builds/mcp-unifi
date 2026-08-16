@@ -27,6 +27,7 @@ set -euo pipefail
 
 changed=""
 skipped=""
+deltas=""
 
 for lock in $(git ls-files '*.lock' | sort); do
   cmd="$(sed -n 's/^#[[:space:]]*\(uv pip compile .*\)$/\1/p' "$lock" | head -1)"
@@ -68,6 +69,7 @@ for lock in $(git ls-files '*.lock' | sort); do
     exit 1
   fi
 
+  before="$(mktemp)"; cp "$lock" "$before"
   cp "$fresh" "$lock"
 
   # RESTORE THE HEADER. The fresh compile recorded `-o <tempfile>` in the lock's own header.
@@ -86,8 +88,39 @@ PY
   # Prove the restore landed rather than assuming it.
   grep -qF -- "$cmd" "$lock" || { echo "error: $lock: header restore failed" >&2; exit 1; }
 
+  # SAY WHAT THIS ACTUALLY CHANGED, at package level.
+  #
+  # Not cosmetic. The fleet's CI checks come in two shapes: some recompile and diff the whole
+  # lock, and some only verify that the `==` pins in requirements.in appear at the same
+  # version in the lock. In the second kind, TRANSITIVE dependencies can drift arbitrarily
+  # far and the check stays green, so a first run here can rewrite a thousand lines and bump
+  # dozens of packages while CI reports success. That is a dependency upgrade, not a lock
+  # sync, and the difference has to be visible in the PR rather than buried in a diff nobody
+  # reads.
+  delta="$(python3 - "$before" "$lock" <<'PY'
+import re, sys
+def pins(path):
+    out = {}
+    for line in open(path):
+        m = re.match(r'^([A-Za-z0-9._-]+)==([^\s\\;]+)', line)
+        if m:
+            out[m.group(1).lower()] = m.group(2)
+    return out
+old, new = pins(sys.argv[1]), pins(sys.argv[2])
+bumped = sorted(k for k in old.keys() & new.keys() if old[k] != new[k])
+added = sorted(new.keys() - old.keys())
+removed = sorted(old.keys() - new.keys())
+sample = ", ".join(f"{k} {old[k]}->{new[k]}" for k in bumped[:5])
+print(f"{len(bumped)} bumped, {len(added)} added, {len(removed)} removed"
+      + (f" ({sample}{', ...' if len(bumped) > 5 else ''})" if sample else ""))
+PY
+)"
+  echo "delta ${lock}: ${delta}" >&2
+  deltas="${deltas}${deltas:+%0A}${lock}: ${delta}"
+
   changed="$changed $lock"
 done
 
 echo "changed=${changed# }"
 echo "skipped=${skipped# }"
+echo "deltas=${deltas}"
