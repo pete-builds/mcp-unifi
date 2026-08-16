@@ -1,39 +1,25 @@
 name: lockfile-recompile
 
-# Closes the one dependency chore nothing owned.
+# Thin caller. The implementation lives in pete-builds/fleet-workflows (composite action,
+# pinned below by full commit SHA), because fourteen byte-identical copies of the logic
+# were their own drift problem: automation was needed to keep the automation identical.
 #
-# THE GAP
-#   Dependabot's pip updater edits requirements.in and CANNOT regenerate requirements.lock.
-#   The published image installs from the hash-pinned .lock, so a bumped dependency can go
-#   fully green in the unit tests while the image keeps building against the old pin. CI's
-#   drift check catches the mismatch and turns the PR red, which is correct but is only
-#   DETECTION: nothing regenerated the lock. Two PRs sat red on exactly this.
+# WHAT STAYS IN THIS REPO, DELIBERATELY
+#   - The schedule. Thursday 20:00 UTC: late enough that Dependabot's 09:30 ET run and
+#     cypher's 2-hour merge cycle have landed the week's bumps on main.
+#   - The permissions. Every run uses THIS repo's built-in GITHUB_TOKEN; blast radius is
+#     one repository, same as the distributed version.
+#   - The uv pin. It must move together with the same pin in this repo's ci.yml, never
+#     one without the other, so it is stated here per repo rather than defaulted
+#     centrally, where a SHA bump could silently migrate every repo's resolver at once.
 #
-# WHY THIS RUNS IN THIS REPO RATHER THAN A CENTRAL FLEET SWEEPER
-#   It needs only the built-in GITHUB_TOKEN, scoped to this repository. A central sweeper
-#   would need a personal access token with push access to every repo in the portfolio: a
-#   standing fleet-wide credential, to do work that is per-repo by nature. Least privilege
-#   says push the chore down to the repo and keep the blast radius at one.
-#
-# WHY uv IS PINNED, AND PINNED TO THE SAME VERSION CI USES
-#   The loop and CI's drift check must resolve with the SAME uv, or a lock can go "stale"
-#   with no code change at all, purely because uv released. Floating both kept them in
-#   agreement but made every uv release a silent resolver migration inside a weekly
-#   maintenance run. Pinning both makes resolver upgrades deliberate: bump the pin here
-#   and in ci.yml TOGETHER, never one without the other. The version is recorded in the
-#   PR body so a disagreement is diagnosable at a glance rather than being a mystery.
-#
-# The actual work is .github/scripts/recompile-locks.sh, which has its own control suite in
-# the workspace (scripts/test-recompile-locks.sh; it reports its own count, including
-# negative controls).
-# Logic lives in a script so it can be tested; this file is orchestration only.
+# HOW THE PINNED SHA UPDATES
+#   Dependabot bumps it when fleet-workflows tags a release. That lands as a normal
+#   workflow-file PR here, which the fleet's merge automation refuses to auto-merge, so
+#   a logic change still gets a per-repo human read.
 
 on:
   schedule:
-    # Thursday 20:00 UTC (16:00 EDT / 15:00 EST): late enough that Dependabot's 09:30 ET
-    # pip run AND cypher's 2-hour merge cycle have landed the week's bumps on main. The
-    # earlier 16:00 UTC slot could fire before that week's merges and lose a week to the
-    # race.
     - cron: '0 20 * * 4'
   workflow_dispatch:
 
@@ -50,115 +36,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-
-      - uses: actions/setup-python@v6
+      - uses: pete-builds/fleet-workflows/lockfile-recompile@47303e847995240aca7bd832c282cac38debf8b5 # v1.1.0
         with:
-          python-version: '3.13'
-
-      - name: Install uv (pinned; bump together with ci.yml)
-        run: pip install uv==0.12.5
-
-      - name: Recompile every lock from the command in its own header
-        id: recompile
-        run: |
-          set -euo pipefail
-          bash .github/scripts/recompile-locks.sh | tee -a "$GITHUB_OUTPUT"
-          echo "uv_version=$(uv --version 2>&1 | head -1)" >> "$GITHUB_OUTPUT"
-
-      - name: Open or update the pull request
-        if: steps.recompile.outputs.changed != ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CHANGED: ${{ steps.recompile.outputs.changed }}
-          SKIPPED: ${{ steps.recompile.outputs.skipped }}
-          UV_VERSION: ${{ steps.recompile.outputs.uv_version }}
-          DELTAS: ${{ steps.recompile.outputs.deltas }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: |
-          set -euo pipefail
-          branch="lockfile-recompile"
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -B "$branch"
-          # Explicit paths, never `git add -A`: this job must be incapable of committing
-          # anything the recompile step did not itself produce.
-          git add -- $CHANGED
-
-          count="$(echo "$CHANGED" | wc -w | tr -d ' ')"
-          git commit -m "deps: recompile ${count} lockfile(s) against requirements.in" \
-                     -m "Dependabot edits requirements.in but cannot regenerate the hash-pinned
-          lock the image installs from, so the two drift apart and the drift check
-          turns red with nothing to fix it. Regenerated with the command recorded
-          in each lock's own header.
-
-          uv: ${UV_VERSION}"
-
-          # --force-with-lease, not --force: if something else advanced this branch since
-          # the checkout, stop rather than discard it.
-          git push --force-with-lease origin "$branch"
-
-          # %0A is how the script encodes newlines through GITHUB_OUTPUT, which is
-          # single-line. Decoded here so the PR body reads as a list.
-          delta_md="$(printf '%s' "$DELTAS" | sed 's/%0A/\n/g' | sed 's/^/- /')"
-
-          body="Regenerated by \`lockfile-recompile\` using the command recorded in each lock's own header.
-
-          **Files:** ${CHANGED}
-          **uv:** \`${UV_VERSION}\`
-
-          **What moved:**
-          ${delta_md}
-
-          A large bump count is a dependency UPGRADE, not a lock sync, and deserves a real
-          review. Some repos in this fleet only check that the \`==\` pins in
-          \`requirements.in\` match the lock, so transitive packages can move a long way with
-          CI still green.
-
-          Each lock was compiled to a fresh path (not onto itself, which would read the old
-          lock as preferences and keep stale pins), compiled a second time, and required to
-          match before this PR was opened.
-
-          If the drift check still fails here, the cause is a uv version difference between
-          this run and the CI run, and the version above is the first thing to compare."
-          if [ -n "${SKIPPED}" ]; then
-            body="${body}
-
-          **Skipped, no uv header:** ${SKIPPED}"
-          fi
-
-          # MUST filter on state=open. `gh pr view <branch>` matches a CLOSED pr too, so once
-          # anyone closes this PR without merging it, the job would take the edit path
-          # forever: it would update a closed PR's body, never open a new one, and exit 0.
-          # A green run, a pushed branch, and no open PR is exactly the shape of failure this
-          # whole system exists to remove, and it was found by closing the PR in a test repo
-          # and watching the next run report success.
-          open_pr="$(gh pr list --head "$branch" --state open --json number --jq '.[0].number // empty')"
-          if [ -n "$open_pr" ]; then
-            gh pr edit "$open_pr" --body "$body"
-            exit 0
-          fi
-
-          # The one failure this job cannot fix for itself, caught and explained rather than
-          # left as a raw GraphQL error at the end of an otherwise successful run.
-          #
-          # `GITHUB_TOKEN` cannot open a pull request unless the repository allows it, and
-          # that setting is OFF by default. Everything above still succeeds: the lock is
-          # recompiled, committed and pushed. Only the PR fails, so without this message the
-          # symptom is a red run whose log ends in "not permitted to create or approve pull
-          # requests" with no indication that the fix is one repository setting.
-          if ! gh pr create --base "$DEFAULT_BRANCH" --head "$branch" \
-                 --title "deps: recompile lockfiles against requirements.in" \
-                 --body "$body" 2> /tmp/pr-err; then
-            cat /tmp/pr-err
-            if grep -q "not permitted to create or approve pull requests" /tmp/pr-err; then
-              echo "::error::This repo does not allow Actions to open pull requests, so the"
-              echo "::error::recompiled lock is pushed to '$branch' but no PR was opened."
-              echo "::error::Fix (repo admin, once per repo):"
-              echo "::error::  Settings > Actions > General > Workflow permissions >"
-              echo "::error::  tick 'Allow GitHub Actions to create and approve pull requests'"
-              echo "::error::or: gh api -X PUT repos/${GITHUB_REPOSITORY}/actions/permissions/workflow \\"
-              echo "::error::      -F default_workflow_permissions=read -F can_approve_pull_request_reviews=true"
-              echo "::error::The branch is pushed and a PR can be opened by hand meanwhile."
-            fi
-            exit 1
-          fi
+          uv-version: '0.12.5'   # bump together with this repo's ci.yml, never alone
+          github-token: ${{ secrets.GITHUB_TOKEN }}
