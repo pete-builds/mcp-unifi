@@ -110,9 +110,39 @@ jobs:
           **Skipped, no uv header:** ${SKIPPED}"
           fi
 
-          if gh pr view "$branch" --json number >/dev/null 2>&1; then
-            gh pr edit "$branch" --body "$body"
-          else
-            gh pr create --base "$DEFAULT_BRANCH" --head "$branch" \
-              --title "deps: recompile lockfiles against requirements.in" --body "$body"
+          # MUST filter on state=open. `gh pr view <branch>` matches a CLOSED pr too, so once
+          # anyone closes this PR without merging it, the job would take the edit path
+          # forever: it would update a closed PR's body, never open a new one, and exit 0.
+          # A green run, a pushed branch, and no open PR is exactly the shape of failure this
+          # whole system exists to remove, and it was found by closing the PR in a test repo
+          # and watching the next run report success.
+          open_pr="$(gh pr list --head "$branch" --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$open_pr" ]; then
+            gh pr edit "$open_pr" --body "$body"
+            exit 0
+          fi
+
+          # The one failure this job cannot fix for itself, caught and explained rather than
+          # left as a raw GraphQL error at the end of an otherwise successful run.
+          #
+          # `GITHUB_TOKEN` cannot open a pull request unless the repository allows it, and
+          # that setting is OFF by default. Everything above still succeeds: the lock is
+          # recompiled, committed and pushed. Only the PR fails, so without this message the
+          # symptom is a red run whose log ends in "not permitted to create or approve pull
+          # requests" with no indication that the fix is one repository setting.
+          if ! gh pr create --base "$DEFAULT_BRANCH" --head "$branch" \
+                 --title "deps: recompile lockfiles against requirements.in" \
+                 --body "$body" 2> /tmp/pr-err; then
+            cat /tmp/pr-err
+            if grep -q "not permitted to create or approve pull requests" /tmp/pr-err; then
+              echo "::error::This repo does not allow Actions to open pull requests, so the"
+              echo "::error::recompiled lock is pushed to '$branch' but no PR was opened."
+              echo "::error::Fix (repo admin, once per repo):"
+              echo "::error::  Settings > Actions > General > Workflow permissions >"
+              echo "::error::  tick 'Allow GitHub Actions to create and approve pull requests'"
+              echo "::error::or: gh api -X PUT repos/${GITHUB_REPOSITORY}/actions/permissions/workflow \\"
+              echo "::error::      -F default_workflow_permissions=read -F can_approve_pull_request_reviews=true"
+              echo "::error::The branch is pushed and a PR can be opened by hand meanwhile."
+            fi
+            exit 1
           fi
