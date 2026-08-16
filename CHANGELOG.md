@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.21.1] - 2026-08-16
+
+### Fixed
+
+- **Restored the Python 3.13 base image.** A Dependabot digest bump had carried
+  the Dockerfile `FROM` tag from `python:3.13-slim` to `python:3.14-slim`, and
+  the deployed container was running Python 3.14.7. Every other version surface
+  in this repo targets 3.13: `requires-python`, the ruff and mypy targets, the
+  CI matrix, and `requirements*.lock` (compiled with `--python-version 3.13`).
+  The runtime was therefore one no lockfile or check had ever exercised. Both
+  build stages are back on `python:3.13-slim`, pinned to a current digest.
+
+### Added
+
+- **CI asserts the image's Python minor version.** The `build-image` job now
+  runs the built image's own interpreter and fails if it is not 3.13. Nothing
+  previously executed the image's Python (every job uses `setup-python`), which
+  is why the version drift stayed green through CI for its entire life.
+
 ## [0.21.0] - 2026-08-12
 
 ### Added

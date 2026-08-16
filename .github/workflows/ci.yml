@@ -133,6 +133,30 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Assert the image ships the Python minor version we target
+        # Guard rail for the digest-bump trap. Every other job in this workflow
+        # runs on actions/setup-python 3.13, so nothing here ever executes the
+        # *image's* interpreter. That let a Dependabot digest bump move the
+        # Dockerfile FROM tag from 3.13 to 3.14 and ship a runtime no lockfile
+        # or check had exercised, with CI fully green throughout.
+        #
+        # requirements*.lock are compiled with --python-version 3.13 and
+        # pyproject targets py313, so the image must agree. --entrypoint is
+        # required: the image's ENTRYPOINT is the server itself.
+        run: |
+          docker run --rm --entrypoint python mcp-unifi:ci -c '
+          import sys
+          want = (3, 13)
+          got = sys.version_info[:2]
+          assert got == want, (
+              f"image ships Python {sys.version.split()[0]}, but pyproject, "
+              f"the CI matrix and requirements*.lock all target "
+              f"{want[0]}.{want[1]}. Fix the Dockerfile FROM tag, or retarget "
+              f"every version surface together."
+          )
+          print(f"image Python {sys.version.split()[0]} matches target {want[0]}.{want[1]}")
+          '
+
       - name: Save image for scan job
         run: docker save mcp-unifi:ci -o /tmp/mcp-unifi.tar
 
