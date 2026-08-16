@@ -15,23 +15,26 @@ name: lockfile-recompile
 #   standing fleet-wide credential, to do work that is per-repo by nature. Least privilege
 #   says push the chore down to the repo and keep the blast radius at one.
 #
-# WHY uv IS NOT PINNED HERE
-#   Deliberate, and the reason is the second half of the gap. CI installs uv unpinned, so
-#   the resolution CI expects is a moving target: a lock can go "stale" with no code change
-#   at all, purely because uv released. Pinning uv HERE while CI stays unpinned would
-#   guarantee divergence. Matching CI means this job resolves with the same uv CI will use
-#   that day. The version is recorded in the PR body so a disagreement is diagnosable at a
-#   glance rather than being a mystery.
+# WHY uv IS PINNED, AND PINNED TO THE SAME VERSION CI USES
+#   The loop and CI's drift check must resolve with the SAME uv, or a lock can go "stale"
+#   with no code change at all, purely because uv released. Floating both kept them in
+#   agreement but made every uv release a silent resolver migration inside a weekly
+#   maintenance run. Pinning both makes resolver upgrades deliberate: bump the pin here
+#   and in ci.yml TOGETHER, never one without the other. The version is recorded in the
+#   PR body so a disagreement is diagnosable at a glance rather than being a mystery.
 #
 # The actual work is .github/scripts/recompile-locks.sh, which has its own control suite in
-# the workspace (scripts/test-recompile-locks.sh, 15 controls including two negative ones).
+# the workspace (scripts/test-recompile-locks.sh; it reports its own count, including
+# negative controls).
 # Logic lives in a script so it can be tested; this file is orchestration only.
 
 on:
   schedule:
-    # Thursday afternoon, after Dependabot's Thursday 09:30 ET pip run, so a bumped .in is
-    # regenerated the same day instead of sitting red for a week.
-    - cron: '0 16 * * 4'
+    # Thursday 20:00 UTC (16:00 EDT / 15:00 EST): late enough that Dependabot's 09:30 ET
+    # pip run AND cypher's 2-hour merge cycle have landed the week's bumps on main. The
+    # earlier 16:00 UTC slot could fire before that week's merges and lose a week to the
+    # race.
+    - cron: '0 20 * * 4'
   workflow_dispatch:
 
 permissions:
@@ -52,8 +55,8 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: Install uv
-        run: pip install uv
+      - name: Install uv (pinned; bump together with ci.yml)
+        run: pip install uv==0.12.5
 
       - name: Recompile every lock from the command in its own header
         id: recompile
