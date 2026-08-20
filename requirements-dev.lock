@@ -420,9 +420,9 @@ cryptography==50.0.0 \
     #   joserfc
     #   pyjwt
     #   secretstorage
-cyclopts==4.22.5 \
-    --hash=sha256:94044506317462cad90fb01a917dadce1f48a0915ba3605dc8d178dea1229e24 \
-    --hash=sha256:cf9ce285836053d156730ea4ea0ad0c75cf63beb3f3d8edf222a795bc57666ab
+cyclopts==4.23.0 \
+    --hash=sha256:1581758c5b9982c3b2ae7df6d87243e3a6fc3265ea621f96caeb349b6fa43ad2 \
+    --hash=sha256:2f764bbd90f1888073971c09576f90e594f80353588e10aa615b7d59bc009821
     # via fastmcp-slim
 dnspython==2.8.0 \
     --hash=sha256:01d9bbc4a2d76bf0db7c1f729812ded6d912bd318d3b1cf81d30c0f845dbf3af \
@@ -538,9 +538,9 @@ hypothesis==6.165.2 \
     --hash=sha256:f7c68a5684b2e2ad3c33500198a6073b3d04493fd7b1ef34937645ad092b797d \
     --hash=sha256:fff6ff4d566570e2169911deb0b0c90a69e5407a1f6d6e075d618fff5f143807
     # via -r requirements-dev.in
-idna==3.18 \
-    --hash=sha256:7f952cbe720b688055e3f87de14f5c3e5fdaa8bc3928985c4077ca689de849a2 \
-    --hash=sha256:ffb385a7e039654cef1ab9ef32c6fafe283c0c0467bba1d9029738ce4a14a848
+idna==3.19 \
+    --hash=sha256:5e0811a4383b21dc5838069f801c4fb62113b7447663d2530d2bd6e77b49bf15 \
+    --hash=sha256:815e7be7a7806d54abb586dc943addc79e8b2ee16915059658cbeff4b1b43bf4
     # via
     #   anyio
     #   email-validator
@@ -982,9 +982,9 @@ pydantic-settings==2.15.0 \
     #   -r requirements.in
     #   fastmcp-slim
     #   mcp
-pygments==2.20.0 \
-    --hash=sha256:6757cd03768053ff99f3039c1a36d6c0aa0b263438fcab17520b30a303a82b5f \
-    --hash=sha256:81a9e26dd42fd28a23a2d169d86d7ac03b46e2f8b59ed4698fb4785f946d0176
+pygments==2.21.0 \
+    --hash=sha256:2363c69b61c4a97c838da3b130dcd6468f4848992b21a82f2a63ec34377137d9 \
+    --hash=sha256:610ca751c9bc2492b38eb9a38a7fbc93edbbb2d7182edaf34e66ae493dee5c8c
     # via
     #   pytest
     #   rich
@@ -1286,9 +1286,9 @@ starlette==1.6.0 \
     #   fastmcp-slim
     #   mcp
     #   sse-starlette
-types-pyyaml==6.0.12.20260724 \
-    --hash=sha256:3c1ce1bb73cd5ec02e90390c2b1f00e810d241d8825fd73ff359696839271b6b \
-    --hash=sha256:d57db930a4b2efbc57cf430ec8882765d246929432fa253092f383902329a453
+types-pyyaml==6.0.12.20260815 \
+    --hash=sha256:28764110c9cf35846e733da32d8d734df7473c5dde9ef67c3b7332ec0e819858 \
+    --hash=sha256:6f332212b7e191f3afd5016a713c510b6340593b7ebec573c7d5d20aa5386d3b
     # via -r requirements-dev.in
 typing-extensions==4.16.0 \
     --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8 \
