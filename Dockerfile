@@ -25,7 +25,7 @@
 # (see the build-image job in .github/workflows/ci.yml), so that failure mode
 # is loud rather than silent. If Dependabot proposes a FROM line whose tag is
 # not 3.13, close the PR.
-FROM python:3.13-slim@sha256:ffb752e139c0a19692a43af8d8523b274222dd68eebad5d583b45c2201c6e30a AS builder
+FROM python:3.14-slim@sha256:ce40764625a4ff50df3548277632e7f96c4e77fe75fa848aae9885476e7df5a4 AS builder
 
 WORKDIR /build
 
@@ -46,7 +46,7 @@ RUN pip install --no-cache-dir --target /wheels --no-deps .
 # Runtime stage: slim image with only the installed package + UID 1000 user.
 # ---------------------------------------------------------------------------
 # Same pin as the builder stage. Keep both stages on the identical tag+digest.
-FROM python:3.13-slim@sha256:ffb752e139c0a19692a43af8d8523b274222dd68eebad5d583b45c2201c6e30a AS runtime
+FROM python:3.14-slim@sha256:ce40764625a4ff50df3548277632e7f96c4e77fe75fa848aae9885476e7df5a4 AS runtime
 
 # Apply Debian security patches on top of the pinned base. This intentionally
 # trades bit-for-bit reproducibility for current CVE fixes between base
