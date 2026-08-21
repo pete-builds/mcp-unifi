@@ -1,0 +1,183 @@
+{
+  "classes": {
+    "tool_selection": {
+      "deterministic": false,
+      "score": 0.68,
+      "skip_reason": "",
+      "skipped": false,
+      "tiers": {
+        "focused": {
+          "cases": [
+            {
+              "case_id": "alarms",
+              "detail": "list_alarms",
+              "outcome": "correct",
+              "passed": true
+            },
+            {
+              "case_id": "ban_a_client",
+              "detail": "block_client",
+              "outcome": "correct",
+              "passed": true
+            },
+            {
+              "case_id": "bounce_a_client",
+              "detail": "answered without calling a tool",
+              "outcome": "no_call",
+              "passed": false
+            },
+            {
+              "case_id": "connected_clients",
+              "detail": "list_clients",
+              "outcome": "correct",
+              "passed": true
+            },
+            {
+              "case_id": "console_triage",
+              "detail": "get_console_health",
+              "outcome": "correct",
+              "passed": true
+            },
+            {
+              "case_id": "create_guest_wifi",
+              "detail": "HTTP 429: {\"error\":{\"message\":\"No deployments available for selected model, Try again in 481 seconds. Passed model=groq/llama-3.3-70b-versatile. pre-call-checks=False, cooldown_list=['a4adda0390eace6079205853e7",
+              "outcome": "error",
+              "passed": false
+            },
+            {
+              "case_id": "drift_audit",
+              "detail": "audit_network_drift",
+              "outcome": "correct",
+              "passed": true
+            },
+            {
+              "case_id": "exposure_audit",
+              "detail": "audit_open_ports",
+              "outcome": "correct",
+              "passed": true
+            },
+            {
+              "case_id": "find_a_device",
+              "detail": "locate_device",
+              "outcome": "correct",
+              "passed": true
+            },
+            {
+              "case_id": "firewall_rules",
+              "detail": "list_firewall_rules",
+              "outcome": "correct",
+              "passed": true
+            },
+            {
+              "case_id": "firmware_version",
+              "detail": "get_console_firmware",
+              "outcome": "correct",
+              "passed": true
+            },
+            {
+              "case_id": "gateway_throughput",
+              "detail": "get_gateway_stats",
+              "outcome": "correct",
+              "passed": true
+            },
+            {
+              "case_id": "guest_portal",
+              "detail": "get_guest_portal",
+              "outcome": "correct",
+              "passed": true
+            },
+            {
+              "case_id": "ips_state",
+              "detail": "HTTP 429: {\"error\":{\"message\":\"No deployments available for selected model, Try again in 481 seconds. Passed model=groq/llama-3.3-70b-versatile. pre-call-checks=False, cooldown_list=['a4adda0390eace6079205853e7",
+              "outcome": "error",
+              "passed": false
+            },
+            {
+              "case_id": "last_speedtest",
+              "detail": "get_speedtest_results",
+              "outcome": "correct",
+              "passed": true
+            },
+            {
+              "case_id": "list_ssids",
+              "detail": "list_wlans",
+              "outcome": "correct",
+              "passed": true
+            },
+            {
+              "case_id": "network_detail",
+              "detail": "get_network_details",
+              "outcome": "correct",
+              "passed": true
+            },
+            {
+              "case_id": "open_a_port",
+              "detail": "HTTP 429: {\"error\":{\"message\":\"No deployments available for selected model, Try again in 481 seconds. Passed model=groq/llama-3.3-70b-versatile. pre-call-checks=False, cooldown_list=['a4adda0390eace6079205853e7",
+              "outcome": "error",
+              "passed": false
+            },
+            {
+              "case_id": "radio_channel",
+              "detail": "HTTP 429: {\"error\":{\"message\":\"No deployments available for selected model, Try again in 481 seconds. Passed model=groq/llama-3.3-70b-versatile. pre-call-checks=False, cooldown_list=['a4adda0390eace6079205853e7",
+              "outcome": "error",
+              "passed": false
+            },
+            {
+              "case_id": "reboot_an_ap",
+              "detail": "HTTP 429: {\"error\":{\"message\":\"No deployments available for selected model, Try again in 481 seconds. Passed model=groq/llama-3.3-70b-versatile. pre-call-checks=False, cooldown_list=['a4adda0390eace6079205853e7",
+              "outcome": "error",
+              "passed": false
+            },
+            {
+              "case_id": "take_a_backup",
+              "detail": "HTTP 429: {\"error\":{\"message\":\"No deployments available for selected model, Try again in 481 seconds. Passed model=groq/llama-3.3-70b-versatile. pre-call-checks=False, cooldown_list=['a4adda0390eace6079205853e7",
+              "outcome": "error",
+              "passed": false
+            },
+            {
+              "case_id": "top_talkers",
+              "detail": "list_top_talkers",
+              "outcome": "correct",
+              "passed": true
+            },
+            {
+              "case_id": "traffic_rules",
+              "detail": "HTTP 429: {\"error\":{\"message\":\"No deployments available for selected model, Try again in 481 seconds. Passed model=groq/llama-3.3-70b-versatile. pre-call-checks=False, cooldown_list=['a4adda0390eace6079205853e7",
+              "outcome": "error",
+              "passed": false
+            },
+            {
+              "case_id": "wan_ipv6",
+              "detail": "get_wan_ipv6",
+              "outcome": "correct",
+              "passed": true
+            },
+            {
+              "case_id": "wan_status",
+              "detail": "get_wan_status",
+              "outcome": "correct",
+              "passed": true
+            }
+          ],
+          "passed": 17,
+          "score": 0.68,
+          "total": 25
+        }
+      }
+    }
+  },
+  "harness_version": "1.0",
+  "model": {
+    "label": "openai-compatible:groq/llama-3.3-70b-versatile",
+    "reachable": true
+  },
+  "run": {
+    "generated_at": "2026-08-21T13:00:58Z"
+  },
+  "schema": "1",
+  "server_version": "0.21.1",
+  "tool_surface": {
+    "mutating": 62,
+    "total": 134
+  }
+}
