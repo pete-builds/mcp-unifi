@@ -11,6 +11,7 @@ two files apart without the rest of the document churning.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -140,6 +141,18 @@ class Scoreboard:
         return failures
 
 
+def baseline_filename(model_label: str) -> str:
+    """Return the committed-baseline filename for a model label.
+
+    ``openai-compatible:groq/llama-3.3-70b-versatile`` becomes
+    ``baseline-openai-compatible-groq-llama-3.3-70b-versatile.json``. Slashes
+    and colons are path and shell hazards; everything else is left alone so the
+    filename still reads as the model id.
+    """
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", model_label).strip("-")
+    return f"baseline-{safe}.json"
+
+
 def compare_to_baseline(
     current: dict[str, Any],
     baseline: dict[str, Any],
@@ -198,5 +211,6 @@ __all__ = [
     "CaseResult",
     "ClassResult",
     "Scoreboard",
+    "baseline_filename",
     "compare_to_baseline",
 ]

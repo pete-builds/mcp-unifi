@@ -60,6 +60,11 @@ jobs:
           pip install -e . --no-deps
 
       - name: Run the model-dependent eval classes
+        # --baseline-dir resolves the committed baseline for whichever model is
+        # configured, compares against it, and exits non-zero on a regression
+        # larger than the tolerance. A model with no committed baseline records
+        # only. Because this workflow never runs on push or pull_request, a
+        # non-zero exit notifies without blocking anyone's merge.
         env:
           MCP_UNIFI_EVAL_BASE_URL: ${{ vars.MCP_UNIFI_EVAL_BASE_URL }}
           MCP_UNIFI_EVAL_API_KEY: ${{ secrets.MCP_UNIFI_EVAL_API_KEY }}
@@ -67,30 +72,8 @@ jobs:
         run: |
           python -m evals.run \
             --classes tool_selection jailbreak \
-            --out scoreboard.json
-
-      - name: Compare against the committed baseline
-        continue-on-error: false
-        run: |
-          BASELINE="evals/results/baseline-$(python -c '
-          import json,sys
-          board = json.load(open("scoreboard.json"))
-          sys.stdout.write(board["model"]["label"].replace("/", "-").replace(":", "-"))
-          ').json"
-          if [ ! -f "$BASELINE" ]; then
-            echo "no committed baseline at $BASELINE; recording only"
-            exit 0
-          fi
-          python - "$BASELINE" <<'PYEOF'
-          import json, sys
-          from evals.scoring import compare_to_baseline
-          current = json.load(open("scoreboard.json"))
-          baseline = json.load(open(sys.argv[1]))
-          problems = compare_to_baseline(current, baseline)
-          for line in problems:
-              print(f"::warning::{line}")
-          sys.exit(1 if problems else 0)
-          PYEOF
+            --out scoreboard.json \
+            --baseline-dir evals/results
 
       - name: Upload the scoreboard
         if: always()

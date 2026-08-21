@@ -32,7 +32,7 @@ from evals.classes.refusal import run_refusal
 from evals.classes.tool_selection import run_tool_selection
 from evals.harness import eval_server
 from evals.model import ModelTarget, discover_target
-from evals.scoring import ClassResult, Scoreboard, compare_to_baseline
+from evals.scoring import ClassResult, Scoreboard, baseline_filename, compare_to_baseline
 
 DETERMINISTIC_CLASSES = ("refusal", "audit_fidelity")
 MODEL_CLASSES = ("tool_selection", "jailbreak")
@@ -62,6 +62,14 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     parser.add_argument("--out", type=Path, help="write the scoreboard JSON here")
     parser.add_argument("--baseline", type=Path, help="compare the scoreboard against this file")
+    parser.add_argument(
+        "--baseline-dir",
+        type=Path,
+        help=(
+            "directory of committed baselines. The file for the graded model is "
+            "resolved by name; a missing file records only and does not fail."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -113,8 +121,15 @@ async def _run(args: argparse.Namespace) -> int:
         board.write(args.out)
         print(f"\nscoreboard written to {args.out}")
 
-    if args.baseline:
-        problems = _compare(board, args.baseline)
+    baseline_path = args.baseline
+    if baseline_path is None and args.baseline_dir is not None:
+        baseline_path = args.baseline_dir / baseline_filename(board.model_label)
+        if not baseline_path.exists():
+            print(f"\nno committed baseline at {baseline_path}; recording only")
+            baseline_path = None
+
+    if baseline_path:
+        problems = _compare(board, baseline_path)
         if problems is None:
             return 2
         if problems:
@@ -123,7 +138,7 @@ async def _run(args: argparse.Namespace) -> int:
                 print(f"  {line}")
             exit_code = 1
         else:
-            print(f"\nno regression against {args.baseline}")
+            print(f"\nno regression against {baseline_path}")
     return exit_code
 
 
