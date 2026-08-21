@@ -46,6 +46,26 @@ Design notes
   and re-raises. The audit emit itself never blocks the exception path —
   sink errors are caught and logged inside :class:`AuditLog.emit`.
 * Latency is wall-clock milliseconds measured around the wrapped coroutine.
+
+Tracing (optional, v0.22)
+-------------------------
+The same wrapper opens one OpenTelemetry span per call via
+:func:`mcp_unifi.telemetry.tool_span`. This is the right seam for it: it
+already knows the tool name, the declared ``mutates`` flag, the resolved
+controller, and the caller's kwargs (so it can read ``dry_run``), and it
+already sits on both the success and the exception path.
+
+Tracing is off by default and OpenTelemetry is not a runtime dependency; when
+it is absent the span object is a no-op and this wrapper behaves exactly as it
+did before. Arguments and results are **not** put on the span. See
+:mod:`mcp_unifi.telemetry` for why.
+
+The span's ``mcp.tool.outcome`` attribute uses the same semantics as the audit
+log's ``success`` field: ``"ok"`` means the tool body returned, which includes
+returning a formatted error envelope because the controller rejected the
+request. That asymmetry is deliberate in the audit log and is preserved here so
+the two records agree line for line. A trace that shows ``outcome=ok`` is
+saying "the server did its job", not "the change was applied".
 """
 
 from __future__ import annotations
@@ -56,7 +76,7 @@ from collections.abc import Awaitable, Callable
 from functools import wraps
 from typing import Any, ParamSpec, TypeVar
 
-from mcp_unifi import audit
+from mcp_unifi import audit, telemetry
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -167,34 +187,47 @@ def audited(
             client_id = _current_client_id()
             log = audit.get_audit_log()
 
-            start = time.perf_counter()
-            try:
-                result = await fn(*args, **kwargs)
-            except Exception as exc:
+            # The span wraps the audit emit as well as the tool body, so its
+            # duration is the full cost of serving the call rather than just
+            # the controller round trip. That is the number an SLO is written
+            # against: a caller waits for both.
+            with telemetry.tool_span(
+                tool_name,
+                mutates=mutates,
+                controller=controller,
+                client_id=client_id,
+                dry_run=telemetry.coerce_dry_run(kwargs.get("dry_run")),
+            ) as span:
+                start = time.perf_counter()
+                try:
+                    result = await fn(*args, **kwargs)
+                except Exception as exc:
+                    latency_ms = (time.perf_counter() - start) * 1000.0
+                    span.record_error(exc)
+                    await log.emit(
+                        controller=controller,
+                        tool=tool_name,
+                        args=audit_args,
+                        result=None,
+                        success=False,
+                        latency_ms=latency_ms,
+                        error=str(exc),
+                        client_id=client_id,
+                    )
+                    raise
+
                 latency_ms = (time.perf_counter() - start) * 1000.0
+                span.set(telemetry.ATTR_OUTCOME, telemetry.OUTCOME_OK)
                 await log.emit(
                     controller=controller,
                     tool=tool_name,
                     args=audit_args,
-                    result=None,
-                    success=False,
+                    result=_coerce_result(result),
+                    success=True,
                     latency_ms=latency_ms,
-                    error=str(exc),
                     client_id=client_id,
                 )
-                raise
-
-            latency_ms = (time.perf_counter() - start) * 1000.0
-            await log.emit(
-                controller=controller,
-                tool=tool_name,
-                args=audit_args,
-                result=_coerce_result(result),
-                success=True,
-                latency_ms=latency_ms,
-                client_id=client_id,
-            )
-            return result
+                return result
 
         return wrapper
 
