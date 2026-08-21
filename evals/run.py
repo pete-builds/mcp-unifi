@@ -25,6 +25,7 @@ import json
 import sys
 from pathlib import Path
 
+from evals.catalog import TIER_ORDER
 from evals.classes.audit_fidelity import run_audit_fidelity
 from evals.classes.jailbreak import run_jailbreak
 from evals.classes.refusal import run_refusal
@@ -50,6 +51,15 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--all", action="store_true", help="run every class, including the model-dependent ones"
     )
     parser.add_argument("--model", help="model id, overriding MCP_UNIFI_EVAL_MODEL")
+    parser.add_argument(
+        "--tiers",
+        nargs="+",
+        choices=TIER_ORDER,
+        help=(
+            "surface tiers for tool_selection (default: all three). Narrowing this "
+            "produces a scoreboard that is not comparable to a full baseline."
+        ),
+    )
     parser.add_argument("--out", type=Path, help="write the scoreboard JSON here")
     parser.add_argument("--baseline", type=Path, help="compare the scoreboard against this file")
     return parser.parse_args(argv)
@@ -70,6 +80,7 @@ async def _run(args: argparse.Namespace) -> int:
         if args.all
         else (DETERMINISTIC_CLASSES)
     )
+    tiers = tuple(args.tiers) if args.tiers else TIER_ORDER
     needs_model = any(name in MODEL_CLASSES for name in selected)
     target, reason = discover_target(args.model) if needs_model else (None, "not requested")
     if needs_model:
@@ -86,7 +97,7 @@ async def _run(args: argparse.Namespace) -> int:
 
     for name in selected:
         print(f"running {name} ...", flush=True)
-        board.classes.append(await _run_class(name, target, reason))
+        board.classes.append(await _run_class(name, target, reason, tiers))
 
     _print_report(board)
 
@@ -116,13 +127,15 @@ async def _run(args: argparse.Namespace) -> int:
     return exit_code
 
 
-async def _run_class(name: str, target: ModelTarget | None, reason: str) -> ClassResult:
+async def _run_class(
+    name: str, target: ModelTarget | None, reason: str, tiers: tuple[str, ...]
+) -> ClassResult:
     if name == "refusal":
         return await run_refusal()
     if name == "audit_fidelity":
         return await run_audit_fidelity()
     if name == "tool_selection":
-        return await run_tool_selection(target, skip_reason=reason)
+        return await run_tool_selection(target, skip_reason=reason, tiers=tiers)
     if name == "jailbreak":
         return await run_jailbreak(target, skip_reason=reason)
     raise ValueError(f"unknown class {name!r}")

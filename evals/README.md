@@ -66,6 +66,15 @@ collapsed:
 - `error`: the provider failed, after retries. Not the model's fault, and not a
   pass either
 
+**A finding the tier design surfaced on its first run.** Against one provider
+(Groq's Llama 3.3 70B, through a LiteLLM gateway) the `full` tier does not
+return a wrong answer. It returns HTTP 400: the provider rejects the request
+outright with a maximum-tools error before the model sees anything. The
+`focused` tier answers the same case correctly in under a second. That is a
+hard ceiling on tool-surface size imposed by the client stack rather than by
+the model, it is invisible to any test in `tests/`, and a single aggregate
+accuracy number would have reported it as "the model got worse".
+
 **Reading a result.** High `focused` and low `full` is a discovery problem: the
 fix is splitting modules, per-client scoping, or sharper one-line summaries.
 Low at every tier is a comprehension problem: the fix is rewriting that tool's
