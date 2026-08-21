@@ -14,10 +14,12 @@ UniFi exposes two API surfaces on a self-hosted console:
 
 This server runs entirely on the first one. `src/mcp_unifi/clients/unifi.py` builds
 its base as `https://{host}:{port}/proxy/network` with a site path of
-`/api/s/{site}`, and every write goes through it: 28 calls under `/rest/*`, four
-under `/cmd/*`, one under `/set/*`. The v2 tree is referenced in 27 places for the
-reads that only exist there. **There is not a single call to `/integration/v1` in
-the codebase.**
+`/api/s/{site}`, and every configuration write goes through it. Counting the
+mutating HTTP calls in that one file: 28 under `/rest/*`, four under `/cmd/*`, one
+under `/set/*`. The v2 tree is referenced in 27 places for the reads that only
+exist there. The other clients (`unifi_os.py`, `protect.py`, `access.py`) issue no
+configuration writes at all; the single POST among them is a console login.
+**There is not one call to `/integration/v1` anywhere in the codebase.**
 
 The fragility is not hypothetical. Live probes against a UCG-Fiber recorded in
 `clients/unifi.py` and `SESSION-RESUME.md` found `GET` and `POST /stat/event`
