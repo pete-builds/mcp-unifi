@@ -49,9 +49,7 @@ async def _restore_applying(server, backup_json: str):
     """
     preview = await _call(server, "restore_config", {"backup_json": backup_json})
     assert preview.get("preview") is True, f"expected a preview envelope, got {preview}"
-    return await _call(
-        server, "confirm_destructive_action", {"token": preview["token"]}
-    )
+    return await _call(server, "confirm_destructive_action", {"token": preview["token"]})
 
 
 # ---------------------------------------------------------------------------
@@ -757,11 +755,7 @@ async def test_restore_config_token_is_single_use(
     fresh_state: StubState, fresh_server: FastMCP
 ) -> None:
     envelope = await _call(fresh_server, "backup_config", {})
-    preview = await _call(
-        fresh_server, "restore_config", {"backup_json": json.dumps(envelope)}
-    )
+    preview = await _call(fresh_server, "restore_config", {"backup_json": json.dumps(envelope)})
     await _call(fresh_server, "confirm_destructive_action", {"token": preview["token"]})
-    second = await _call(
-        fresh_server, "confirm_destructive_action", {"token": preview["token"]}
-    )
+    second = await _call(fresh_server, "confirm_destructive_action", {"token": preview["token"]})
     assert "error" in second

@@ -671,7 +671,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             # it after creates so WLAN/lease bindings resolve correctly.
             async def _network_name_to_id() -> dict[str, str]:
                 nets = list(await backend.list_networks())
-                return {_norm(n.get("name")): n["_id"] for n in nets if isinstance(n.get("_id"), str)}
+                return {
+                    _norm(n.get("name")): n["_id"] for n in nets if isinstance(n.get("_id"), str)
+                }
 
             try:
                 for action in plan:
@@ -775,7 +777,6 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             executor=_execute,
         )
         return format_json(build_preview_envelope(pending))
-
 
 
 __all__ = ["BACKUP_SCHEMA", "REDACTED_PASSPHRASE", "register"]
