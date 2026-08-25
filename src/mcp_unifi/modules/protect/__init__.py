@@ -23,6 +23,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
+from mcp_unifi.annotations import CREATE, READ_ONLY, WRITE_IDEMPOTENT
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
@@ -60,7 +61,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     """Register every Protect tool on ``mcp``."""
     err = make_err(settings)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("list_cameras", mutates=False)
     async def list_cameras(controller: str = "default") -> str:
         """List every camera bonded to the Protect controller.
@@ -85,7 +86,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("list_cameras failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("get_camera", mutates=False)
     async def get_camera(camera_id: str, controller: str = "default") -> str:
         """Fetch a single camera's full record by ID.
@@ -113,7 +114,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("get_camera failed", extra={"camera_id": camera_id})
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("list_motion_events", mutates=False)
     async def list_motion_events(
         camera_id: str = "",
@@ -149,7 +150,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("list_motion_events failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("list_smart_detections", mutates=False)
     async def list_smart_detections(
         detection_type: str = "person",
@@ -192,7 +193,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("list_smart_detections failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("get_snapshot", mutates=False)
     async def get_snapshot(camera_id: str, controller: str = "default") -> str:
         """Fetch a current JPEG snapshot from a camera, base64-encoded.
@@ -227,7 +228,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("get_snapshot failed", extra={"camera_id": camera_id})
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("get_event_thumbnail", mutates=False)
     async def get_event_thumbnail(event_id: str, controller: str = "default") -> str:
         """Fetch the JPEG thumbnail for a Protect event, base64-encoded.
@@ -262,7 +263,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("get_event_thumbnail failed", extra={"event_id": event_id})
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("list_recordings", mutates=False)
     async def list_recordings(
         camera_id: str,
@@ -293,7 +294,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("list_recordings failed", extra={"camera_id": camera_id})
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=WRITE_IDEMPOTENT)
     @audited("set_camera_recording_mode", mutates=True)
     async def set_camera_recording_mode(
         camera_id: str,
@@ -341,7 +342,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("set_camera_recording_mode failed", extra={"camera_id": camera_id})
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=WRITE_IDEMPOTENT)
     @audited("set_camera_privacy_mode", mutates=True)
     async def set_camera_privacy_mode(
         camera_id: str,
@@ -391,7 +392,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("set_camera_privacy_mode failed", extra={"camera_id": camera_id})
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=WRITE_IDEMPOTENT)
     @audited("set_motion_sensitivity", mutates=True)
     async def set_motion_sensitivity(
         camera_id: str,
@@ -442,7 +443,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("set_motion_sensitivity failed", extra={"camera_id": camera_id})
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("list_doorbell_messages", mutates=False)
     async def list_doorbell_messages(controller: str = "default") -> str:
         """List doorbell cameras (those with ``isDoorbell=True``).
@@ -477,7 +478,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("list_doorbell_messages failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=CREATE)
     @audited("provision_camera", mutates=True)
     async def provision_camera(
         camera_id: str,

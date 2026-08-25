@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from mcp_unifi.annotations import CREATE, DESTRUCTIVE, READ_ONLY, WRITE_IDEMPOTENT
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
@@ -44,7 +45,7 @@ logger = logging.getLogger("mcp_unifi.network.routing")
 def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> None:
     err = make_err(settings)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("list_routes", mutates=False)
     async def list_routes(controller: str = "default") -> str:
         """List user-defined static (next-hop) routes on the controller.
@@ -70,7 +71,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("list_routes failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("get_route_details", mutates=False)
     async def get_route_details(route_id: str, controller: str = "default") -> str:
         """Show one static route's full record by ``_id``.
@@ -98,7 +99,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(f"route {route_id} not found")
         return format_json(target)
 
-    @mcp.tool()
+    @mcp.tool(annotations=CREATE)
     @audited("create_route", mutates=True)
     async def create_route(
         name: BoundedName,
@@ -168,7 +169,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("create_route failed", extra={"route_name": name})
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=WRITE_IDEMPOTENT)
     @audited("update_route", mutates=True)
     async def update_route(
         route_id: str,
@@ -217,7 +218,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("update_route failed", extra={"route_id": route_id})
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=DESTRUCTIVE)
     @audited("delete_route", mutates=True)
     async def delete_route(
         route_id: str,

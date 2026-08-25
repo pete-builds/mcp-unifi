@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from mcp_unifi.annotations import CREATE, DESTRUCTIVE, READ_ONLY
 from mcp_unifi.backends import Backend
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
@@ -85,7 +86,7 @@ async def _delete_resource(backend: Backend, kind: str, resource_id: str) -> boo
 def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> None:
     err = make_err(settings)
 
-    @mcp.tool()
+    @mcp.tool(annotations=CREATE)
     @audited("create_iot_network", mutates=True)
     async def create_iot_network(
         name: BoundedName,
@@ -296,7 +297,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             }
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=CREATE)
     @audited("provision_homelab_service", mutates=True)
     async def provision_homelab_service(
         name: BoundedName,
@@ -468,7 +469,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             }
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=DESTRUCTIVE)
     @audited("quarantine_client", mutates=True)
     async def quarantine_client(
         mac: str,
@@ -528,7 +529,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("quarantine_client failed", extra={"mac": mac})
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=CREATE)
     @audited("create_guest_network", mutates=True)
     async def create_guest_network(
         name: BoundedName,
@@ -738,7 +739,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             }
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("audit_open_ports", mutates=False)
     async def audit_open_ports(controller: str = "default") -> str:
         """Audit WAN-facing exposure (port forwards and WAN_IN accept rules).

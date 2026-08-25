@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from mcp_unifi.annotations import CREATE, DESTRUCTIVE, READ_ONLY, WRITE_IDEMPOTENT
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
@@ -53,7 +54,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         entries = await backend.list_dynamic_dns()
         return next((d for d in entries if isinstance(d, dict) and d.get("_id") == ddns_id), None)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("list_dynamic_dns", mutates=False)
     async def list_dynamic_dns(controller: str = "default") -> str:
         """List Dynamic DNS update configurations on the controller.
@@ -80,7 +81,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("list_dynamic_dns failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("get_dynamic_dns_details", mutates=False)
     async def get_dynamic_dns_details(ddns_id: str, controller: str = "default") -> str:
         """Show one Dynamic DNS config's full record by ``_id``.
@@ -109,7 +110,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(f"dynamic DNS config {ddns_id} not found")
         return format_json(redact(target))
 
-    @mcp.tool()
+    @mcp.tool(annotations=CREATE)
     @audited("create_dynamic_dns", mutates=True)
     async def create_dynamic_dns(
         service: str,
@@ -179,7 +180,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("create_dynamic_dns failed", extra={"host_name": host_name})
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=WRITE_IDEMPOTENT)
     @audited("update_dynamic_dns", mutates=True)
     async def update_dynamic_dns(
         ddns_id: str,
@@ -234,7 +235,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("update_dynamic_dns failed", extra={"ddns_id": ddns_id})
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=DESTRUCTIVE)
     @audited("delete_dynamic_dns", mutates=True)
     async def delete_dynamic_dns(
         ddns_id: str,

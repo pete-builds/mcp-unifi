@@ -21,6 +21,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
+from mcp_unifi.annotations import READ_ONLY
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
@@ -59,7 +60,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     # Doors (3)
     # ------------------------------------------------------------------
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("list_doors", mutates=False)
     async def list_doors(controller: str = "default") -> str:
         """List every door bonded to the Access controller.
@@ -83,7 +84,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("list_doors failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("get_door", mutates=False)
     async def get_door(door_id: str, controller: str = "default") -> str:
         """Fetch one door's full record by ID.
@@ -110,7 +111,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("get_door failed", extra={"door_id": door_id})
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("list_door_groups", mutates=False)
     async def list_door_groups(controller: str = "default") -> str:
         """List every door group defined on the controller.
@@ -136,7 +137,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     # Access policies (2)
     # ------------------------------------------------------------------
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("list_access_policies", mutates=False)
     async def list_access_policies(controller: str = "default") -> str:
         """List every access policy on the controller.
@@ -160,7 +161,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("list_access_policies failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("get_access_policy", mutates=False)
     async def get_access_policy(policy_id: str, controller: str = "default") -> str:
         """Fetch one access policy's full record by ID.
@@ -191,7 +192,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     # Credentials (3)
     # ------------------------------------------------------------------
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("list_credentials", mutates=False)
     async def list_credentials(controller: str = "default") -> str:
         """List every credential enrolled in the Access controller.
@@ -218,7 +219,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("list_credentials failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("get_credential", mutates=False)
     async def get_credential(credential_id: str, controller: str = "default") -> str:
         """Fetch one credential's full record by ID.
@@ -245,7 +246,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("get_credential failed", extra={"credential_id": credential_id})
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("audit_expiring_credentials", mutates=False)
     async def audit_expiring_credentials(
         days_ahead: int = 30,
@@ -312,7 +313,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     # Visitors (2)
     # ------------------------------------------------------------------
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("list_visitors", mutates=False)
     async def list_visitors(controller: str = "default") -> str:
         """List every visitor pass on the controller (active and expired).
@@ -340,7 +341,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("list_visitors failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("get_visitor", mutates=False)
     async def get_visitor(visitor_id: str, controller: str = "default") -> str:
         """Fetch one visitor pass's full record by ID.
@@ -370,7 +371,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     # Events (4)
     # ------------------------------------------------------------------
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("list_access_events", mutates=False)
     async def list_access_events(
         hours_back: int = 24,
@@ -411,7 +412,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("list_access_events failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("get_recent_access_events", mutates=False)
     async def get_recent_access_events(
         limit: int = 20,
@@ -439,7 +440,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("get_recent_access_events failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("summarize_access_activity", mutates=False)
     async def summarize_access_activity(
         hours_back: int = 24,
@@ -504,7 +505,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             }
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("list_failed_access_attempts", mutates=False)
     async def list_failed_access_attempts(
         hours_back: int = 24,
@@ -544,7 +545,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     # Devices (2)
     # ------------------------------------------------------------------
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("list_access_devices", mutates=False)
     async def list_access_devices(controller: str = "default") -> str:
         """List hubs, readers, relays, and intercoms bonded to the controller.
@@ -568,7 +569,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("list_access_devices failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("get_access_device", mutates=False)
     async def get_access_device(device_id: str, controller: str = "default") -> str:
         """Fetch one Access device's full record by ID.
@@ -599,7 +600,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     # System (2)
     # ------------------------------------------------------------------
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("get_access_system_info", mutates=False)
     async def get_access_system_info(controller: str = "default") -> str:
         """Return controller version, license tier, and capacity.
@@ -623,7 +624,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("get_access_system_info failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("list_access_users", mutates=False)
     async def list_access_users(controller: str = "default") -> str:
         """List every user enrolled in the Access system.

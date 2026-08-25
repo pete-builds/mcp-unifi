@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from mcp_unifi.annotations import DESTRUCTIVE, READ_ONLY, WRITE_IDEMPOTENT
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
@@ -25,7 +26,7 @@ logger = logging.getLogger("mcp_unifi.network.clients")
 def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> None:
     err = make_err(settings)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("list_clients", mutates=False)
     async def list_clients(controller: str = "default") -> str:
         """List currently active wireless and wired clients.
@@ -49,7 +50,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("list_clients failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=DESTRUCTIVE)
     @audited("block_client", mutates=True)
     async def block_client(
         mac: str,
@@ -93,7 +94,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("block_client failed", extra={"mac": mac})
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=WRITE_IDEMPOTENT)
     @audited("unblock_client", mutates=True)
     async def unblock_client(
         mac: str,
@@ -136,7 +137,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("unblock_client failed", extra={"mac": mac})
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=DESTRUCTIVE)
     # Classified mutating: nothing is persisted, but it deauths a live client off
     # the network. Transient effects on someone's connectivity are still effects.
     @audited("reconnect_client", mutates=True)

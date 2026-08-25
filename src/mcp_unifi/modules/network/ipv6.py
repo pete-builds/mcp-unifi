@@ -61,6 +61,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from mcp_unifi.annotations import READ_ONLY, WRITE_IDEMPOTENT
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
@@ -225,7 +226,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return f"multiple WAN networks found; pass wan_name (available: {names})"
         return wans[0]
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("get_wan_ipv6", mutates=False)
     async def get_wan_ipv6(wan_name: str = "", controller: str = "default") -> str:
         """Show the current IPv6 configuration of the WAN uplink(s).
@@ -265,7 +266,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         ]
         return format_json({"controller": controller, "wan_ipv6": view})
 
-    @mcp.tool()
+    @mcp.tool(annotations=WRITE_IDEMPOTENT)
     @audited("set_wan_ipv6", mutates=True)
     async def set_wan_ipv6(
         connection_type: str = "",
@@ -416,7 +417,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("set_wan_ipv6 failed", extra={"wan_name": wan_name})
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=WRITE_IDEMPOTENT)
     @audited("set_lan_ipv6", mutates=True)
     async def set_lan_ipv6(
         network_id: str,

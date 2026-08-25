@@ -35,6 +35,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from mcp_unifi.annotations import READ_ONLY, WRITE_IDEMPOTENT
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
@@ -74,7 +75,7 @@ def _wireguard_vpn_networks(networks: list[dict[str, Any]]) -> list[dict[str, An
 def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> None:
     err = make_err(settings)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("get_teleport_config", mutates=False)
     async def get_teleport_config(controller: str = "default") -> str:
         """Return Teleport VPN state and any wireguard-server networks.
@@ -124,7 +125,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             )
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=WRITE_IDEMPOTENT)
     @audited("set_teleport_enabled", mutates=True)
     async def set_teleport_enabled(
         enabled: bool,

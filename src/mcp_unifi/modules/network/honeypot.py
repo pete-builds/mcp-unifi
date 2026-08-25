@@ -23,6 +23,7 @@ import ipaddress
 import logging
 from typing import TYPE_CHECKING, Any
 
+from mcp_unifi.annotations import CREATE, DESTRUCTIVE, READ_ONLY
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
@@ -87,7 +88,7 @@ def _validate_ipv4(ip: str) -> str | None:
 def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> None:
     err = make_err(settings)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("list_honeypots", mutates=False)
     async def list_honeypots(controller: str = "default") -> str:
         """List configured honeypots and the global honeypot toggle.
@@ -121,7 +122,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             }
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=CREATE)
     @audited("create_honeypot", mutates=True)
     async def create_honeypot(
         network_id: str,
@@ -202,7 +203,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
         return format_json(_enrich(new_entry, networks))
 
-    @mcp.tool()
+    @mcp.tool(annotations=DESTRUCTIVE)
     @audited("delete_honeypot", mutates=True)
     async def delete_honeypot(
         id: str,

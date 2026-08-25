@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from mcp_unifi.annotations import DESTRUCTIVE_ONCE
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.modules._audit import audited
 from mcp_unifi.modules.network._common import make_err
@@ -40,7 +41,7 @@ def register(mcp: FastMCP, settings: Settings, _registry: ControllerRegistry) ->
     """Register :func:`confirm_destructive_action` on ``mcp``."""
     err = make_err(settings)
 
-    @mcp.tool()
+    @mcp.tool(annotations=DESTRUCTIVE_ONCE)
     # Classified mutating, and this is the classification the whole write gate
     # turns on. The tool's own name carries no write-shaped prefix, so any gate
     # that keyed on ``create_``/``update_``/``delete_``/``set_`` would leave it

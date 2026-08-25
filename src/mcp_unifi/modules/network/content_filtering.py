@@ -31,6 +31,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from mcp_unifi.annotations import DESTRUCTIVE, READ_ONLY, WRITE_IDEMPOTENT
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
@@ -57,7 +58,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             (p for p in profiles if isinstance(p, dict) and p.get("_id") == filter_id), None
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("list_content_filters", mutates=False)
     async def list_content_filters(controller: str = "default") -> str:
         """List DNS content-filtering profiles (category blocking, safe-search).
@@ -83,7 +84,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("list_content_filters failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("get_content_filter_details", mutates=False)
     async def get_content_filter_details(filter_id: str, controller: str = "default") -> str:
         """Show one content-filtering profile's full record by ``_id``.
@@ -113,7 +114,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(f"content filter {filter_id} not found")
         return format_json(target)
 
-    @mcp.tool()
+    @mcp.tool(annotations=WRITE_IDEMPOTENT)
     @audited("update_content_filter", mutates=True)
     async def update_content_filter(
         filter_id: str,
@@ -184,7 +185,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("update_content_filter failed", extra={"filter_id": filter_id})
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=DESTRUCTIVE)
     @audited("delete_content_filter", mutates=True)
     async def delete_content_filter(
         filter_id: str,

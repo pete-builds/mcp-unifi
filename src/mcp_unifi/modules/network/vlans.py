@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from mcp_unifi.annotations import CREATE, DESTRUCTIVE, READ_ONLY, WRITE_IDEMPOTENT
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
@@ -33,7 +34,7 @@ logger = logging.getLogger("mcp_unifi.network.vlans")
 def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> None:
     err = make_err(settings)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("list_networks", mutates=False)
     async def list_networks(controller: str = "default") -> str:
         """List every network/VLAN configured on the controller.
@@ -66,7 +67,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("list_networks failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("get_network_details", mutates=False)
     async def get_network_details(
         network_id: str = "",
@@ -168,7 +169,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         # included; redact covers every section in one walk.
         return format_json(redact({"controller": controller, **sections}))
 
-    @mcp.tool()
+    @mcp.tool(annotations=CREATE)
     @audited("create_vlan", mutates=True)
     async def create_vlan(
         name: BoundedName,
@@ -250,7 +251,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("create_vlan failed", extra={"vlan_name": name})
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=WRITE_IDEMPOTENT)
     @audited("update_vlan", mutates=True)
     async def update_vlan(
         network_id: str,
@@ -324,7 +325,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("update_vlan failed", extra={"network_id": network_id})
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=DESTRUCTIVE)
     # Classified mutating even though this first phase only mints a preview
     # token: it is half of one destructive operation, and preview-then-confirm
     # is an interlock against mistakes, not an access control. Every ``delete_*``
