@@ -133,7 +133,8 @@ async def test_creates_are_not_idempotent() -> None:
     """Calling create_ twice makes two, so an idempotent hint would invite a retry."""
     tools = await _tools()
     wrong = sorted(
-        n for n in tools
+        n
+        for n in tools
         if n.startswith(("create_", "provision_")) and tools[n].annotations.idempotentHint
     )
     assert wrong == []
@@ -148,7 +149,8 @@ async def test_updates_and_sets_are_idempotent() -> None:
     """
     tools = await _tools()
     wrong = sorted(
-        n for n in tools
+        n
+        for n in tools
         if n.startswith(("update_", "set_", "toggle_"))
         and tools[n].annotations.idempotentHint is not True
     )
@@ -180,7 +182,6 @@ async def test_every_tool_declares_an_open_world() -> None:
 async def test_no_tool_is_both_read_only_and_destructive() -> None:
     tools = await _tools()
     contradictory = sorted(
-        n for n, t in tools.items()
-        if t.annotations.readOnlyHint and t.annotations.destructiveHint
+        n for n, t in tools.items() if t.annotations.readOnlyHint and t.annotations.destructiveHint
     )
     assert contradictory == []
