@@ -49,11 +49,13 @@ def test_a_sensitive_value_in_an_error_body_is_redacted():
     path that reads a controller response WITHOUT redacting it is the wrong
     shape to leave lying around for the next endpoint added here.
     """
-    body = json.dumps({
-        "meta": {"rc": "error"},
-        "x_passphrase": "correct-horse-battery-staple",
-        "message": "rejected",
-    })
+    body = json.dumps(
+        {
+            "meta": {"rc": "error"},
+            "x_passphrase": "correct-horse-battery-staple",
+            "message": "rejected",
+        }
+    )
     detail = _describe_error_body(_resp(400, body))
 
     assert "correct-horse-battery-staple" not in detail

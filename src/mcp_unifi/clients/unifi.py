@@ -322,8 +322,7 @@ class UniFiClient:
         )
         if resp.status_code >= 400:
             raise UniFiError(
-                f"UniFi GET apgroups returned {resp.status_code}"
-                f"{_describe_error_body(resp)}"
+                f"UniFi GET apgroups returned {resp.status_code}{_describe_error_body(resp)}"
             )
         if not resp.content:
             return []
