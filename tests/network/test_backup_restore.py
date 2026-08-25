@@ -37,6 +37,23 @@ from mcp_unifi.modules.network.backup import (
 from mcp_unifi.server import build_server
 from tests.network.conftest import _call
 
+
+async def _restore_applying(server, backup_json: str):
+    """Run restore_config through the preview-then-confirm gate.
+
+    restore_config used to apply on the first call. It now returns a preview
+    envelope carrying a one-time token, matching the eleven delete_* tools, so
+    tests that want the restore actually applied have to confirm it. Driving the
+    real two-step flow here also means these tests exercise the gate rather than
+    bypassing it.
+    """
+    preview = await _call(server, "restore_config", {"backup_json": backup_json})
+    assert preview.get("preview") is True, f"expected a preview envelope, got {preview}"
+    return await _call(
+        server, "confirm_destructive_action", {"token": preview["token"]}
+    )
+
+
 # ---------------------------------------------------------------------------
 # Hypothesis profile — derandomized for CI reproducibility
 # ---------------------------------------------------------------------------
@@ -179,7 +196,7 @@ async def test_round_trip_clean_state_is_noop(stub_server: FastMCP) -> None:
     assert delete_actions == []
 
     # Real apply also yields zero create/delete actions.
-    real = await _call(stub_server, "restore_config", {"backup_json": backup_json})
+    real = await _restore_applying(stub_server, backup_json)
     assert "error" not in real
     creates = [a for a in real["applied"] if a.get("result") == "created"]
     deletes = [a for a in real["applied"] if a.get("result") == "deleted"]
@@ -239,7 +256,7 @@ async def test_round_trip_with_added_vlan_real_apply_restores(
     )
     assert any(n["name"] == "Lab" for n in fresh_state.networks)
 
-    result = await _call(fresh_server, "restore_config", {"backup_json": backup_json})
+    result = await _restore_applying(fresh_server, backup_json)
     assert "error" not in result
     assert not any(n["name"] == "Lab" for n in fresh_state.networks)
 
@@ -266,7 +283,7 @@ async def test_round_trip_with_removed_vlan_real_apply_recreates(
     fresh_state.delete_network(target_id)
     assert not any(n["name"] == "Keep-Me" for n in fresh_state.networks)
 
-    result = await _call(fresh_server, "restore_config", {"backup_json": backup_json})
+    result = await _restore_applying(fresh_server, backup_json)
     assert "error" not in result
     assert any(n["name"] == "Keep-Me" for n in fresh_state.networks)
 
@@ -400,7 +417,7 @@ async def test_wlan_rebinds_to_recreated_network(
     )
     fresh_state.delete_network(new_net["_id"])
 
-    result = await _call(fresh_server, "restore_config", {"backup_json": backup_json})
+    result = await _restore_applying(fresh_server, backup_json)
     assert "error" not in result
 
     restored_net = next(n for n in fresh_state.networks if n["name"] == "Rebound")
@@ -432,7 +449,7 @@ async def test_stripped_secrets_force_disables_restored_wlans(
     fresh_state.delete_wlan(seed_wlan_id)
     assert fresh_state.wlans == []
 
-    result = await _call(fresh_server, "restore_config", {"backup_json": backup_json})
+    result = await _restore_applying(fresh_server, backup_json)
     assert "error" not in result
     # The warning must name networks as well as WLANs. 0.20.0 extended the
     # force-disable to networks (a restored VPN comes back disabled because
@@ -472,7 +489,7 @@ async def test_partial_failure_rolls_back_creates(
     # port_profiles -> dhcp_leases -> wlans -> port_forwards -> firewall_rules).
     fresh_state.fail_next("create_firewall_rule", UniFiError("injected at create_firewall_rule"))
 
-    result = await _call(fresh_server, "restore_config", {"backup_json": backup_json})
+    result = await _restore_applying(fresh_server, backup_json)
     assert "error" in result
     assert "rolled_back" in result
     # Every successful create must have been deleted by the rollback.
@@ -598,7 +615,7 @@ async def test_property_restore_converges_to_backup(
         _apply_mutation(state, kind, name, vlan_id)
 
     # Restore (real apply).
-    result = await _call(server, "restore_config", {"backup_json": backup_json})
+    result = await _restore_applying(server, backup_json)
     assert "error" not in result, f"restore failed: {result}"
 
     # Verify convergence.
@@ -694,13 +711,57 @@ async def test_restore_disables_networks_carrying_the_sentinel(
         },
     }
 
-    await _call(
-        stub_server,
-        "restore_config",
-        {"backup_json": json.dumps(envelope)},
-    )
+    await _restore_applying(stub_server, json.dumps(envelope))
 
     restored = next(n for n in stub_state.list_networks() if n["name"] == "Restored-VPN")
     assert restored["enabled"] is False, (
         "restored a VPN network on a sentinel pre-shared key with the tunnel enabled"
     )
+
+
+@pytest.mark.asyncio
+async def test_restore_config_requires_confirmation(
+    fresh_state: StubState, fresh_server: FastMCP
+) -> None:
+    """restore_config must not mutate on the first call.
+
+    It is the most destructive tool in this server: it deletes across
+    firewall_rules, port_forwards, wlans, dhcp_leases, port_profiles and networks
+    before creating anything, and its own docstring says deletes already run are
+    NOT undone on rollback. It was nonetheless outside the preview-then-confirm
+    registry that guards the eleven delete_* tools.
+    """
+    envelope = await _call(fresh_server, "backup_config", {})
+    backup_json = json.dumps(envelope)
+
+    fresh_state.create_network(
+        {"name": "ShouldSurvivePreview", "purpose": "corporate", "enabled": True}
+    )
+    before = {n["name"] for n in fresh_state.list_networks()}
+
+    preview = await _call(fresh_server, "restore_config", {"backup_json": backup_json})
+    assert preview["preview"] is True
+    assert preview["confirm_with"] == "confirm_destructive_action"
+    assert len(preview["token"]) == 36
+
+    after_preview = {n["name"] for n in fresh_state.list_networks()}
+    assert after_preview == before, "preview must not mutate controller state"
+
+    await _call(fresh_server, "confirm_destructive_action", {"token": preview["token"]})
+    after_confirm = {n["name"] for n in fresh_state.list_networks()}
+    assert "ShouldSurvivePreview" not in after_confirm, "confirm should apply the plan"
+
+
+@pytest.mark.asyncio
+async def test_restore_config_token_is_single_use(
+    fresh_state: StubState, fresh_server: FastMCP
+) -> None:
+    envelope = await _call(fresh_server, "backup_config", {})
+    preview = await _call(
+        fresh_server, "restore_config", {"backup_json": json.dumps(envelope)}
+    )
+    await _call(fresh_server, "confirm_destructive_action", {"token": preview["token"]})
+    second = await _call(
+        fresh_server, "confirm_destructive_action", {"token": preview["token"]}
+    )
+    assert "error" in second
