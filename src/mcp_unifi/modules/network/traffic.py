@@ -26,6 +26,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from mcp_unifi.annotations import CREATE, READ_ONLY, WRITE_IDEMPOTENT
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
@@ -57,7 +58,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     # Traffic rules
     # ------------------------------------------------------------------
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("list_traffic_rules", mutates=False)
     async def list_traffic_rules(controller: str = "default") -> str:
         """List v2 traffic rules (app/domain/IP-based allow & block policies).
@@ -81,7 +82,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("list_traffic_rules failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("get_traffic_rule_details", mutates=False)
     async def get_traffic_rule_details(rule_id: str, controller: str = "default") -> str:
         """Show one traffic rule's full record by ``_id``.
@@ -109,7 +110,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(f"traffic rule {rule_id} not found")
         return format_json(target)
 
-    @mcp.tool()
+    @mcp.tool(annotations=CREATE)
     @audited("create_traffic_rule", mutates=True)
     async def create_traffic_rule(
         rule: dict[str, Any],
@@ -164,7 +165,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("create_traffic_rule failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=WRITE_IDEMPOTENT)
     @audited("update_traffic_rule", mutates=True)
     async def update_traffic_rule(
         rule_id: str,
@@ -221,7 +222,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("update_traffic_rule failed", extra={"rule_id": rule_id})
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=WRITE_IDEMPOTENT)
     @audited("toggle_traffic_rule", mutates=True)
     async def toggle_traffic_rule(
         rule_id: str,
@@ -287,7 +288,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     # Traffic routes (policy-based routing)
     # ------------------------------------------------------------------
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("list_traffic_routes", mutates=False)
     async def list_traffic_routes(controller: str = "default") -> str:
         """List v2 traffic routes (policy-based routing, e.g. VPN-client routes).
@@ -312,7 +313,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("list_traffic_routes failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("get_traffic_route_details", mutates=False)
     async def get_traffic_route_details(route_id: str, controller: str = "default") -> str:
         """Show one traffic route's full record by ``_id``.
@@ -340,7 +341,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(f"traffic route {route_id} not found")
         return format_json(target)
 
-    @mcp.tool()
+    @mcp.tool(annotations=WRITE_IDEMPOTENT)
     @audited("update_traffic_route", mutates=True)
     async def update_traffic_route(
         route_id: str,
@@ -410,7 +411,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("update_traffic_route failed", extra={"route_id": route_id})
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=WRITE_IDEMPOTENT)
     @audited("toggle_traffic_route", mutates=True)
     async def toggle_traffic_route(
         route_id: str,

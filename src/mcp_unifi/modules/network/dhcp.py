@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from mcp_unifi.annotations import CREATE, DESTRUCTIVE, READ_ONLY, WRITE_IDEMPOTENT
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
@@ -27,7 +28,7 @@ logger = logging.getLogger("mcp_unifi.network.dhcp")
 def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> None:
     err = make_err(settings)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("list_dhcp_leases", mutates=False)
     async def list_dhcp_leases(controller: str = "default") -> str:
         """List static DHCP reservations on the controller.
@@ -51,7 +52,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("list_dhcp_leases failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=CREATE)
     @audited("create_static_dhcp_lease", mutates=True)
     async def create_static_dhcp_lease(
         mac: str,
@@ -112,7 +113,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("create_static_dhcp_lease failed", extra={"mac": mac})
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=WRITE_IDEMPOTENT)
     @audited("update_static_dhcp_lease", mutates=True)
     async def update_static_dhcp_lease(
         mac: str,
@@ -190,7 +191,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("update_static_dhcp_lease failed", extra={"mac": mac})
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=DESTRUCTIVE)
     @audited("delete_static_dhcp_lease", mutates=True)
     async def delete_static_dhcp_lease(
         lease_id: str,

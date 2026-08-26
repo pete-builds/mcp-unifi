@@ -57,6 +57,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from mcp_unifi.annotations import READ_ONLY, WRITE_IDEMPOTENT
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
@@ -139,7 +140,7 @@ def _diff(before: UniFiRecord, after: UniFiRecord) -> dict[str, Any]:
 def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> None:
     err = make_err(settings)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("get_guest_portal", mutates=False)
     async def get_guest_portal(controller: str = "default") -> str:
         """Show the guest captive-portal configuration for the site.
@@ -179,7 +180,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         # ``guest_access`` is where portal/RADIUS credentials would land.
         return format_json(redact(_project(record)))
 
-    @mcp.tool()
+    @mcp.tool(annotations=WRITE_IDEMPOTENT)
     @audited("set_guest_portal", mutates=True)
     async def set_guest_portal(
         portal_enabled: bool | None = None,

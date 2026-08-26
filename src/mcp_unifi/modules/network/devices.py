@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from mcp_unifi.annotations import DESTRUCTIVE, READ_ONLY, WRITE_IDEMPOTENT
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
@@ -139,7 +140,7 @@ async def _fetch_device(backend: Backend, device_mac: str) -> tuple[UniFiRecord,
 def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> None:
     err = make_err(settings)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("list_devices", mutates=False)
     async def list_devices(controller: str = "default") -> str:
         """List every UniFi device adopted by this controller.
@@ -166,7 +167,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("list_devices failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=DESTRUCTIVE)
     @audited("restart_device", mutates=True)
     async def restart_device(
         mac: str,
@@ -212,7 +213,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("restart_device failed", extra={"mac": mac})
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=WRITE_IDEMPOTENT)
     # Classified mutating: no configuration changes, but the device's status LED
     # physically starts flashing and stays that way until something turns it off.
     # A control that let an agent change what the hardware is doing in the room
@@ -263,7 +264,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("locate_device failed", extra={"mac": mac})
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=WRITE_IDEMPOTENT)
     @audited("set_port_state", mutates=True)
     async def set_port_state(
         device_mac: str,
@@ -343,7 +344,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             )
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("get_device_radios", mutates=False)
     async def get_device_radios(device_mac: str, controller: str = "default") -> str:
         """Show per-radio RF settings for an access point.
@@ -463,7 +464,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("%s failed", action, extra={"mac": device_mac, "band": band})
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=WRITE_IDEMPOTENT)
     @audited("set_radio_tx_power", mutates=True)
     async def set_radio_tx_power(
         device_mac: str,
@@ -516,7 +517,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             "set_radio_tx_power", device_mac, band, patch, controller, dry_run
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=WRITE_IDEMPOTENT)
     @audited("set_radio_min_rssi", mutates=True)
     async def set_radio_min_rssi(
         device_mac: str,
@@ -567,7 +568,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             "set_radio_min_rssi", device_mac, band, patch, controller, dry_run
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=WRITE_IDEMPOTENT)
     @audited("set_radio_channel", mutates=True)
     async def set_radio_channel(
         device_mac: str,
@@ -626,7 +627,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             "set_radio_channel", device_mac, band, patch, controller, dry_run
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=WRITE_IDEMPOTENT)
     # Classified mutating: the change is cosmetic (display name only, no RF or
     # traffic impact) but it is still a persisted PUT to the controller's
     # device record, and it is the identifier every other tool's output and

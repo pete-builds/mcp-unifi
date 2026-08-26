@@ -31,6 +31,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from mcp_unifi.annotations import READ_ONLY
 from mcp_unifi.clients.unifi_os import (
     FIRMWARE_UPDATE_PATH,
     ProbeResult,
@@ -363,7 +364,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             verify_ssl=ctrl.verify_ssl,
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     # Classified read even though the console-session path may POST /api/auth/login:
     # authenticating is how this server reads UniFi OS at all, it creates a session
     # rather than changing any managed state, and the same login backs the other
@@ -434,7 +435,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         verdict["network_app_version"] = version
         return format_json(verdict)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("get_console_info", mutates=False)
     async def get_console_info(controller: str = "default") -> str:
         """Show UniFi OS console identity and connectivity, independent of Network.
@@ -525,7 +526,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             )
         return format_json(info)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("get_console_firmware", mutates=False)
     async def get_console_firmware(controller: str = "default") -> str:
         """Show UniFi OS firmware and available-update state.

@@ -18,17 +18,20 @@ import sys
 from datetime import UTC, datetime
 from typing import Any
 
-_SENSITIVE_KEYS: frozenset[str] = frozenset(
-    {
-        "api_key",
-        "unifi_api_key",
-        "x-api-key",
-        "x_api_key",
-        "passphrase",
-        "x_passphrase",
-        "password",
-    }
-)
+from mcp_unifi.redaction import redact
+
+# The canonical list lives in redaction.py, which SECURITY.md describes as
+# covering "three emitters: the structured logger, the audit log, and tool
+# responses". Two of those genuinely imported it; this module kept a private
+# seven-key set matched by EXACT equality while the canonical one has seventeen
+# patterns matched by SUBSTRING. Of the nineteen secret spellings SECURITY.md
+# enumerates, this logger caught five -- so `x_password`, `passwd`, `token`,
+# `wpa_psk`, `x_ipsec_pre_shared_key` and the rest passed straight through.
+#
+# No reachable leak today: the API key travels in an X-API-Key header rather
+# than a URL, the client deliberately raises type(exc).__name__ instead of
+# str(exc), and every extra={} in the package carries a benign identifier. This
+# is a false assurance being made true, not a live exposure being closed.
 
 _RESERVED_LOGRECORD_FIELDS: frozenset[str] = frozenset(
     {
@@ -60,15 +63,16 @@ _RESERVED_LOGRECORD_FIELDS: frozenset[str] = frozenset(
 
 
 def _scrub(value: Any) -> Any:
-    """Recursively replace sensitive values with ``[REDACTED]``."""
-    if isinstance(value, dict):
-        return {
-            k: ("[REDACTED]" if k.lower() in _SENSITIVE_KEYS else _scrub(v))
-            for k, v in value.items()
-        }
-    if isinstance(value, list):
-        return [_scrub(item) for item in value]
-    return value
+    """Recursively replace sensitive values with ``[REDACTED]``.
+
+    Delegates to redaction.redact so the logger, the audit log and tool responses
+    share one definition of "sensitive". redact() is used rather than scrub()
+    specifically to keep this module's existing "[REDACTED]" sentinel -- scrub()
+    writes "***" -- so the only behaviour change here is that MORE keys are
+    caught, not that existing output changes shape. redact() also walks tuples
+    and sets, which the private implementation did not.
+    """
+    return redact(value)
 
 
 class JsonFormatter(logging.Formatter):

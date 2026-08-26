@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from mcp_unifi.annotations import CREATE, DESTRUCTIVE, READ_ONLY, WRITE_IDEMPOTENT
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
@@ -33,7 +34,7 @@ logger = logging.getLogger("mcp_unifi.network.wlans")
 def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> None:
     err = make_err(settings)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("list_wlans", mutates=False)
     async def list_wlans(controller: str = "default") -> str:
         """List every WiFi SSID configured on the controller.
@@ -65,7 +66,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("list_wlans failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("list_ap_groups", mutates=False)
     async def list_ap_groups(controller: str = "default") -> str:
         """List access-point groups configured on the controller.
@@ -93,7 +94,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("list_ap_groups failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=CREATE)
     @audited("create_wlan", mutates=True)
     async def create_wlan(
         name: BoundedName,
@@ -194,7 +195,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("create_wlan failed", extra={"wlan_name": name})
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=WRITE_IDEMPOTENT)
     @audited("update_wlan", mutates=True)
     async def update_wlan(
         wlan_id: str,
@@ -268,7 +269,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("update_wlan failed", extra={"wlan_id": wlan_id})
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=DESTRUCTIVE)
     @audited("delete_wlan", mutates=True)
     async def delete_wlan(
         wlan_id: str,
