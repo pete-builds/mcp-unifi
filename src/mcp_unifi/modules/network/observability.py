@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from mcp_unifi.annotations import ACTION, READ_ONLY
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
@@ -22,7 +23,7 @@ logger = logging.getLogger("mcp_unifi.network.observability")
 def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> None:
     err = make_err(settings)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("get_site_health", mutates=False)
     async def get_site_health(controller: str = "default") -> str:
         """Report per-subsystem health (wan, lan, wlan, www, vpn).
@@ -45,7 +46,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("get_site_health failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("get_wan_status", mutates=False)
     async def get_wan_status(controller: str = "default") -> str:
         """Report current WAN status: link, ISP, public IP, throughput, latency.
@@ -69,7 +70,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("get_wan_status failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("list_events", mutates=False)
     async def list_events(limit: int = 50, controller: str = "default") -> str:
         """List recent controller events (connections, disconnections, etc.).
@@ -94,7 +95,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("list_events failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("list_alarms", mutates=False)
     async def list_alarms(
         limit: int = 50,
@@ -125,7 +126,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("list_alarms failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=ACTION)
     # Classified mutating even though it changes no configuration: it issues a
     # POST that makes the gateway saturate the WAN for ~30-60s and appends a
     # result row. "Read-only" has to mean the server cannot make the gateway do
@@ -154,7 +155,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("trigger_speedtest failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("get_speedtest_results", mutates=False)
     async def get_speedtest_results(limit: int = 10, controller: str = "default") -> str:
         """List recent speed-test results, newest first.
@@ -180,7 +181,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("get_speedtest_results failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("list_top_talkers", mutates=False)
     async def list_top_talkers(limit: int = 10, controller: str = "default") -> str:
         """List top clients by total bytes (DPI by-station report).

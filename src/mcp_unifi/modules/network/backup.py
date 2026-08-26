@@ -90,6 +90,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from mcp_unifi.annotations import DESTRUCTIVE, READ_ONLY
 from mcp_unifi.backends import Backend
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
@@ -388,7 +389,7 @@ def _force_disable_if_redacted(payload: dict[str, Any], secrets_stripped: bool) 
 def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> None:
     err = make_err(settings)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     # Classified read despite producing an artifact: every call is a fan-out of
     # GETs, the envelope is returned to the caller, and nothing is written to
     # the controller (this is NOT the UniFi OS ".unf backup file" endpoint,
@@ -467,7 +468,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         )
         return format_json(envelope)
 
-    @mcp.tool()
+    @mcp.tool(annotations=DESTRUCTIVE)
     @audited("restore_config", mutates=True)
     async def restore_config(
         backup_json: BoundedJson,

@@ -30,6 +30,7 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
+from mcp_unifi.annotations import READ_ONLY
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
@@ -48,7 +49,7 @@ logger = logging.getLogger("mcp_unifi.network.stats")
 def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> None:
     err = make_err(settings)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("get_system_info", mutates=False)
     async def get_system_info(controller: str = "default") -> str:
         """Report controller/system info: version, uptime, device type.
@@ -74,7 +75,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("get_system_info failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("get_gateway_stats", mutates=False)
     async def get_gateway_stats(controller: str = "default") -> str:
         """Report gateway resource stats: CPU, memory, temperature, throughput.
@@ -100,7 +101,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("get_gateway_stats failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("get_device_stats", mutates=False)
     async def get_device_stats(mac: str, controller: str = "default") -> str:
         """Report per-device stats for one UniFi device by MAC.
@@ -130,7 +131,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("get_device_stats failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("get_client_stats", mutates=False)
     async def get_client_stats(mac: str, controller: str = "default") -> str:
         """Report per-client traffic, signal, and uptime for one client by MAC.
@@ -162,7 +163,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("get_client_stats failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("get_client_sessions", mutates=False)
     async def get_client_sessions(
         mac: str = "",
@@ -203,7 +204,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("get_client_sessions failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("get_anomalies", mutates=False)
     async def get_anomalies(controller: str = "default") -> str:
         """List client-impacting anomalies the controller has detected.

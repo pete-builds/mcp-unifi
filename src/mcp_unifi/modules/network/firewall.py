@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from mcp_unifi.annotations import CREATE, DESTRUCTIVE, READ_ONLY, WRITE_IDEMPOTENT
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
@@ -31,7 +32,7 @@ _FIREWALL_GROUP_TYPES: frozenset[str] = frozenset(
 def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> None:
     err = make_err(settings)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("list_firewall_rules", mutates=False)
     async def list_firewall_rules(controller: str = "default") -> str:
         """List every firewall rule on the controller.
@@ -55,7 +56,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("list_firewall_rules failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=CREATE)
     @audited("create_firewall_rule", mutates=True)
     async def create_firewall_rule(
         name: BoundedName,
@@ -168,7 +169,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("create_firewall_rule failed", extra={"rule_name": name})
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=WRITE_IDEMPOTENT)
     @audited("update_firewall_rule", mutates=True)
     async def update_firewall_rule(
         rule_id: str,
@@ -218,7 +219,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("update_firewall_rule failed", extra={"rule_id": rule_id})
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=DESTRUCTIVE)
     @audited("delete_firewall_rule", mutates=True)
     async def delete_firewall_rule(
         rule_id: str,
@@ -298,7 +299,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     # Firewall groups (reusable address/port objects)
     # ------------------------------------------------------------------
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("list_firewall_groups", mutates=False)
     async def list_firewall_groups(controller: str = "default") -> str:
         """List reusable firewall groups (address, IPv6-address, and port groups).
@@ -325,7 +326,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("list_firewall_groups failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("get_firewall_group_details", mutates=False)
     async def get_firewall_group_details(group_id: str, controller: str = "default") -> str:
         """Show one firewall group's full record by ``_id``.
@@ -355,7 +356,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(f"firewall group {group_id} not found")
         return format_json(target)
 
-    @mcp.tool()
+    @mcp.tool(annotations=CREATE)
     @audited("create_firewall_group", mutates=True)
     async def create_firewall_group(
         name: BoundedName,
@@ -415,7 +416,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("create_firewall_group failed", extra={"group_name": name})
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=WRITE_IDEMPOTENT)
     @audited("update_firewall_group", mutates=True)
     async def update_firewall_group(
         group_id: str,
@@ -504,7 +505,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("update_firewall_group failed", extra={"group_id": group_id})
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=DESTRUCTIVE)
     @audited("delete_firewall_group", mutates=True)
     async def delete_firewall_group(
         group_id: str,

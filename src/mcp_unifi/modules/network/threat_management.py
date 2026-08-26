@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from mcp_unifi.annotations import READ_ONLY, WRITE_IDEMPOTENT
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
@@ -67,7 +68,7 @@ def _project_get(record: dict[str, Any]) -> dict[str, Any]:
 def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> None:
     err = make_err(settings)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("get_threat_management", mutates=False)
     async def get_threat_management(controller: str = "default") -> str:
         """Return current Threat Management (IDS/IPS) configuration.
@@ -96,7 +97,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
         return format_json(_project_get(record))
 
-    @mcp.tool()
+    @mcp.tool(annotations=WRITE_IDEMPOTENT)
     @audited("set_threat_management", mutates=True)
     async def set_threat_management(
         enabled: bool,

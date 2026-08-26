@@ -56,6 +56,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from mcp_unifi.annotations import READ_ONLY
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
@@ -404,7 +405,7 @@ def _diff_firewall_rules(
 def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> None:
     err = make_err(settings)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("audit_network_drift", mutates=False)
     async def audit_network_drift(
         spec_yaml: BoundedYaml,

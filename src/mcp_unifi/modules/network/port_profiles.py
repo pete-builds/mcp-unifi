@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from mcp_unifi.annotations import CREATE, DESTRUCTIVE, READ_ONLY, WRITE_IDEMPOTENT
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
@@ -26,7 +27,7 @@ logger = logging.getLogger("mcp_unifi.network.port_profiles")
 def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> None:
     err = make_err(settings)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     @audited("list_port_profiles", mutates=False)
     async def list_port_profiles(controller: str = "default") -> str:
         """List switch port profiles configured on the controller.
@@ -51,7 +52,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("list_port_profiles failed")
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=CREATE)
     @audited("create_port_profile", mutates=True)
     async def create_port_profile(
         name: BoundedName,
@@ -113,7 +114,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("create_port_profile failed", extra={"profile_name": name})
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=WRITE_IDEMPOTENT)
     @audited("update_port_profile", mutates=True)
     async def update_port_profile(
         profile_id: str,
@@ -165,7 +166,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("update_port_profile failed", extra={"profile_id": profile_id})
             return err(str(exc))
 
-    @mcp.tool()
+    @mcp.tool(annotations=DESTRUCTIVE)
     @audited("delete_port_profile", mutates=True)
     async def delete_port_profile(
         profile_id: str,
