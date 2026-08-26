@@ -98,6 +98,7 @@ from mcp_unifi.modules._params import (
     BoundedJson,
 )
 from mcp_unifi.modules.network._common import format_json, make_err
+from mcp_unifi.modules.network._pending import build_preview_envelope, get_pending_actions
 from mcp_unifi.redaction import is_sensitive
 
 if TYPE_CHECKING:
@@ -604,149 +605,178 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 }
             )
 
-        # Build the old-id -> network-name map from the backup. Networks in
-        # the envelope keep their original ``_id`` so wlan/lease references
-        # can be resolved back to a name and then to a live id at apply time.
-        backup_netid_to_name: dict[str, str] = {}
-        for net in backup_resources["networks"]:
-            old_id = net.get("_id")
-            name = _norm(net.get("name"))
-            if isinstance(old_id, str) and name:
-                backup_netid_to_name[old_id] = name
+        # Everything below applies the plan. It used to run on the first call.
+        # restore_config is the most destructive tool in this server -- it deletes
+        # across firewall_rules, port_forwards, wlans, dhcp_leases, port_profiles
+        # and networks before creating anything, and its own docstring notes that
+        # deletes already run are NOT undone on rollback -- yet it was one of the
+        # fifty mutating tools that did NOT go through the preview-then-confirm
+        # registry. The eleven delete_* tools will not remove a single rule without
+        # a token; this would flatten the whole config without one.
+        #
+        # dry_run stays as it was, for inspecting the plan without registering
+        # anything. A non-dry run now returns a preview envelope plus a one-time
+        # token, and the plan captured HERE is the plan the token commits -- so a
+        # preview cannot be swapped for a different change between the two calls.
+        async def _execute() -> str:
+            # Build the old-id -> network-name map from the backup. Networks in
+            # the envelope keep their original ``_id`` so wlan/lease references
+            # can be resolved back to a name and then to a live id at apply time.
+            backup_netid_to_name: dict[str, str] = {}
+            for net in backup_resources["networks"]:
+                old_id = net.get("_id")
+                name = _norm(net.get("name"))
+                if isinstance(old_id, str) and name:
+                    backup_netid_to_name[old_id] = name
 
-        # Apply. Track creates so rollback can undo them. Track executed
-        # deletes for honest reporting (no undo path — no copy was kept).
-        created_for_rollback: list[tuple[str, dict[str, Any]]] = []
-        applied: list[dict[str, Any]] = []
+            # Apply. Track creates so rollback can undo them. Track executed
+            # deletes for honest reporting (no undo path — no copy was kept).
+            created_for_rollback: list[tuple[str, dict[str, Any]]] = []
+            applied: list[dict[str, Any]] = []
 
-        async def _rollback() -> list[dict[str, Any]]:
-            actions: list[dict[str, Any]] = []
-            for rtype, record in reversed(created_for_rollback):
-                resource_id = record.get("_id")
-                if not resource_id:
-                    actions.append(
-                        {
-                            "type": rtype,
-                            "deleted": False,
-                            "reason": "no _id on created record",
-                        }
-                    )
-                    continue
-                try:
-                    ok = await _delete_by_type(backend, rtype, resource_id)
-                except UniFiError as exc:
-                    logger.error(
-                        "restore rollback delete failed",
-                        extra={
-                            "type": rtype,
-                            "id": resource_id,
-                            "error": str(exc),
-                        },
-                    )
-                    actions.append({"type": rtype, "id": resource_id, "deleted": False})
-                    continue
-                actions.append({"type": rtype, "id": resource_id, "deleted": ok})
-            logger.warning(
-                "restore_config rolled back",
-                extra={"rolled_back": actions, "controller": controller},
-            )
-            return actions
-
-        # Build the post-delete network-name-to-id index lazily; we refresh
-        # it after creates so WLAN/lease bindings resolve correctly.
-        async def _network_name_to_id() -> dict[str, str]:
-            nets = list(await backend.list_networks())
-            return {_norm(n.get("name")): n["_id"] for n in nets if isinstance(n.get("_id"), str)}
-
-        try:
-            for action in plan:
-                if action["action"] == "skip":
-                    applied.append(action)
-                    continue
-
-                if action["action"] == "delete":
-                    rid = action["id"]
-                    rtype = action["type"]
-                    if not rid:
-                        applied.append({**action, "result": "skipped", "reason": "no _id"})
+            async def _rollback() -> list[dict[str, Any]]:
+                actions: list[dict[str, Any]] = []
+                for rtype, record in reversed(created_for_rollback):
+                    resource_id = record.get("_id")
+                    if not resource_id:
+                        actions.append(
+                            {
+                                "type": rtype,
+                                "deleted": False,
+                                "reason": "no _id on created record",
+                            }
+                        )
                         continue
-                    ok = await _delete_by_type(backend, rtype, rid)
-                    applied.append({**action, "result": "deleted" if ok else "missing"})
-                    continue
+                    try:
+                        ok = await _delete_by_type(backend, rtype, resource_id)
+                    except UniFiError as exc:
+                        logger.error(
+                            "restore rollback delete failed",
+                            extra={
+                                "type": rtype,
+                                "id": resource_id,
+                                "error": str(exc),
+                            },
+                        )
+                        actions.append({"type": rtype, "id": resource_id, "deleted": False})
+                        continue
+                    actions.append({"type": rtype, "id": resource_id, "deleted": ok})
+                logger.warning(
+                    "restore_config rolled back",
+                    extra={"rolled_back": actions, "controller": controller},
+                )
+                return actions
 
-                if action["action"] == "create":
-                    rtype = action["type"]
-                    payload = dict(action["payload"])
+            # Build the post-delete network-name-to-id index lazily; we refresh
+            # it after creates so WLAN/lease bindings resolve correctly.
+            async def _network_name_to_id() -> dict[str, str]:
+                nets = list(await backend.list_networks())
+                return {
+                    _norm(n.get("name")): n["_id"] for n in nets if isinstance(n.get("_id"), str)
+                }
 
-                    # Networks kept their source ``_id`` in the envelope so
-                    # we could rebuild the old-id -> name map. Drop ``_id``
-                    # before sending the payload to the controller so we
-                    # don't try to dictate the new id.
-                    if rtype == "networks":
-                        payload.pop("_id", None)
+            try:
+                for action in plan:
+                    if action["action"] == "skip":
+                        applied.append(action)
+                        continue
 
-                    # Resolve wlan -> network and lease -> network refs from
-                    # the saved old id back to a name, then to the live id.
-                    # Falls back to leaving the field alone if the linked
-                    # network isn't in the backup (operator-edited envelope
-                    # or referential drift); the controller will surface
-                    # the broken link via its own error path.
-                    if rtype == "wlans" and "networkconf_id" in payload:
-                        old_id = str(payload["networkconf_id"])
-                        net_name = backup_netid_to_name.get(old_id)
-                        if net_name:
-                            live = await _network_name_to_id()
-                            target = live.get(net_name)
-                            if target:
-                                payload["networkconf_id"] = target
-                    elif rtype == "dhcp_leases" and "network_id" in payload:
-                        old_id = str(payload["network_id"])
-                        net_name = backup_netid_to_name.get(old_id)
-                        if net_name:
-                            live = await _network_name_to_id()
-                            target = live.get(net_name)
-                            if target:
-                                payload["network_id"] = target
+                    if action["action"] == "delete":
+                        rid = action["id"]
+                        rtype = action["type"]
+                        if not rid:
+                            applied.append({**action, "result": "skipped", "reason": "no _id"})
+                            continue
+                        ok = await _delete_by_type(backend, rtype, rid)
+                        applied.append({**action, "result": "deleted" if ok else "missing"})
+                        continue
 
-                    if rtype in ("wlans", "networks"):
-                        payload = _force_disable_if_redacted(payload, secrets_stripped)
+                    if action["action"] == "create":
+                        rtype = action["type"]
+                        payload = dict(action["payload"])
 
-                    record = await _create_by_type(backend, rtype, payload)
-                    created_for_rollback.append((rtype, record))
-                    applied.append({**action, "result": "created", "id": record.get("_id")})
-                    continue
+                        # Networks kept their source ``_id`` in the envelope so
+                        # we could rebuild the old-id -> name map. Drop ``_id``
+                        # before sending the payload to the controller so we
+                        # don't try to dictate the new id.
+                        if rtype == "networks":
+                            payload.pop("_id", None)
 
-                # Unknown action — surface but don't fail the apply.
-                applied.append({**action, "result": "unknown_action"})
+                        # Resolve wlan -> network and lease -> network refs from
+                        # the saved old id back to a name, then to the live id.
+                        # Falls back to leaving the field alone if the linked
+                        # network isn't in the backup (operator-edited envelope
+                        # or referential drift); the controller will surface
+                        # the broken link via its own error path.
+                        if rtype == "wlans" and "networkconf_id" in payload:
+                            old_id = str(payload["networkconf_id"])
+                            net_name = backup_netid_to_name.get(old_id)
+                            if net_name:
+                                live = await _network_name_to_id()
+                                target = live.get(net_name)
+                                if target:
+                                    payload["networkconf_id"] = target
+                        elif rtype == "dhcp_leases" and "network_id" in payload:
+                            old_id = str(payload["network_id"])
+                            net_name = backup_netid_to_name.get(old_id)
+                            if net_name:
+                                live = await _network_name_to_id()
+                                target = live.get(net_name)
+                                if target:
+                                    payload["network_id"] = target
 
-        except UniFiError as exc:
-            logger.exception("restore_config: apply failed")
-            rolled_back = await _rollback()
+                        if rtype in ("wlans", "networks"):
+                            payload = _force_disable_if_redacted(payload, secrets_stripped)
+
+                        record = await _create_by_type(backend, rtype, payload)
+                        created_for_rollback.append((rtype, record))
+                        applied.append({**action, "result": "created", "id": record.get("_id")})
+                        continue
+
+                    # Unknown action — surface but don't fail the apply.
+                    applied.append({**action, "result": "unknown_action"})
+
+            except UniFiError as exc:
+                logger.exception("restore_config: apply failed")
+                rolled_back = await _rollback()
+                return format_json(
+                    {
+                        "error": f"restore_config failed: {exc}",
+                        "stub_mode": settings.stub_mode,
+                        "controller": controller,
+                        "warnings": warnings,
+                        "partial": applied,
+                        "rolled_back": rolled_back,
+                    }
+                )
+
             return format_json(
                 {
-                    "error": f"restore_config failed: {exc}",
-                    "stub_mode": settings.stub_mode,
                     "controller": controller,
                     "warnings": warnings,
-                    "partial": applied,
-                    "rolled_back": rolled_back,
+                    "applied": applied,
+                    "summary": (
+                        f"applied {len(applied)} action(s) "
+                        f"({sum(1 for a in applied if a.get('result') == 'created')} "
+                        "created, "
+                        f"{sum(1 for a in applied if a.get('result') == 'deleted')} "
+                        "deleted)"
+                    ),
                 }
             )
 
-        return format_json(
-            {
-                "controller": controller,
+        pending = get_pending_actions().put(
+            action="restore_config",
+            controller=controller,
+            resource={
+                "creates": sum(1 for a in plan if a["action"] == "create"),
+                "deletes": sum(1 for a in plan if a["action"] == "delete"),
                 "warnings": warnings,
-                "applied": applied,
-                "summary": (
-                    f"applied {len(applied)} action(s) "
-                    f"({sum(1 for a in applied if a.get('result') == 'created')} "
-                    "created, "
-                    f"{sum(1 for a in applied if a.get('result') == 'deleted')} "
-                    "deleted)"
-                ),
-            }
+                "plan": plan,
+            },
+            executor=_execute,
         )
+        return format_json(build_preview_envelope(pending))
 
 
 __all__ = ["BACKUP_SCHEMA", "REDACTED_PASSPHRASE", "register"]
