@@ -55,7 +55,8 @@ from fastmcp.server.middleware.middleware import (
 from fastmcp.tools.tool import Tool, ToolResult
 from mcp import types as mt
 
-from mcp_unifi import audit
+from mcp_unifi import audit, telemetry
+from mcp_unifi.modules._audit import tool_mutates
 
 logger = logging.getLogger("mcp_unifi.scoping")
 
@@ -253,6 +254,21 @@ async def _record_refusal(
     """
     try:
         args = _attempted_args(context)
+        client_id = _current_client_id()
+        # A refused call never reaches ``@audited``, so it would otherwise be
+        # invisible in a trace backend while being one of the most interesting
+        # things to query there. The span carries ``denied_by`` for the same
+        # reason the audit record does (ADR 0006): it is the one field that
+        # separates "the server declined" from "something broke". Attempted
+        # arguments go to the audit log only, never onto the span.
+        with telemetry.tool_span(
+            tool_name,
+            mutates=tool_mutates(tool_name),
+            controller=str(args.get("controller", "default")),
+            client_id=client_id,
+            denied_by=denied_by,
+        ) as span:
+            span.set(telemetry.ATTR_OUTCOME, telemetry.OUTCOME_REFUSED)
         await audit.get_audit_log().emit(
             controller=str(args.get("controller", "default")),
             tool=tool_name,
@@ -261,7 +277,7 @@ async def _record_refusal(
             success=False,
             latency_ms=0.0,
             error=error,
-            client_id=_current_client_id(),
+            client_id=client_id,
             denied_by=denied_by,
         )
     except Exception:  # pragma: no cover - defensive only
