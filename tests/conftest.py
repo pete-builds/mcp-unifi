@@ -6,11 +6,24 @@ from collections.abc import Iterator
 
 import pytest
 
-from mcp_unifi import audit
+from mcp_unifi import audit, telemetry
 from mcp_unifi.clients import retry as _retry
 from mcp_unifi.clients.stubs import StubState
 from mcp_unifi.config import Settings
 from mcp_unifi.modules.network._pending import reset_pending_actions
+
+
+@pytest.fixture(autouse=True)
+def _no_tracing_by_default() -> Iterator[None]:
+    """Clear the cached tracer around every test.
+
+    Tracing is opt-in and off by default, so the default state under test must
+    be "no tracer". Clearing afterwards too stops a test that installs a fake
+    tracer from leaking spans into the next one.
+    """
+    telemetry.reset_tracer()
+    yield
+    telemetry.reset_tracer()
 
 
 @pytest.fixture(autouse=True)

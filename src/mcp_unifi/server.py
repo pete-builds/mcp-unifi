@@ -30,7 +30,7 @@ from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from mcp_unifi import __version__
+from mcp_unifi import __version__, telemetry
 from mcp_unifi.backends import (
     AccessBackend,
     AccessRealBackend,
@@ -123,6 +123,10 @@ def build_server(
     access_real_overrides: dict[str, AccessBackend] | None = (
         {"default": AccessRealBackend(access)} if access is not None else None
     )
+
+    # Record server-level facts that every span carries. Cheap and total when
+    # tracing is off: it just stores a bool.
+    telemetry.configure(stub_mode=settings.stub_mode)
 
     registry = build_registry(
         settings,

@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Optional OpenTelemetry tracing.** One span per tool call, named
+  `mcp.tool/<tool_name>`, carrying the tool name, its declared `mutates`
+  classification, whether the caller passed `dry_run`, and which control
+  refused the call (`mcp.tool.denied_by`, `readonly` or `scope`), plus the
+  controller, the authenticated `client_id`, the outcome, and whether the
+  server is in stub mode. Refusals get a span too, emitted from the same place
+  in the middleware that already writes the refused call to the audit log, so
+  "which write attempts did a control block, for which caller" is one query in
+  a trace backend rather than a JSONL grep on one container.
+
+  Strictly optional. The OpenTelemetry SDK and OTLP exporter are not runtime
+  dependencies; they live in a new `otel` extra
+  (`pip install 'mcp-unifi[otel]'`). Tracing is off unless
+  `MCP_UNIFI_OTEL_ENABLED` is set, the OpenTelemetry import is lazy and
+  non-fatal, and every span operation is wrapped so a broken exporter degrades
+  to no span rather than to a failed tool call. A server with nothing installed
+  and nothing configured behaves exactly as it did before.
+
+  Tool arguments and results never reach a span. Span attributes are an
+  emission path like any other, so instead of scrubbing arbitrary payloads the
+  span takes a fixed allowlist of scalars: a sensitive key is refused, and a
+  non-scalar value is dropped rather than stringified. Exception messages are
+  dropped too, with only the exception type recorded, because messages echo
+  caller input. The message stays in the audit log.
+
+- **`docs/operations.md`.** Named SLOs with the reasoning behind each target,
+  an error budget with a burn-rate policy, an explicit list of what pages a
+  human and what does not (refusals do not page), a measured latency
+  distribution, and cost attribution per tool call in the units that actually
+  apply to a self-hosted server: controller API calls, CPU, memory, and audit
+  disk. Every number is labelled with the backend it was measured against, and
+  the stub-backend measurements say plainly what they do and do not tell you
+  about production.
+
+- **`scripts/measure_tool_cost.py`.** Reproduces every measured number in
+  `docs/operations.md`: per-tool latency percentiles against the stub backend,
+  the measured overhead of tracing with a real SDK attached, CPU and peak-RSS
+  per call, and a real-mode count of the controller HTTP requests each tool
+  issues against a mocked transport.
+
 ## [0.21.1] - 2026-08-16
 
 ### Fixed

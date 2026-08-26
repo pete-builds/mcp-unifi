@@ -54,7 +54,22 @@ FROM python:3.13-slim@sha256:ffb752e139c0a19692a43af8d8523b274222dd68eebad5d583b
 # Two rebuilds of the same commit may differ if the Debian mirror publishes
 # a new security update between them. The Python deps below are still fully
 # hash-locked via ``pip --require-hashes``.
-RUN apt-get update && apt-get -y upgrade && rm -rf /var/lib/apt/lists/*
+#
+# The ADD below must stay directly above the RUN. Without it the comment above
+# was not true: CI builds with `cache-from: type=gha`, this RUN's cache key is
+# only its command string, and that never changes, so buildkit served the layer
+# from cache indefinitely and "current CVE fixes" meant whatever was current the
+# day the layer was first built. Verified on 2026-08-26 across this fleet: builds
+# logged `#11 CACHED` for this step while the image still shipped libssl3t64
+# 3.5.6-1~deb13u2, well after 3.5.7-1~deb13u2 (CVE-2026-14456) had landed in
+# trixie-security. The Trivy gate then failed with nothing in the repo to change.
+#
+# trixie-security's Release file changes when and only when a security update is
+# published, so keying the layer to it rebuilds exactly when there is something
+# to install and stays cached otherwise.
+ADD https://deb.debian.org/debian-security/dists/trixie-security/Release /tmp/debian-security-release
+RUN apt-get update && apt-get -y upgrade \
+    && rm -rf /tmp/debian-security-release /var/lib/apt/lists/*
 
 # MCP Registry ownership-verification label. The value MUST match the
 # `name` field in server.json so the registry can verify the publisher
