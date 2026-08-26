@@ -31,6 +31,19 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Optional tracing. The SDK and OTLP exporter are NOT installed by default and
+# are NOT in requirements.in / requirements.lock, so a normal deployment has no
+# tracer provider and exports nothing. (opentelemetry-api arrives transitively
+# via fastmcp-slim, but the API alone is a no-op without an SDK.)
+# See docs/operations.md.
+# Ranged rather than exactly pinned (the rest of this file pins) because
+# nothing locks this extra, so an exact pin here would rot with no drift check
+# to catch it. The floor is the version this was developed against.
+otel = [
+    "opentelemetry-api>=1.44.0,<2",
+    "opentelemetry-sdk>=1.44.0,<2",
+    "opentelemetry-exporter-otlp-proto-http>=1.44.0,<2",
+]
 dev = [
     "pytest==9.1.1",
     "pytest-asyncio==1.4.0",

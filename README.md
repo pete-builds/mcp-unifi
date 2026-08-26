@@ -130,6 +130,7 @@ All config is read from environment variables (and `.env` when present). The six
 | `MCP_UNIFI_READONLY` | `false` | When `true`, mutating tools are hidden and refused. See the [Security guide](https://pete-builds.github.io/mcp-unifi/guides/security/#read-only-mode). |
 | `MCP_UNIFI_MODULES_ENABLED` | `network` | Set to `network,protect,access` to enable all three modules. |
 | `MCP_UNIFI_CONTROLLERS_FILE` | (unset) | YAML file with named controllers for multi-site. |
+| `MCP_UNIFI_OTEL_ENABLED` | `false` | Optional OpenTelemetry tracing, one span per tool call. Off by default and the SDK is not a dependency. See [Operations](docs/operations.md). |
 
 Full env var reference and the multi-site YAML schema are in the [Configuration docs](https://pete-builds.github.io/mcp-unifi/reference/configuration/).
 
