@@ -48,6 +48,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the measured overhead of tracing with a real SDK attached, CPU and peak-RSS
   per call, and a real-mode count of the controller HTTP requests each tool
   issues against a mocked transport.
+- **Agent-quality eval harness (`evals/`).** A scored harness that grades model
+  and agent behaviour against this server's tool surface, which is a different
+  question from the one `tests/` answers. Four classes: `tool_selection` (does a
+  model pick the right tool, scored separately at 8, 32, and full-surface
+  catalogs so degradation is visible rather than averaged away), `refusal`
+  (does the read-only write gate hold under argument-level and protocol-level
+  pressure, with the state and the audit record both asserted),
+  `jailbreak` (the same gate under model-driven prompt pressure), and
+  `audit_fidelity` (does the audit record match what actually happened to the
+  stub controller). Everything runs against the in-memory stub; nothing in the
+  package can reach a live gateway. Methodology and limitations are documented
+  in `evals/README.md`.
+- **Deterministic eval classes gate every pull request.**
+  `tests/test_agent_evals.py` runs `refusal` and `audit_fidelity` inside the
+  normal pytest job. They need no model, no network, and no credentials. The
+  same file pins the positive control (the refusal cases must fail against a
+  server with the gate switched off) and asserts that no eval path can
+  construct a live UniFi, Protect, or Access client.
+- **`.github/workflows/agent-evals.yml`** runs the model-dependent classes
+  weekly and on demand only, never on push or pull request. It uploads a
+  scoreboard artifact and compares against a committed baseline, so a model
+  regression notifies without blocking a merge and without spending API budget
+  on every commit. With no key configured the classes skip and the job passes.
+- **Lint and type coverage extended to `evals/`.** CI now runs `ruff check`,
+  `ruff format --check`, and strict `mypy` over the harness as well as `src`
+  and `tests`.
 
 ## [0.21.1] - 2026-08-16
 
