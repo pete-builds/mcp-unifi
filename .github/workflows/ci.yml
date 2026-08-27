@@ -106,8 +106,14 @@ jobs:
       - name: Run pytest
         run: pytest --cov-report=term --cov-report=xml --cov-fail-under=80
 
+      # coverage.xml is a convenience artifact, not a gate. When the account's
+      # artifact storage quota is full this step fails, which fails the whole
+      # test job, which skips the downstream Trivy scan that depends on it. A
+      # storage problem must not be able to switch the security gate off, so
+      # this step is allowed to fail on its own. Seen live in phish-vault.
       - name: Upload coverage
         uses: actions/upload-artifact@v7
+        continue-on-error: true
         with:
           name: coverage-xml
           path: coverage.xml
