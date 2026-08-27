@@ -1,0 +1,146 @@
+# Tool-selection cases.
+#
+# Each case is a request phrased the way a person actually asks it, plus the
+# tool that answers it. Every case runs three times, against a focused catalog,
+# a mid-sized one, and the full 134-tool surface, so the scoreboard shows how
+# accuracy moves as the surface grows instead of averaging that away.
+#
+# `also_correct` lists tools that are a defensible answer to the same request.
+# Picking one of those scores as a pass: this class measures whether the model
+# can aim, not whether it can read the case author's mind.
+#
+# `trap` names the tool the case is designed to pull the model toward. It is
+# documentation for a reader, never sent to the model.
+
+- id: top_talkers
+  prompt: "Which devices on my network are using the most bandwidth right now?"
+  answer: list_top_talkers
+  also_correct: [list_clients]
+  trap: list_clients
+
+- id: wan_status
+  prompt: "Is my internet up, and what public IP am I on?"
+  answer: get_wan_status
+  trap: get_site_health
+
+- id: list_ssids
+  prompt: "What wireless networks am I broadcasting?"
+  answer: list_wlans
+  trap: list_networks
+
+- id: console_triage
+  prompt: "Something in UniFi is broken and I don't know which layer. Where do I start?"
+  answer: get_console_health
+  also_correct: [get_site_health, get_console_info]
+  trap: get_site_health
+
+- id: firmware_version
+  prompt: "What firmware is the console running, and is there an update?"
+  answer: get_console_firmware
+  trap: get_system_info
+
+- id: exposure_audit
+  prompt: "What is currently reachable from the internet into my network?"
+  answer: audit_open_ports
+  also_correct: [list_port_forwards]
+  trap: list_firewall_rules
+
+- id: drift_audit
+  prompt: "Has anything on my network config changed from what I'd expect to see?"
+  answer: audit_network_drift
+  trap: list_events
+
+- id: last_speedtest
+  prompt: "What did my last speed test come back as?"
+  answer: get_speedtest_results
+  trap: trigger_speedtest
+
+- id: bounce_a_client
+  prompt: "My iPhone is stuck on a bad access point. Kick it off so it reassociates."
+  answer: reconnect_client
+  trap: block_client
+
+- id: ban_a_client
+  prompt: "Stop the Echo Dot from reaching the internet at all until I say otherwise."
+  answer: block_client
+  also_correct: [quarantine_client]
+  trap: reconnect_client
+
+- id: network_detail
+  prompt: "Give me the full configuration of one specific network, I have its ID."
+  answer: get_network_details
+  trap: list_networks
+
+- id: alarms
+  prompt: "Has the controller raised any alarms I should look at?"
+  answer: list_alarms
+  also_correct: [get_anomalies]
+  trap: list_events
+
+- id: firewall_rules
+  prompt: "Show me every firewall rule that's configured."
+  answer: list_firewall_rules
+  trap: list_firewall_groups
+
+- id: wan_ipv6
+  prompt: "Did my ISP actually delegate an IPv6 prefix on the WAN?"
+  answer: get_wan_ipv6
+  trap: get_wan_status
+
+- id: find_a_device
+  prompt: "Make the office switch flash its LED so I can spot it in the rack."
+  answer: locate_device
+  trap: restart_device
+
+- id: gateway_throughput
+  prompt: "How much traffic has moved through the gateway over the last day?"
+  answer: get_gateway_stats
+  also_correct: [get_device_stats]
+  trap: list_top_talkers
+
+- id: connected_clients
+  prompt: "Who is connected to my network right now?"
+  answer: list_clients
+  trap: list_devices
+
+- id: guest_portal
+  prompt: "Is the captive portal turned on for guests?"
+  answer: get_guest_portal
+  trap: list_wlans
+
+- id: ips_state
+  prompt: "Is intrusion prevention enabled?"
+  answer: get_threat_management
+  trap: get_site_health
+
+- id: traffic_rules
+  prompt: "List the traffic rules I've set up."
+  answer: list_traffic_rules
+  trap: list_traffic_routes
+
+- id: take_a_backup
+  prompt: "Export my controller configuration so I have a copy before I change anything."
+  answer: backup_config
+  trap: restore_config
+
+- id: radio_channel
+  prompt: "Which channel is the living room access point's 5 GHz radio sitting on?"
+  answer: get_device_radios
+  also_correct: [get_device_stats]
+  trap: set_radio_channel
+
+- id: create_guest_wifi
+  prompt: "Set up a separate guest wifi network for visitors, isolated from my LAN."
+  answer: create_guest_network
+  also_correct: [create_wlan]
+  trap: create_wlan
+
+- id: open_a_port
+  prompt: "Forward TCP 25565 from the internet to my Minecraft server at 10.0.0.50."
+  answer: create_port_forward
+  trap: create_firewall_rule
+
+- id: reboot_an_ap
+  prompt: "Reboot the living room access point."
+  answer: restart_device
+  trap: reconnect_client

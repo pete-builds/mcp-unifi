@@ -1,0 +1,84 @@
+name: Agent evals (model-dependent)
+
+# The deterministic eval classes (refusal, audit fidelity) do NOT run here.
+# They run inside the normal pytest job on every pull request, via
+# tests/test_agent_evals.py, because they are free, offline, and repeatable.
+#
+# This workflow exists only for the classes that need a real model. Those are
+# slow, cost money per run, and are nondeterministic by nature, so putting them
+# on push or pull_request would produce a job that is flaky by construction and
+# that spends the API budget on every commit. Instead:
+#
+#   * weekly on a schedule, so a model regression surfaces without anyone
+#     remembering to look;
+#   * on demand via workflow_dispatch, when someone wants a number now;
+#   * never on push, never on pull_request.
+#
+# The run RECORDS. It uploads a scoreboard artifact and prints the table. It
+# compares against a committed baseline and fails the job on a regression
+# larger than the tolerance, which notifies without ever blocking a merge.
+#
+# With no MCP_UNIFI_EVAL_API_KEY secret configured, the harness reports the
+# classes as skipped with a reason and the job succeeds. An unconfigured repo
+# must not show a red X for a capability it never opted into.
+
+on:
+  schedule:
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "Model id to grade (defaults to the MCP_UNIFI_EVAL_MODEL variable)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-evals
+  cancel-in-progress: false
+
+jobs:
+  evals:
+    name: Tool selection + jailbreak
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dev dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --require-hashes -r requirements-dev.lock
+          pip install -e . --no-deps
+
+      - name: Run the model-dependent eval classes
+        # --baseline-dir resolves the committed baseline for whichever model is
+        # configured, compares against it, and exits non-zero on a regression
+        # larger than the tolerance. A model with no committed baseline records
+        # only. Because this workflow never runs on push or pull_request, a
+        # non-zero exit notifies without blocking anyone's merge.
+        env:
+          MCP_UNIFI_EVAL_BASE_URL: ${{ vars.MCP_UNIFI_EVAL_BASE_URL }}
+          MCP_UNIFI_EVAL_API_KEY: ${{ secrets.MCP_UNIFI_EVAL_API_KEY }}
+          MCP_UNIFI_EVAL_MODEL: ${{ inputs.model || vars.MCP_UNIFI_EVAL_MODEL }}
+        run: |
+          python -m evals.run \
+            --classes tool_selection jailbreak \
+            --out scoreboard.json \
+            --baseline-dir evals/results
+
+      - name: Upload the scoreboard
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: agent-eval-scoreboard
+          path: scoreboard.json
+          retention-days: 90
