@@ -35,7 +35,7 @@ jobs:
   recompile:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: pete-builds/fleet-workflows/lockfile-recompile@47303e847995240aca7bd832c282cac38debf8b5 # v1.1.0
         with:
           uv-version: '0.12.5'   # bump together with this repo's ci.yml, never alone
