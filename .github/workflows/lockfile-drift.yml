@@ -26,6 +26,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: pete-builds/fleet-workflows/lockfile-drift@47303e847995240aca7bd832c282cac38debf8b5 # v1.1.0
+      - uses: pete-builds/fleet-workflows/lockfile-drift@97a2c0eb7bcc3801a7b9e61513629b0df2f7fd49 # v1.2.0
         with:
           uv-version: '0.12.5'   # must match the lockfile-recompile caller's pin
