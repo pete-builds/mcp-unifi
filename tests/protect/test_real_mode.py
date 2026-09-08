@@ -537,12 +537,19 @@ async def test_real_get_camera_rejects_path_traversal(real_protect_server: FastM
 
 @respx.mock
 async def test_real_get_snapshot_rejects_path_traversal(real_protect_server: FastMCP) -> None:
-    """The binary path has the same shape and must fail the same way."""
+    """The binary path has the same shape and must fail the same way.
+
+    Three ``../`` segments, not two: the client base is
+    ``/proxy/protect/api`` and the route adds ``/cameras/<id>/snapshot``, so
+    two levels only reach ``/proxy/protect/network/...`` and never leave the
+    Protect app. With two, the mocked Network route below can never be hit
+    and ``escaped.called`` proves nothing.
+    """
     escaped = respx.get(url__regex=r".*/proxy/network/.*").mock(
         return_value=httpx.Response(200, content=b"\xff\xd8secret")
     )
     result = await _call(
-        real_protect_server, "get_snapshot", {"camera_id": "../../network/api/s/default/self"}
+        real_protect_server, "get_snapshot", {"camera_id": "../../../network/api/s/default/self"}
     )
     assert "error" in result
     assert not escaped.called

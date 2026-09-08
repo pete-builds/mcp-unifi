@@ -27,11 +27,14 @@ import re
 
 from mcp_unifi.clients.errors import UniFiError
 
-#: Characters a single path segment may contain. Colon is included for MAC
+#: Characters a single path segment may contain. Anchored with ``\A``/``\Z``
+#: rather than ``^``/``$``: Python's ``$`` also matches just before a trailing
+#: newline, so ``"abc\n"`` would satisfy an allowlist documented as strict.
+#: Colon is included for MAC
 #: addresses (``AA:BB:CC:DD:EE:FF``), which some device routes take in place of
 #: an ``_id``. Dot is included because a few controller keys contain one, and
 #: the bare ``.`` / ``..`` segments are refused separately below.
-_SEGMENT = re.compile(r"^[A-Za-z0-9_.:-]+$")
+_SEGMENT = re.compile(r"\A[A-Za-z0-9_.:-]+\Z")
 
 #: Longest id the gateway is known to issue is 24 characters; MACs are 17.
 #: A generous ceiling still stops a pathological argument from becoming a

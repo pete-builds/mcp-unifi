@@ -47,6 +47,8 @@ def test_path_segment_accepts_plain_identifiers(value: str) -> None:
         "a b",
         "a%2e%2e",
         "a\nb",
+        "a\n",
+        "a\r\n",
         "a;b",
         "a\\b",
         "a" * 129,
