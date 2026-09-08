@@ -15,6 +15,8 @@ from typing import Any
 
 import httpx
 
+from mcp_unifi.clients.errors import UniFiError, UniFiUnsupportedError
+from mcp_unifi.clients.ids import path_segment
 from mcp_unifi.clients.retry import request_with_retry
 from mcp_unifi.models import UniFiRecord
 from mcp_unifi.redaction import redact
@@ -59,20 +61,6 @@ def _describe_error_body(resp: httpx.Response) -> str:
         return ""
     content_type = resp.headers.get("content-type", "unknown")
     return f" (non-JSON body: {content_type}, {len(resp.text)} bytes)"
-
-
-class UniFiError(RuntimeError):
-    """Raised on any non-2xx response or transport failure."""
-
-
-class UniFiUnsupportedError(UniFiError):
-    """Raised when the controller firmware does not expose the requested route.
-
-    Distinct from a generic :class:`UniFiError` so callers can tell "this
-    controller version cannot answer that question" apart from "the call
-    failed". Both surface to the operator as an error — which is the entire
-    point. See :meth:`UniFiClient._get_or_unsupported` for why.
-    """
 
 
 class UniFiClient:
@@ -266,10 +254,12 @@ class UniFiClient:
         return self._first_record(await self._post("/rest/networkconf", payload))
 
     async def update_network(self, network_id: str, payload: dict[str, Any]) -> UniFiRecord:
-        return self._first_record(await self._put(f"/rest/networkconf/{network_id}", payload))
+        return self._first_record(
+            await self._put(f"/rest/networkconf/{path_segment(network_id, 'network_id')}", payload)
+        )
 
     async def delete_network(self, network_id: str) -> bool:
-        await self._delete(f"/rest/networkconf/{network_id}")
+        await self._delete(f"/rest/networkconf/{path_segment(network_id, 'network_id')}")
         return True
 
     async def list_wlans(self) -> list[UniFiRecord]:
@@ -279,10 +269,12 @@ class UniFiClient:
         return self._first_record(await self._post("/rest/wlanconf", payload))
 
     async def update_wlan(self, wlan_id: str, payload: dict[str, Any]) -> UniFiRecord:
-        return self._first_record(await self._put(f"/rest/wlanconf/{wlan_id}", payload))
+        return self._first_record(
+            await self._put(f"/rest/wlanconf/{path_segment(wlan_id, 'wlan_id')}", payload)
+        )
 
     async def delete_wlan(self, wlan_id: str) -> bool:
-        await self._delete(f"/rest/wlanconf/{wlan_id}")
+        await self._delete(f"/rest/wlanconf/{path_segment(wlan_id, 'wlan_id')}")
         return True
 
     async def list_firewall_rules(self) -> list[UniFiRecord]:
@@ -292,7 +284,7 @@ class UniFiClient:
         return self._first_record(await self._post("/rest/firewallrule", payload))
 
     async def delete_firewall_rule(self, rule_id: str) -> bool:
-        await self._delete(f"/rest/firewallrule/{rule_id}")
+        await self._delete(f"/rest/firewallrule/{path_segment(rule_id, 'rule_id')}")
         return True
 
     async def list_port_profiles(self) -> list[UniFiRecord]:
@@ -348,7 +340,9 @@ class UniFiClient:
     # ------------------------------------------------------------------
 
     async def update_firewall_rule(self, rule_id: str, payload: dict[str, Any]) -> UniFiRecord:
-        return self._first_record(await self._put(f"/rest/firewallrule/{rule_id}", payload))
+        return self._first_record(
+            await self._put(f"/rest/firewallrule/{path_segment(rule_id, 'rule_id')}", payload)
+        )
 
     # ------------------------------------------------------------------
     # Firewall groups (reusable address/port objects via /rest/firewallgroup)
@@ -367,10 +361,12 @@ class UniFiClient:
         return self._first_record(await self._post("/rest/firewallgroup", payload))
 
     async def update_firewall_group(self, group_id: str, payload: dict[str, Any]) -> UniFiRecord:
-        return self._first_record(await self._put(f"/rest/firewallgroup/{group_id}", payload))
+        return self._first_record(
+            await self._put(f"/rest/firewallgroup/{path_segment(group_id, 'group_id')}", payload)
+        )
 
     async def delete_firewall_group(self, group_id: str) -> bool:
-        await self._delete(f"/rest/firewallgroup/{group_id}")
+        await self._delete(f"/rest/firewallgroup/{path_segment(group_id, 'group_id')}")
         return True
 
     # ------------------------------------------------------------------
@@ -390,10 +386,12 @@ class UniFiClient:
         return self._first_record(await self._post("/rest/routing", payload))
 
     async def update_route(self, route_id: str, payload: dict[str, Any]) -> UniFiRecord:
-        return self._first_record(await self._put(f"/rest/routing/{route_id}", payload))
+        return self._first_record(
+            await self._put(f"/rest/routing/{path_segment(route_id, 'route_id')}", payload)
+        )
 
     async def delete_route(self, route_id: str) -> bool:
-        await self._delete(f"/rest/routing/{route_id}")
+        await self._delete(f"/rest/routing/{path_segment(route_id, 'route_id')}")
         return True
 
     # ------------------------------------------------------------------
@@ -415,7 +413,9 @@ class UniFiClient:
         return self._first_record(result)
 
     async def update_traffic_rule(self, rule_id: str, payload: dict[str, Any]) -> UniFiRecord:
-        result = await self._v2_request("PUT", f"/trafficrules/{rule_id}", json=payload)
+        result = await self._v2_request(
+            "PUT", f"/trafficrules/{path_segment(rule_id, 'rule_id')}", json=payload
+        )
         return self._first_record(result)
 
     # ------------------------------------------------------------------
@@ -433,7 +433,9 @@ class UniFiClient:
         return result if isinstance(result, list) else []
 
     async def update_traffic_route(self, route_id: str, payload: dict[str, Any]) -> UniFiRecord:
-        result = await self._v2_request("PUT", f"/trafficroutes/{route_id}", json=payload)
+        result = await self._v2_request(
+            "PUT", f"/trafficroutes/{path_segment(route_id, 'route_id')}", json=payload
+        )
         return self._first_record(result)
 
     # ------------------------------------------------------------------
@@ -454,11 +456,15 @@ class UniFiClient:
         return result if isinstance(result, list) else []
 
     async def update_content_filter(self, filter_id: str, payload: dict[str, Any]) -> UniFiRecord:
-        result = await self._v2_request("PUT", f"/content-filtering/{filter_id}", json=payload)
+        result = await self._v2_request(
+            "PUT", f"/content-filtering/{path_segment(filter_id, 'filter_id')}", json=payload
+        )
         return self._first_record(result)
 
     async def delete_content_filter(self, filter_id: str) -> bool:
-        await self._v2_request("DELETE", f"/content-filtering/{filter_id}")
+        await self._v2_request(
+            "DELETE", f"/content-filtering/{path_segment(filter_id, 'filter_id')}"
+        )
         return True
 
     # ------------------------------------------------------------------
@@ -482,10 +488,12 @@ class UniFiClient:
         return self._first_record(await self._post("/rest/dynamicdns", payload))
 
     async def update_dynamic_dns(self, ddns_id: str, payload: dict[str, Any]) -> UniFiRecord:
-        return self._first_record(await self._put(f"/rest/dynamicdns/{ddns_id}", payload))
+        return self._first_record(
+            await self._put(f"/rest/dynamicdns/{path_segment(ddns_id, 'ddns_id')}", payload)
+        )
 
     async def delete_dynamic_dns(self, ddns_id: str) -> bool:
-        await self._delete(f"/rest/dynamicdns/{ddns_id}")
+        await self._delete(f"/rest/dynamicdns/{path_segment(ddns_id, 'ddns_id')}")
         return True
 
     # ------------------------------------------------------------------
@@ -496,10 +504,12 @@ class UniFiClient:
         return self._first_record(await self._post("/rest/portconf", payload))
 
     async def update_port_profile(self, profile_id: str, payload: dict[str, Any]) -> UniFiRecord:
-        return self._first_record(await self._put(f"/rest/portconf/{profile_id}", payload))
+        return self._first_record(
+            await self._put(f"/rest/portconf/{path_segment(profile_id, 'profile_id')}", payload)
+        )
 
     async def delete_port_profile(self, profile_id: str) -> bool:
-        await self._delete(f"/rest/portconf/{profile_id}")
+        await self._delete(f"/rest/portconf/{path_segment(profile_id, 'profile_id')}")
         return True
 
     # ------------------------------------------------------------------
@@ -542,7 +552,7 @@ class UniFiClient:
         """
         return self._first_record(
             await self._put(
-                f"/rest/device/{device_id}",
+                f"/rest/device/{path_segment(device_id, 'device_id')}",
                 {"port_overrides": port_overrides},
             )
         )
@@ -556,10 +566,12 @@ class UniFiClient:
         fields like ``radio_table`` replace wholesale, so callers must send
         the full read-modify-written array, never a partial one.
         """
-        return self._first_record(await self._put(f"/rest/device/{device_id}", payload))
+        return self._first_record(
+            await self._put(f"/rest/device/{path_segment(device_id, 'device_id')}", payload)
+        )
 
     async def get_device(self, device_id: str) -> UniFiRecord:
-        result = await self._get(f"/stat/device/{device_id}")
+        result = await self._get(f"/stat/device/{path_segment(device_id, 'device_id')}")
         if isinstance(result, list) and result:
             first = result[0]
             return first if isinstance(first, dict) else {}
@@ -590,10 +602,12 @@ class UniFiClient:
         return self._first_record(await self._post("/rest/user", payload))
 
     async def update_dhcp_lease(self, user_id: str, payload: dict[str, Any]) -> UniFiRecord:
-        return self._first_record(await self._put(f"/rest/user/{user_id}", payload))
+        return self._first_record(
+            await self._put(f"/rest/user/{path_segment(user_id, 'user_id')}", payload)
+        )
 
     async def delete_dhcp_lease(self, lease_id: str) -> bool:
-        await self._delete(f"/rest/user/{lease_id}")
+        await self._delete(f"/rest/user/{path_segment(lease_id, 'lease_id')}")
         return True
 
     # ------------------------------------------------------------------
@@ -607,10 +621,12 @@ class UniFiClient:
         return self._first_record(await self._post("/rest/portforward", payload))
 
     async def update_port_forward(self, forward_id: str, payload: dict[str, Any]) -> UniFiRecord:
-        return self._first_record(await self._put(f"/rest/portforward/{forward_id}", payload))
+        return self._first_record(
+            await self._put(f"/rest/portforward/{path_segment(forward_id, 'forward_id')}", payload)
+        )
 
     async def delete_port_forward(self, forward_id: str) -> bool:
-        await self._delete(f"/rest/portforward/{forward_id}")
+        await self._delete(f"/rest/portforward/{path_segment(forward_id, 'forward_id')}")
         return True
 
     # ------------------------------------------------------------------
@@ -840,7 +856,7 @@ class UniFiClient:
         Verified against UCG-Fiber fw 5.1.12.33296: keys include ``ips``
         (Threat Management + Honeypot) and ``teleport``.
         """
-        record = await self._get(f"/rest/setting/{key}")
+        record = await self._get(f"/rest/setting/{path_segment(key, 'key')}")
         if isinstance(record, list) and record:
             first = record[0]
             return first if isinstance(first, dict) else {}
@@ -857,10 +873,13 @@ class UniFiClient:
         is more forgiving than ``PUT /rest/setting/<key>/<_id>`` (which
         sometimes drops untouched fields on older firmware).
         """
-        record = await self._post(f"/set/setting/{key}", patch)
+        record = await self._post(f"/set/setting/{path_segment(key, 'key')}", patch)
         if isinstance(record, list) and record:
             first = record[0]
             return first if isinstance(first, dict) else {}
         if isinstance(record, dict):
             return record
         return {}
+
+
+__all__ = ["UniFiClient", "UniFiError", "UniFiUnsupportedError"]

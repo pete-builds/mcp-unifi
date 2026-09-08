@@ -22,6 +22,7 @@ from typing import Any
 
 import httpx
 
+from mcp_unifi.clients.ids import path_segment
 from mcp_unifi.clients.retry import request_with_retry
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.models import UniFiRecord
@@ -145,11 +146,15 @@ class ProtectClient:
         return self._ensure_list(await self._request("GET", "/cameras"))
 
     async def get_camera(self, camera_id: str) -> UniFiRecord:
-        return self._ensure_record(await self._request("GET", f"/cameras/{camera_id}"))
+        return self._ensure_record(
+            await self._request("GET", f"/cameras/{path_segment(camera_id, 'camera_id')}")
+        )
 
     async def update_camera(self, camera_id: str, payload: dict[str, Any]) -> UniFiRecord:
         return self._ensure_record(
-            await self._request("PATCH", f"/cameras/{camera_id}", json=payload)
+            await self._request(
+                "PATCH", f"/cameras/{path_segment(camera_id, 'camera_id')}", json=payload
+            )
         )
 
     # ------------------------------------------------------------------
@@ -179,10 +184,14 @@ class ProtectClient:
     # ------------------------------------------------------------------
 
     async def get_snapshot(self, camera_id: str) -> bytes:
-        return await self._request_bytes("GET", f"/cameras/{camera_id}/snapshot")
+        return await self._request_bytes(
+            "GET", f"/cameras/{path_segment(camera_id, 'camera_id')}/snapshot"
+        )
 
     async def get_event_thumbnail(self, event_id: str) -> bytes:
-        return await self._request_bytes("GET", f"/events/{event_id}/thumbnail")
+        return await self._request_bytes(
+            "GET", f"/events/{path_segment(event_id, 'event_id')}/thumbnail"
+        )
 
     # ------------------------------------------------------------------
     # Recordings
@@ -191,7 +200,7 @@ class ProtectClient:
     async def list_recordings(
         self, camera_id: str, start_ms: int, end_ms: int
     ) -> list[UniFiRecord]:
-        query = f"camera={camera_id}&start={start_ms}&end={end_ms}"
+        query = f"camera={path_segment(camera_id, 'camera_id')}&start={start_ms}&end={end_ms}"
         return self._ensure_list(await self._request("GET", f"/recordings?{query}"))
 
 

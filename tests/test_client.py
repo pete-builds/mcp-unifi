@@ -274,3 +274,35 @@ def test_client_sends_api_key_header() -> None:
     c = UniFiClient(host="gateway.test", api_key="secret")
     assert c._client.headers["X-API-Key"] == "secret"
     assert c._client.headers["Accept"] == "application/json"
+
+
+# ---------------------------------------------------------------------------
+# Identifier hardening on the Network client's id-in-path methods
+# ---------------------------------------------------------------------------
+
+
+@respx.mock
+async def test_update_wlan_rejects_path_traversal(client: UniFiClient) -> None:
+    """``PUT /rest/wlanconf/{id}`` must not be steerable onto another collection."""
+    escaped = respx.put(url__regex=r".*").mock(return_value=httpx.Response(200, json={"data": []}))
+    with pytest.raises(UniFiError):
+        await client.update_wlan("../networkconf/n1", {"name": "x"})
+    assert not escaped.called
+
+
+@respx.mock
+async def test_get_setting_rejects_path_traversal(client: UniFiClient) -> None:
+    escaped = respx.get(url__regex=r".*").mock(return_value=httpx.Response(200, json={"data": []}))
+    with pytest.raises(UniFiError):
+        await client.get_setting("../../self")
+    assert not escaped.called
+
+
+@respx.mock
+async def test_delete_firewall_rule_rejects_empty_id(client: UniFiClient) -> None:
+    """An empty id would turn ``DELETE /rest/firewallrule/{id}`` into a
+    collection-level request."""
+    escaped = respx.delete(url__regex=r".*").mock(return_value=httpx.Response(200, json={}))
+    with pytest.raises(UniFiError):
+        await client.delete_firewall_rule("")
+    assert not escaped.called

@@ -25,7 +25,8 @@ from mcp_unifi.annotations import READ_ONLY
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
-from mcp_unifi.modules.network._common import format_json, make_err
+from mcp_unifi.modules.network._common import format_json as _format_json
+from mcp_unifi.modules.network._common import make_err
 from mcp_unifi.redaction import redact
 
 if TYPE_CHECKING:
@@ -35,6 +36,19 @@ if TYPE_CHECKING:
     from mcp_unifi.dispatcher import ControllerRegistry
 
 logger = logging.getLogger("mcp_unifi.access")
+
+
+def format_json(data: object) -> str:
+    """Serialise a tool response with sensitive keys redacted.
+
+    The credential and visitor tools already redact explicitly because their
+    records carry ``pass_code`` and similar; routing every response through
+    :func:`redact` closes the door, policy, device, and user reads too, so no
+    Access record can surface a secret-shaped field unredacted. Redaction is
+    idempotent, so the explicit calls that remain are harmless.
+    """
+    return _format_json(redact(data))
+
 
 #: Valid ``result`` filter values for event queries. Empty string means "any".
 EVENT_RESULTS: frozenset[str] = frozenset({"granted", "denied"})
