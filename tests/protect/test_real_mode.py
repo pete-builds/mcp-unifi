@@ -9,6 +9,7 @@ exercised end-to-end.
 from __future__ import annotations
 
 import base64
+import json
 from collections.abc import AsyncIterator, Iterator
 
 import httpx
@@ -19,6 +20,7 @@ from fastmcp import FastMCP
 from mcp_unifi.clients.protect import ProtectClient
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.config import ControllerConfig, Settings
+from mcp_unifi.redaction import REDACTED_OUTPUT
 from mcp_unifi.server import build_server
 from tests.protect.conftest import _call
 
@@ -500,3 +502,70 @@ async def test_client_list_recordings_query_string() -> None:
         assert "end=2000" in url
     finally:
         await client.aclose()
+
+
+# ---------------------------------------------------------------------------
+# Identifier hardening: ids are single path segments, and reads are redacted
+# ---------------------------------------------------------------------------
+
+NETWORK_WLANCONF = "https://gateway.test:443/proxy/network/api/s/default/rest/wlanconf"
+
+
+@respx.mock
+async def test_real_get_camera_rejects_path_traversal(real_protect_server: FastMCP) -> None:
+    """A camera id carrying ``../`` must never leave the Protect API surface.
+
+    Before the fix, httpx collapsed the dot segments and the request landed on
+    the Network app's ``wlanconf`` route with the shared API key, handing a
+    Protect-scoped caller every WPA passphrase. The Network route is mocked
+    here so a regression is caught by ``route.called`` and not by a
+    ``respx`` "no mock" error that would look like a different bug.
+    """
+    network_route = respx.get(NETWORK_WLANCONF).mock(
+        return_value=httpx.Response(
+            200,
+            json={"meta": {"rc": "ok"}, "data": [{"_id": "w1", "x_passphrase": "hunter2hunter2"}]},
+        )
+    )
+    evil = "../../../network/api/s/default/rest/wlanconf"
+    result = await _call(real_protect_server, "get_camera", {"camera_id": evil})
+    assert "error" in result
+    assert "camera_id" in result["error"]
+    assert not network_route.called
+    assert "hunter2" not in json.dumps(result)
+
+
+@respx.mock
+async def test_real_get_snapshot_rejects_path_traversal(real_protect_server: FastMCP) -> None:
+    """The binary path has the same shape and must fail the same way."""
+    escaped = respx.get(url__regex=r".*/proxy/network/.*").mock(
+        return_value=httpx.Response(200, content=b"\xff\xd8secret")
+    )
+    result = await _call(
+        real_protect_server, "get_snapshot", {"camera_id": "../../network/api/s/default/self"}
+    )
+    assert "error" in result
+    assert not escaped.called
+
+
+@respx.mock
+async def test_real_get_camera_redacts_sensitive_keys(real_protect_server: FastMCP) -> None:
+    """Protect records pass through the same redaction as Network records."""
+    respx.get(f"{PROTECT_BASE}/cameras/c1").mock(
+        return_value=httpx.Response(
+            200, json={"id": "c1", "name": "Front", "password": "cam-admin-secret"}
+        )
+    )
+    result = await _call(real_protect_server, "get_camera", {"camera_id": "c1"})
+    assert result["id"] == "c1"
+    assert result["password"] == REDACTED_OUTPUT
+    assert "cam-admin-secret" not in json.dumps(result)
+
+
+@respx.mock
+async def test_real_list_cameras_redacts_sensitive_keys(real_protect_server: FastMCP) -> None:
+    respx.get(f"{PROTECT_BASE}/cameras").mock(
+        return_value=httpx.Response(200, json=[{"id": "c1", "authToken": "abc123secret"}])
+    )
+    result = await _call(real_protect_server, "list_cameras")
+    assert result[0]["authToken"] == REDACTED_OUTPUT

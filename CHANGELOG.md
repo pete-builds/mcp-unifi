@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Resource ids are validated as single URL path segments before they reach
+  the gateway.** Every Protect, Access, and Network client method that puts a
+  caller-supplied id into a URL path or query string now routes it through
+  one validator (`mcp_unifi.clients.ids.path_segment`), which accepts only
+  `[A-Za-z0-9_.:-]`, refuses `.` and `..`, and caps length at 128. Before
+  this, httpx normalised dot segments, so a Protect-scoped caller could pass
+  `camera_id="../../../network/api/s/default/rest/wlanconf"` to `get_camera`
+  and receive the Network app's WLAN records, passphrases included, from a
+  client that had been scoped away from every Network tool. The same
+  id-in-path pattern existed in every `update_*` and `delete_*` method of the
+  Network client and in every Access read. A rejected id surfaces as the
+  normal tool error envelope naming the offending argument; the value itself
+  is not echoed. Regression tests pin the Protect, Access, and Network paths
+  and assert the escaped route is never called.
+
+- **Protect and Access tool responses are redacted on the way out**, the way
+  Network responses already were. Every `format_json` in those two modules now
+  runs the payload through `mcp_unifi.redaction.redact` first, so a
+  credential-shaped field on a camera, door, device, or user record is
+  replaced with `[REDACTED]` rather than returned. This is the second layer
+  behind the id validator: if a future route ever does return a foreign
+  record, the passphrase still does not reach the transcript.
+
 ### Added
 
 - **Optional OpenTelemetry tracing.** One span per tool call, named

@@ -23,6 +23,7 @@ from typing import Any
 
 import httpx
 
+from mcp_unifi.clients.ids import path_segment
 from mcp_unifi.clients.retry import request_with_retry
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.models import UniFiRecord
@@ -125,7 +126,9 @@ class AccessClient:
         return self._ensure_list(await self._request("GET", "/doors"))
 
     async def get_door(self, door_id: str) -> UniFiRecord:
-        return self._ensure_record(await self._request("GET", f"/doors/{door_id}"))
+        return self._ensure_record(
+            await self._request("GET", f"/doors/{path_segment(door_id, 'door_id')}")
+        )
 
     async def list_door_groups(self) -> list[UniFiRecord]:
         return self._ensure_list(await self._request("GET", "/door_groups"))
@@ -138,7 +141,9 @@ class AccessClient:
         return self._ensure_list(await self._request("GET", "/access_policies"))
 
     async def get_access_policy(self, policy_id: str) -> UniFiRecord:
-        return self._ensure_record(await self._request("GET", f"/access_policies/{policy_id}"))
+        return self._ensure_record(
+            await self._request("GET", f"/access_policies/{path_segment(policy_id, 'policy_id')}")
+        )
 
     # ------------------------------------------------------------------
     # Credentials
@@ -148,7 +153,11 @@ class AccessClient:
         return self._ensure_list(await self._request("GET", "/credentials"))
 
     async def get_credential(self, credential_id: str) -> UniFiRecord:
-        return self._ensure_record(await self._request("GET", f"/credentials/{credential_id}"))
+        return self._ensure_record(
+            await self._request(
+                "GET", f"/credentials/{path_segment(credential_id, 'credential_id')}"
+            )
+        )
 
     # ------------------------------------------------------------------
     # Visitors
@@ -158,7 +167,9 @@ class AccessClient:
         return self._ensure_list(await self._request("GET", "/visitors"))
 
     async def get_visitor(self, visitor_id: str) -> UniFiRecord:
-        return self._ensure_record(await self._request("GET", f"/visitors/{visitor_id}"))
+        return self._ensure_record(
+            await self._request("GET", f"/visitors/{path_segment(visitor_id, 'visitor_id')}")
+        )
 
     # ------------------------------------------------------------------
     # Events
@@ -180,9 +191,9 @@ class AccessClient:
         """
         parts = [f"start={start_ms}", f"end={end_ms}", f"limit={limit}"]
         if result:
-            parts.append(f"result={result}")
+            parts.append(f"result={path_segment(result, 'result')}")
         if door_id:
-            parts.append(f"door_id={door_id}")
+            parts.append(f"door_id={path_segment(door_id, 'door_id')}")
         query = "&".join(parts)
         return self._ensure_list(await self._request("GET", f"/events?{query}"))
 
@@ -194,7 +205,9 @@ class AccessClient:
         return self._ensure_list(await self._request("GET", "/devices"))
 
     async def get_device(self, device_id: str) -> UniFiRecord:
-        return self._ensure_record(await self._request("GET", f"/devices/{device_id}"))
+        return self._ensure_record(
+            await self._request("GET", f"/devices/{path_segment(device_id, 'device_id')}")
+        )
 
     # ------------------------------------------------------------------
     # System

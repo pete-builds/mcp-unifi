@@ -27,7 +27,9 @@ from mcp_unifi.annotations import CREATE, READ_ONLY, WRITE_IDEMPOTENT
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
-from mcp_unifi.modules.network._common import format_json, make_err
+from mcp_unifi.modules.network._common import format_json as _format_json
+from mcp_unifi.modules.network._common import make_err
+from mcp_unifi.redaction import redact
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -36,6 +38,19 @@ if TYPE_CHECKING:
     from mcp_unifi.dispatcher import ControllerRegistry
 
 logger = logging.getLogger("mcp_unifi.protect")
+
+
+def format_json(data: object) -> str:
+    """Serialise a tool response with sensitive keys redacted.
+
+    Protect records are controller records like any other: camera and
+    doorbell objects carry credential-shaped fields on some firmware, and the
+    id validator in :mod:`mcp_unifi.clients.ids` is the only reason a response
+    here cannot be a Network record. Redacting on the way out is the second
+    layer, and it is the same layer the Network module already applies.
+    """
+    return _format_json(redact(data))
+
 
 # Allowed values for the small enums tools accept. Keeping them as
 # module-level constants makes the validation message stable and lets future

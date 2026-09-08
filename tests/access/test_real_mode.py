@@ -10,6 +10,7 @@ future hardware purchase) validates against live UniFi Access.
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator, Iterator
 
 import httpx
@@ -21,6 +22,7 @@ from pydantic import SecretStr
 from mcp_unifi.clients.access import AccessClient
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.config import ControllerConfig, Settings
+from mcp_unifi.redaction import REDACTED_OUTPUT
 from mcp_unifi.server import build_server
 from tests.access.conftest import _call
 
@@ -590,3 +592,34 @@ async def test_client_uses_x_api_key_header() -> None:
         assert captured["api_key"] == "secret-key"
     finally:
         await client.aclose()
+
+
+# ---------------------------------------------------------------------------
+# Identifier hardening: ids are single path segments, and reads are redacted
+# ---------------------------------------------------------------------------
+
+
+@respx.mock
+async def test_real_get_door_rejects_path_traversal(real_access_server: FastMCP) -> None:
+    """A door id carrying ``../`` must never leave the Access API surface."""
+    escaped = respx.get(url__regex=r".*/proxy/(network|protect)/.*").mock(
+        return_value=httpx.Response(200, json={"data": [{"x_passphrase": "hunter2hunter2"}]})
+    )
+    evil = "../../../../network/api/s/default/rest/wlanconf"
+    result = await _call(real_access_server, "get_door", {"door_id": evil})
+    assert "error" in result
+    assert "door_id" in result["error"]
+    assert not escaped.called
+    assert "hunter2" not in json.dumps(result)
+
+
+@respx.mock
+async def test_real_get_door_redacts_sensitive_keys(real_access_server: FastMCP) -> None:
+    respx.get(f"{ACCESS_BASE}/doors/d1").mock(
+        return_value=httpx.Response(
+            200, json={"id": "d1", "name": "Front", "admin_password": "door-secret-1"}
+        )
+    )
+    result = await _call(real_access_server, "get_door", {"door_id": "d1"})
+    assert result["id"] == "d1"
+    assert result["admin_password"] == REDACTED_OUTPUT
