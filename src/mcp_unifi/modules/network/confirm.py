@@ -11,10 +11,13 @@ Side effects:
   (a ``{"deleted": true, "<id>_id": "..."}`` envelope or an upstream error).
 * On expired / unknown token: returns the standard error envelope.
 
-The audit decorator captures both halves: the preview emits a
-``delete_<resource>`` event with the resolved ``_id`` and the freshly-minted
-token reference; the confirm emits a ``confirm_destructive_action`` event
-with the token (which lets a replay tool stitch the two halves together).
+The audit decorator captures both halves. The token itself is scrubbed from
+both events (any key containing ``token`` is a secret to the audit log), so the
+link between them is ``preview_id``: the preview envelope carries it, and this
+tool annotates its own event with the same value plus the queued ``action`` and
+the controller the pending action actually targets. Without that annotation
+the confirm event said ``controller: default`` regardless, because this tool
+takes no ``controller`` argument for the decorator to read.
 """
 
 from __future__ import annotations
@@ -24,9 +27,9 @@ from typing import TYPE_CHECKING
 
 from mcp_unifi.annotations import DESTRUCTIVE_ONCE
 from mcp_unifi.clients.unifi import UniFiError
-from mcp_unifi.modules._audit import audited
+from mcp_unifi.modules._audit import annotate_audit, audited
 from mcp_unifi.modules.network._common import make_err
-from mcp_unifi.modules.network._pending import get_pending_actions
+from mcp_unifi.modules.network._pending import get_pending_actions, preview_id
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -69,6 +72,7 @@ def register(mcp: FastMCP, settings: Settings, _registry: ControllerRegistry) ->
             standard error envelope (``{"error": "...", "stub_mode": bool}``)
             for unknown, used, or expired tokens.
         """
+        annotate_audit(preview_id=preview_id(token))
         pending = get_pending_actions().pop(token)
         if pending is None:
             return err(
@@ -76,6 +80,7 @@ def register(mcp: FastMCP, settings: Settings, _registry: ControllerRegistry) ->
                 "expire 5 minutes after issuance; re-invoke the original "
                 "destructive tool to get a fresh token."
             )
+        annotate_audit(controller=pending.controller, action=pending.action)
         try:
             return await pending.executor()
         except UniFiError as exc:

@@ -210,7 +210,10 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 }
             )
 
-        backend = resolve_backend(registry, controller)
+        try:
+            backend = resolve_backend(registry, controller)
+        except UniFiError as exc:
+            return err(str(exc))
         created: dict[str, Any] = {
             "network": None,
             "wlan": None,
@@ -401,7 +404,10 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 }
             )
 
-        backend = resolve_backend(registry, controller)
+        try:
+            backend = resolve_backend(registry, controller)
+        except UniFiError as exc:
+            return err(str(exc))
         created: dict[str, Any] = {
             "lease": None,
             "firewall_rule": None,
@@ -657,7 +663,10 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 }
             )
 
-        backend = resolve_backend(registry, controller)
+        try:
+            backend = resolve_backend(registry, controller)
+        except UniFiError as exc:
+            return err(str(exc))
         created: dict[str, Any] = {
             "network": None,
             "wlan": None,

@@ -56,8 +56,12 @@ async def request_with_retry(
     """Issue an HTTP request, retrying only transient, safe-to-repeat failures.
 
     Retries applied:
-      * One retry on ``ConnectError`` / ``RemoteProtocolError`` (network blip),
-        matching every client's original single-retry behaviour.
+      * One retry on ``ConnectError`` for every verb: nothing reached the
+        controller, so repeating is safe.
+      * One retry on ``RemoteProtocolError`` for ``GET`` only. That error means
+        the connection dropped after the request was sent, so the controller
+        may already have applied a write; replaying a ``POST`` would create a
+        duplicate and replaying a ``DELETE`` reports a false failure.
       * Up to :data:`MAX_5XX_RETRIES` extra attempts on a 5xx response, but ONLY
         for idempotent ``GET`` requests, with exponential backoff. Non-GET verbs
         return their 5xx response immediately (the caller raises) so a write is
@@ -89,7 +93,7 @@ async def request_with_retry(
     while True:
         try:
             resp = await client.request(method, url, json=json)
-        except (httpx.ConnectError, httpx.RemoteProtocolError) as exc:
+        except httpx.ConnectError as exc:
             if not connect_retried:
                 connect_retried = True
                 logger.warning(
@@ -98,6 +102,21 @@ async def request_with_retry(
                     extra={"method": method, "url": url, "error": str(exc)},
                 )
                 continue
+            raise error_cls(f"{service} connection failed: {exc}") from exc
+        except httpx.RemoteProtocolError as exc:
+            if method.upper() == "GET" and not connect_retried:
+                connect_retried = True
+                logger.warning(
+                    "%s connection dropped mid-request, retrying idempotent read once",
+                    service,
+                    extra={"method": method, "url": url, "error": str(exc)},
+                )
+                continue
+            if method.upper() != "GET":
+                raise error_cls(
+                    f"{service} connection dropped after {method} was sent; not retried "
+                    f"because the controller may already have applied it: {exc}"
+                ) from exc
             raise error_cls(f"{service} connection failed: {exc}") from exc
         except httpx.HTTPError as exc:
             raise error_cls(f"{service} transport error: {exc}") from exc

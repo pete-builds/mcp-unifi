@@ -507,7 +507,12 @@ class RealBackend:
         if not device_id:
             raise UniFiError(f"device {device_mac} has no _id")
         existing = list(target.get("port_overrides") or [])
-        override: dict[str, Any] = {"port_idx": port_idx}
+        # The controller replaces port_overrides wholesale, so the new entry
+        # for this port must start from the current one or every other field
+        # on the same port (profile, PoE mode, name) silently reverts.
+        current = next((o for o in existing if o.get("port_idx") == port_idx), None)
+        override: dict[str, Any] = dict(current) if current else {}
+        override["port_idx"] = port_idx
         if enable is not None:
             override["enable"] = enable
         if poe_mode:

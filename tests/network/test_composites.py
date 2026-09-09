@@ -847,3 +847,54 @@ async def test_real_guest_network_rollback_partial_redacts_passphrase(
     assert result["partial"]["wlan"]["x_passphrase"] == "[REDACTED]"
     assert GUEST_PSK not in json.dumps(result)
     assert any(a.get("wlan") == "wlan-id" for a in result["rolled_back"])
+
+
+# ---------------------------------------------------------------------------
+# Unknown controller returns the envelope, never raises
+# (review 2026-09-08, finding 6)
+# ---------------------------------------------------------------------------
+
+
+async def test_create_iot_network_unknown_controller_returns_envelope(
+    stub_server: FastMCP,
+) -> None:
+    result = await _call(
+        stub_server,
+        "create_iot_network",
+        {"name": "IoT", "vlan_id": 21, "passphrase": "iot-pass-1234", "controller": "nope"},
+    )
+    assert "Unknown controller" in result["error"]
+
+
+async def test_create_guest_network_unknown_controller_returns_envelope(
+    stub_server: FastMCP,
+) -> None:
+    result = await _call(
+        stub_server,
+        "create_guest_network",
+        {
+            "name": "Guest",
+            "ssid": "Guest",
+            "vlan_id": 22,
+            "passphrase": "guest-pass-1234",
+            "controller": "nope",
+        },
+    )
+    assert "Unknown controller" in result["error"]
+
+
+async def test_provision_homelab_service_unknown_controller_returns_envelope(
+    stub_server: FastMCP,
+) -> None:
+    result = await _call(
+        stub_server,
+        "provision_homelab_service",
+        {
+            "name": "svc",
+            "mac": "aa:bb:cc:dd:ee:ff",
+            "ip": "10.0.1.50",
+            "network_id": "x",
+            "controller": "nope",
+        },
+    )
+    assert "Unknown controller" in result["error"]

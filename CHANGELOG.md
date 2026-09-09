@@ -9,6 +9,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **`update_vlan` redacts the record it returns and the patch it previews.**
+  Network records carry VPN key material (`x_ipsec_pre_shared_key`, WireGuard
+  `x_private_key`, RADIUS `x_secret`), and the read tools redacted it while
+  `update_vlan` returned the re-read record raw and echoed the caller's patch
+  raw in `dry_run`. Toggling `enabled` on a site-to-site VPN network put the
+  pre-shared key in the transcript. Both paths now go through `redact`, as
+  `update_wlan` already did.
+- **The audit log can tie a confirmed delete to its preview, on the right
+  controller.** The scrubber redacts every key containing `token`, so the
+  preview's `result.token` and the confirm's `args.token` were both `***`
+  with nothing linking them, and `confirm_destructive_action` takes no
+  `controller` argument, so its event said `default` whatever the queued
+  action targeted. The preview envelope now carries `preview_id` (the first
+  eight characters of the token, not enough to confirm with), and the confirm
+  tool annotates its own event with the same `preview_id`, the queued
+  `action`, and the pending action's controller via a new
+  `mcp_unifi.modules._audit.annotate_audit` hook. `mcp-unifi-replay` now
+  treats a tool's `{"error": ...}` envelope as a failure instead of counting
+  it as success; replaying a confirm with a scrubbed token used to report
+  success while nothing was deleted.
+
+### Fixed
+
+- **`set_port_state` no longer wipes a port's other overrides on a real
+  controller.** The controller replaces `port_overrides` wholesale, and the
+  real backend built the new entry for the target port from only the fields
+  the caller passed. Disabling port 5 sent `{"port_idx": 5, "enable": false}`
+  and the port's profile, PoE mode and name reverted to defaults; a camera
+  port could change VLANs on a disable/enable. The entry now starts from the
+  port's existing override. The stub already merged, which is why the suite
+  did not catch it; the regression test captures the real PUT body.
+- **A connection dropped mid-request no longer re-sends a write.**
+  `request_with_retry` retried once on `RemoteProtocolError` for every verb,
+  and that error means the request was already sent: a `POST` the controller
+  had accepted was sent again (duplicate VLAN, rule, or port forward) and a
+  `DELETE` was reported failed on the retry's 404 after it had succeeded.
+  `RemoteProtocolError` is retried for `GET` only; `ConnectError` (nothing
+  sent) is still retried for every verb.
+- **Composite tools return the standard error envelope on an unknown
+  controller.** `create_iot_network`, `create_guest_network`, and
+  `provision_homelab_service` resolved the backend outside their `try`, so a
+  typo in `controller` raised out of the tool instead of returning
+  `{"error": ..., "stub_mode": ...}` like every other tool.
+
 - **Resource ids are validated as single URL path segments before they reach
   the gateway.** Every Protect, Access, and Network client method that puts a
   caller-supplied id into a URL path or query string now routes it through

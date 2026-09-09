@@ -186,6 +186,17 @@ def reset_pending_actions(ttl_seconds: float = TOKEN_TTL_SECONDS) -> PendingActi
     return _REGISTRY
 
 
+def preview_id(token: str) -> str:
+    """Non-secret correlation id for a preview token: its first 8 characters.
+
+    The audit scrubber redacts every key containing ``token``, so the preview
+    event's ``result.token`` and the confirm event's ``args.token`` are both
+    written as ``***`` and nothing in the log links the two halves. Eight hex
+    characters of a UUID4 identify the pair without being enough to confirm.
+    """
+    return token[:8]
+
+
 def build_preview_envelope(pending: PendingAction) -> dict[str, Any]:
     """Build the JSON-serialisable preview envelope returned by delete tools.
 
@@ -193,6 +204,7 @@ def build_preview_envelope(pending: PendingAction) -> dict[str, Any]:
     confirm tool can document the contract in one place.
     """
     return {
+        "preview_id": preview_id(pending.token),
         "preview": True,
         "action": pending.action,
         "controller": pending.controller,
@@ -209,5 +221,6 @@ __all__ = [
     "PendingActionsRegistry",
     "build_preview_envelope",
     "get_pending_actions",
+    "preview_id",
     "reset_pending_actions",
 ]
