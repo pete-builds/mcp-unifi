@@ -12,7 +12,7 @@
   "packages": [
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/pete-builds/mcp-unifi:0.21.1",
+      "identifier": "ghcr.io/pete-builds/mcp-unifi:0.21.2",
       "transport": {
         "type": "streamable-http",
         "url": "http://localhost:3714/mcp"
