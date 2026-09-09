@@ -237,3 +237,76 @@ async def test_sequence_of_tool_calls_produces_one_event_per_call(
     # The dry-run call must be flagged distinctly.
     assert events[3]["args"]["dry_run"] is True
     assert events[3]["result"]["dry_run"] is True
+
+
+# ---------------------------------------------------------------------------
+# Confirm events name their controller and link to their preview
+# (review 2026-09-08, finding 5)
+# ---------------------------------------------------------------------------
+
+
+async def test_annotate_audit_overrides_controller_and_adds_args(
+    file_sink_audit_log: tuple[Path, AuditLog],
+) -> None:
+    from mcp_unifi.modules._audit import annotate_audit
+
+    log_path, _ = file_sink_audit_log
+
+    @audited("synthetic_annotated_tool", mutates=True)
+    async def synthetic_annotated_tool(token: str) -> str:
+        annotate_audit(controller="office", preview_id="3f1a2b4c", action="delete_vlan")
+        return json.dumps({"deleted": True})
+
+    await synthetic_annotated_tool(token="3f1a2b4c-secret-rest")
+
+    ev = _read_events(log_path)[0]
+    assert ev["controller"] == "office"
+    assert ev["args"]["preview_id"] == "3f1a2b4c"
+    assert ev["args"]["action"] == "delete_vlan"
+    assert ev["args"]["token"] == REDACTED
+
+
+async def test_annotate_audit_survives_a_raising_tool(
+    file_sink_audit_log: tuple[Path, AuditLog],
+) -> None:
+    from mcp_unifi.modules._audit import annotate_audit
+
+    log_path, _ = file_sink_audit_log
+
+    @audited("synthetic_annotated_raiser", mutates=True)
+    async def synthetic_annotated_raiser() -> str:
+        annotate_audit(controller="office")
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        await synthetic_annotated_raiser()
+
+    ev = _read_events(log_path)[0]
+    assert ev["success"] is False
+    assert ev["controller"] == "office"
+
+
+async def test_confirm_event_links_to_preview_without_the_token(
+    stub_server: FastMCP,
+    file_sink_audit_log: tuple[Path, AuditLog],
+) -> None:
+    log_path, _ = file_sink_audit_log
+    created = await _call(
+        stub_server, "create_vlan", {"name": "Doomed", "vlan_id": 72, "subnet": "10.0.72.0/24"}
+    )
+    preview = await _call(stub_server, "delete_vlan", {"network_id": created["_id"]})
+    assert preview["preview_id"] == preview["token"][:8]
+    await _call(stub_server, "confirm_destructive_action", {"token": preview["token"]})
+
+    events = {ev["tool"]: ev for ev in _read_events(log_path)}
+    preview_ev = events["delete_vlan"]
+    confirm_ev = events["confirm_destructive_action"]
+    # The token stays a secret in both halves...
+    assert preview_ev["result"]["token"] == REDACTED
+    assert confirm_ev["args"]["token"] == REDACTED
+    # ...and preview_id is the link between them.
+    assert preview_ev["result"]["preview_id"] == preview["preview_id"]
+    assert confirm_ev["args"]["preview_id"] == preview["preview_id"]
+    assert confirm_ev["args"]["action"] == "delete_vlan"
+    assert confirm_ev["controller"] == preview_ev["controller"]
+    assert confirm_ev["result"]["deleted"] is True

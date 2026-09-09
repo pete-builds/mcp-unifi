@@ -73,6 +73,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from functools import wraps
 from typing import Any, ParamSpec, TypeVar
 
@@ -108,6 +109,31 @@ def tool_mutates(tool_name: str) -> bool | None:
 def classified_tools() -> dict[str, bool]:
     """Return a copy of the whole ``{tool_name: mutates}`` registry."""
     return dict(_CLASSIFICATION)
+
+
+_ANNOTATIONS: ContextVar[dict[str, Any] | None] = ContextVar(
+    "mcp_unifi_audit_annotations", default=None
+)
+
+
+def annotate_audit(*, controller: str | None = None, **fields: Any) -> None:
+    """Correct or enrich the audit event for the tool call in progress.
+
+    The decorator reads ``controller`` from the tool's kwargs, which is right
+    for every tool that takes one. ``confirm_destructive_action`` takes only a
+    token, so its event said ``default`` no matter which controller the queued
+    action targeted. A tool body calls this with the controller it actually
+    resolved, plus any non-secret fields that belong in ``args`` (a
+    ``preview_id`` that links a confirm to its preview, the queued ``action``).
+    Values here go through the same scrub as kwargs, so a sensitive key is
+    still redacted. No-op outside an audited call.
+    """
+    current = _ANNOTATIONS.get()
+    if current is None:
+        return
+    if controller is not None:
+        current["controller"] = controller
+    current.setdefault("args", {}).update(fields)
 
 
 def _current_client_id() -> str | None:
@@ -186,6 +212,13 @@ def audited(
             controller = str(kwargs.get("controller", "default"))
             client_id = _current_client_id()
             log = audit.get_audit_log()
+            annotations: dict[str, Any] = {}
+            annotations_token = _ANNOTATIONS.set(annotations)
+
+            def _apply_annotations() -> None:
+                nonlocal controller
+                controller = str(annotations.get("controller", controller))
+                audit_args.update(annotations.get("args", {}))
 
             # The span wraps the audit emit as well as the tool body, so its
             # duration is the full cost of serving the call rather than just
@@ -202,6 +235,8 @@ def audited(
                 try:
                     result = await fn(*args, **kwargs)
                 except Exception as exc:
+                    _ANNOTATIONS.reset(annotations_token)
+                    _apply_annotations()
                     latency_ms = (time.perf_counter() - start) * 1000.0
                     span.record_error(exc)
                     await log.emit(
@@ -216,6 +251,8 @@ def audited(
                     )
                     raise
 
+                _ANNOTATIONS.reset(annotations_token)
+                _apply_annotations()
                 latency_ms = (time.perf_counter() - start) * 1000.0
                 span.set(telemetry.ATTR_OUTCOME, telemetry.OUTCOME_OK)
                 await log.emit(
@@ -236,6 +273,7 @@ def audited(
 
 __all__ = [
     "ToolClassificationConflictError",
+    "annotate_audit",
     "audited",
     "classified_tools",
     "tool_mutates",

@@ -719,3 +719,59 @@ async def test_set_radio_tx_power_redacts_radio_table_secrets(
     assert applied["after"]["x_vwirekey"] == "[REDACTED]"
     assert "do-not-leak" not in json.dumps(applied)
     assert applied["after"]["tx_power_mode"] == "low"
+
+
+@respx.mock
+async def test_real_set_port_state_keeps_other_fields_on_same_port(real_server: FastMCP) -> None:
+    """The controller replaces port_overrides wholesale. Changing one field on
+    port 5 must send port 5's existing profile, PoE mode and name back with it,
+    or they revert to defaults (a camera port could jump VLANs on a disable)."""
+    respx.get(f"{BASE}/stat/device").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "_id": "switch-1",
+                        "mac": "f4:e2:c6:00:00:03",
+                        "port_overrides": [
+                            {"port_idx": 6, "portconf_id": "prof-ap"},
+                            {
+                                "port_idx": 5,
+                                "portconf_id": "prof-cam",
+                                "poe_mode": "auto",
+                                "name": "cam-front",
+                            },
+                        ],
+                    }
+                ]
+            },
+        )
+    )
+    captured: dict[str, Any] = {}
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "data": [{"_id": "switch-1", "port_overrides": captured["body"]["port_overrides"]}]
+            },
+        )
+
+    respx.put(f"{BASE}/rest/device/switch-1").mock(side_effect=capture)
+    await _call(
+        real_server,
+        "set_port_state",
+        {"device_mac": "f4:e2:c6:00:00:03", "port_idx": 5, "enable": False},
+    )
+    overrides = {o["port_idx"]: o for o in captured["body"]["port_overrides"]}
+    assert overrides[5] == {
+        "port_idx": 5,
+        "portconf_id": "prof-cam",
+        "poe_mode": "auto",
+        "name": "cam-front",
+        "enable": False,
+    }
+    assert overrides[6] == {"port_idx": 6, "portconf_id": "prof-ap"}
+    assert len(captured["body"]["port_overrides"]) == 2

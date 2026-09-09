@@ -306,3 +306,57 @@ async def test_delete_firewall_rule_rejects_empty_id(client: UniFiClient) -> Non
     with pytest.raises(UniFiError):
         await client.delete_firewall_rule("")
     assert not escaped.called
+
+
+# ---------------------------------------------------------------------------
+# RemoteProtocolError: the connection dropped AFTER the request was sent
+# (review 2026-09-08, finding 4)
+# ---------------------------------------------------------------------------
+
+
+@respx.mock
+async def test_remote_protocol_error_retried_once_for_get(client: UniFiClient) -> None:
+    route = respx.get(f"{BASE}/stat/device").mock(
+        side_effect=[httpx.RemoteProtocolError("closed"), httpx.Response(200, json={"data": []})]
+    )
+    assert await client.list_devices() == []
+    assert route.call_count == 2
+
+
+@respx.mock
+async def test_remote_protocol_error_not_retried_for_post(client: UniFiClient) -> None:
+    """The controller may have committed the write before the connection
+    dropped; sending it again would create a duplicate."""
+    route = respx.post(f"{BASE}/rest/networkconf").mock(
+        side_effect=[
+            httpx.RemoteProtocolError("closed"),
+            httpx.Response(200, json={"data": [{"_id": "n-new"}]}),
+        ]
+    )
+    with pytest.raises(UniFiError) as exc:
+        await client.create_network({"name": "Dup", "vlan": 70})
+    assert route.call_count == 1
+    assert "not retried" in str(exc.value)
+
+
+@respx.mock
+async def test_remote_protocol_error_not_retried_for_delete(client: UniFiClient) -> None:
+    route = respx.delete(f"{BASE}/rest/networkconf/n-1").mock(
+        side_effect=[httpx.RemoteProtocolError("closed"), httpx.Response(404)]
+    )
+    with pytest.raises(UniFiError):
+        await client.delete_network("n-1")
+    assert route.call_count == 1
+
+
+@respx.mock
+async def test_connect_error_still_retried_for_post(client: UniFiClient) -> None:
+    """ConnectError means nothing was sent, so a write is safe to repeat."""
+    route = respx.post(f"{BASE}/rest/networkconf").mock(
+        side_effect=[
+            httpx.ConnectError("nope"),
+            httpx.Response(200, json={"data": [{"_id": "n-new"}]}),
+        ]
+    )
+    assert (await client.create_network({"name": "Once", "vlan": 71}))["_id"] == "n-new"
+    assert route.call_count == 2

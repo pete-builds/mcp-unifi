@@ -308,3 +308,40 @@ async def test_get_network_details_redacts_every_section(
     assert result["vpn"]["radiusprofile_id"] == "6501aaaabbbbccccdddd0001"
     assert result["vpn"]["vpn_type"] == "ipsec-vpn"
     assert result["network"]["name"] == "Site-to-Site"
+
+
+# ---------------------------------------------------------------------------
+# Redaction on the write path (review 2026-09-08, finding 2)
+# ---------------------------------------------------------------------------
+
+
+async def test_update_vlan_redacts_vpn_secrets(stub_server: FastMCP, stub_state: StubState) -> None:
+    """update_vlan re-reads the record after writing; that record carries VPN
+    key material and must come back redacted like list_networks does."""
+    net_id = stub_state.list_networks()[0]["_id"]
+    result = await _call(
+        stub_server,
+        "update_vlan",
+        {"network_id": net_id, "updates": {"x_ipsec_pre_shared_key": "vpn-psk-secret-123"}},
+    )
+    assert result["network"]["x_ipsec_pre_shared_key"] == "[REDACTED]"
+    assert "vpn-psk-secret-123" not in json.dumps(result)
+
+
+async def test_update_vlan_dry_run_redacts_patch(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    net_id = stub_state.list_networks()[0]["_id"]
+    result = await _call(
+        stub_server,
+        "update_vlan",
+        {
+            "network_id": net_id,
+            "updates": {"x_ipsec_pre_shared_key": "psk2", "name": "Renamed"},
+            "dry_run": True,
+        },
+    )
+    assert result["dry_run"] is True
+    assert result["would_update"]["patch"]["x_ipsec_pre_shared_key"] == "[REDACTED]"
+    assert result["would_update"]["patch"]["name"] == "Renamed"
+    assert "psk2" not in json.dumps(result)

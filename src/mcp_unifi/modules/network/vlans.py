@@ -299,7 +299,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 {
                     "dry_run": True,
                     "controller": controller,
-                    "would_update": {"network_id": network_id, "patch": updates},
+                    "would_update": {"network_id": network_id, "patch": redact(updates)},
                     "summary": f"Would update VLAN {network_id} ({len(updates)} field(s))",
                 }
             )
@@ -318,7 +318,10 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 {
                     "network_id": network_id,
                     "verification": verification,
-                    "network": record,
+                    # Network records carry VPN key material (IPsec PSK,
+                    # WireGuard private key, RADIUS secret). The read path
+                    # redacts; the write path must too.
+                    "network": redact(record),
                 }
             )
         except UniFiError as exc:

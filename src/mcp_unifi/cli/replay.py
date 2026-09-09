@@ -82,6 +82,28 @@ async def _call_tool(server: Any, name: str, args: dict[str, Any]) -> Any:
     return await server.call_tool(name, args)
 
 
+def _error_envelope(result: Any) -> str | None:
+    """Return the tool's error message when it answered with an error envelope.
+
+    Tools do not raise on a bad request; they return ``{"error": ...}`` as a
+    JSON string. A replay that only catches exceptions counts every such
+    answer as success, which is how a replayed ``confirm_destructive_action``
+    with a scrubbed token reported success while nothing was deleted.
+    """
+    payload: Any = result
+    content = getattr(result, "content", None)
+    if content:
+        text = getattr(content[0], "text", None)
+        if isinstance(text, str):
+            try:
+                payload = json.loads(text)
+            except ValueError:
+                return None
+    if isinstance(payload, dict) and payload.get("error"):
+        return str(payload["error"])
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Replay loop
 # ---------------------------------------------------------------------------
@@ -143,13 +165,18 @@ async def replay_events(
             )
             continue
         try:
-            await _call_tool(srv, event.tool, dict(event.args))
+            outcome = await _call_tool(srv, event.tool, dict(event.args))
+            envelope_error = _error_envelope(outcome)
             results.append(
                 ReplayResult(
                     tool=event.tool,
                     controller=event.controller,
-                    success=True,
-                    error=None,
+                    success=envelope_error is None,
+                    error=(
+                        None
+                        if envelope_error is None
+                        else f"tool returned an error envelope: {envelope_error}"
+                    ),
                 )
             )
         except Exception as exc:  # we want every failure surfaced, not just UniFiError

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -286,3 +287,37 @@ def test_main_invalid_jsonl_returns_2(tmp_path: Path, capsys: pytest.CaptureFixt
     log.write_text("{not json\n", encoding="utf-8")
     rc = replay_mod.main([str(log)])
     assert rc == 2
+
+
+# ---------------------------------------------------------------------------
+# An error envelope is a failure, not a success (review 2026-09-08, finding 5)
+# ---------------------------------------------------------------------------
+
+
+class _EnvelopeServer:
+    """Answers like a real tool: no exception, an ``{"error": ...}`` envelope."""
+
+    def __init__(self, *, as_text: bool) -> None:
+        self._as_text = as_text
+
+    async def call_tool(self, name: str, args: dict[str, Any]) -> Any:
+        payload = {"error": "unknown or expired token", "stub_mode": True}
+        if not self._as_text:
+            return payload
+        # Shaped like FastMCP's ToolResult: .content[0].text holds the JSON.
+        return SimpleNamespace(content=[SimpleNamespace(text=json.dumps(payload))])
+
+
+@pytest.mark.parametrize("as_text", [False, True])
+async def test_replay_treats_error_envelope_as_failure(as_text: bool) -> None:
+    results = await replay_mod.replay_events(
+        [_event("confirm_destructive_action", token="***")],
+        stub_mode=True,
+        target_controller=None,
+        i_mean_it=False,
+        server=_EnvelopeServer(as_text=as_text),
+    )
+    assert len(results) == 1
+    assert results[0].success is False
+    assert results[0].error is not None
+    assert "unknown or expired token" in results[0].error
