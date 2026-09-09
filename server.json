@@ -7,7 +7,7 @@
     "url": "https://github.com/pete-builds/mcp-unifi",
     "source": "github"
   },
-  "version": "0.21.1",
+  "version": "0.21.2",
   "websiteUrl": "https://pete-builds.github.io/mcp-unifi/",
   "packages": [
     {
