@@ -379,9 +379,9 @@ pathable==0.6.0 \
     --hash=sha256:6404b8b82aef5ff0fd478934137128b99b12212ba35afdde5525ca4f8388ea58 \
     --hash=sha256:82c4ca6c98c502ad12e0d4e9779b6210afee93c38990988c8c5d1b49bdcdf566
     # via jsonschema-path
-platformdirs==4.11.7 \
-    --hash=sha256:4f41487eeeeeb07f3a6625e61d9bc0ae6809f92d3386dbd74392fbb76108104d \
-    --hash=sha256:8a02cb259042c79d1cd0450facc2fe6dc9d303ae7901afbe33bf8ea0b188cef6
+platformdirs==4.11.8 \
+    --hash=sha256:52f2f181bbfde907966932cc8312d967d02976422d66d537ea16092b8e291081 \
+    --hash=sha256:f23abafea7dd4276d1f29104b83598d7dcc567cafd07c9c951e66665645437fc
     # via fastmcp-slim
 py-key-value-aio==0.4.5 \
     --hash=sha256:ab862adbcb8c72547d1c57821f22cbbb71ab86509039c96f36e914e0336c8dd7 \
