@@ -21,7 +21,7 @@ classifiers = [
     "Topic :: System :: Networking",
 ]
 dependencies = [
-    "fastmcp==3.4.7",
+    "fastmcp==4.0.3",
     "httpx==0.28.1",
     "uvicorn==0.52.4",
     "python-dotenv==1.2.3",
