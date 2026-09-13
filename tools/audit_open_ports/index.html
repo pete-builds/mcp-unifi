@@ -83,10 +83,15 @@ clean just because its legacy rulesets are empty (issue #112):</p>
 <li>Legacy <code dir="auto">WAN_*</code> <code dir="auto">accept</code> rules, excluding the boilerplate
 established/related rule.</li>
 <li>Zone-Based Firewall <code dir="auto">ALLOW</code> policies whose source zone is the WAN
-zone, excluding <code dir="auto">predefined</code> (controller-managed) policies such
-as the return-traffic allowance; the number excluded is reported.</li>
+(<code dir="auto">External</code>) zone, excluding return-traffic allowances
+(<code dir="auto">connection_state_type == "RESPOND_ONLY"</code>); the number excluded
+is reported. <code dir="auto">predefined</code> policies are NOT excluded: the zone
+matrix implements “External to Internal: Allow” as a predefined
+“Allow All Traffic” policy, which is exactly the exposure this
+audit exists to surface, so each record carries <code dir="auto">predefined</code> and
+the caller can tell matrix defaults from hand-written policies.</li>
 </ul>
-<p>Returns <code dir="auto">{"port_forwards", "wan_accept_rules", "wan_accept_policies", "firewall_model", "wan_zone_resolved", "predefined_wan_policies_excluded", "summary"}</code>. <code dir="auto">firewall_model</code>
+<p>Returns <code dir="auto">{"port_forwards", "wan_accept_rules", "wan_accept_policies", "firewall_model", "wan_zone_resolved", "return_traffic_policies_excluded", "summary"}</code>. <code dir="auto">firewall_model</code>
 is <code dir="auto">legacy</code>, <code dir="auto">zone-based</code>, <code dir="auto">mixed</code> or <code dir="auto">none</code> from what the
 controller actually returned. If the zone-based read fails the audit
 still answers from the legacy side and carries the failure in
