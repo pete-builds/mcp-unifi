@@ -77,6 +77,10 @@ class Backend(Protocol):
     ) -> UniFiRecord | None: ...
     async def delete_firewall_rule(self, rule_id: str) -> bool: ...
 
+    # ----- Zone-Based Firewall (v2) ---------------------------------------
+    async def list_firewall_policies(self) -> list[UniFiRecord]: ...
+    async def list_firewall_zones(self) -> list[UniFiRecord]: ...
+
     # ----- Firewall groups ------------------------------------------------
     async def list_firewall_groups(self) -> list[UniFiRecord]: ...
     async def create_firewall_group(self, payload: dict[str, Any]) -> UniFiRecord: ...
@@ -257,6 +261,13 @@ class StubBackend:
 
     async def delete_firewall_rule(self, rule_id: str) -> bool:
         return self.state.delete_firewall_rule(rule_id)
+
+    # ----- Zone-Based Firewall (v2) ---------------------------------------
+    async def list_firewall_policies(self) -> list[UniFiRecord]:
+        return self.state.list_firewall_policies()
+
+    async def list_firewall_zones(self) -> list[UniFiRecord]:
+        return self.state.list_firewall_zones()
 
     # ----- Firewall groups ------------------------------------------------
     async def list_firewall_groups(self) -> list[UniFiRecord]:
@@ -561,6 +572,13 @@ class RealBackend:
 
     async def delete_firewall_rule(self, rule_id: str) -> bool:
         return await self.client.delete_firewall_rule(rule_id)
+
+    # ----- Zone-Based Firewall (v2) ---------------------------------------
+    async def list_firewall_policies(self) -> list[UniFiRecord]:
+        return await self.client.list_firewall_policies()
+
+    async def list_firewall_zones(self) -> list[UniFiRecord]:
+        return await self.client.list_firewall_zones()
 
     # ----- Firewall groups ------------------------------------------------
     async def list_firewall_groups(self) -> list[UniFiRecord]:

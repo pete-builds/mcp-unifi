@@ -306,3 +306,58 @@ async def test_real_update_firewall_rule_500(real_server: FastMCP) -> None:
         {"rule_id": "r1", "updates": {"action": "drop"}},
     )
     assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# Zone-Based Firewall reads (issue #112)
+# ---------------------------------------------------------------------------
+
+
+async def test_list_firewall_policies_stub(stub_server: FastMCP) -> None:
+    policies = await _call(stub_server, "list_firewall_policies")
+    assert policies[0]["action"] == "ALLOW"
+    assert policies[0]["predefined"] is True
+    assert "zone_id" in policies[0]["source"]
+
+
+async def test_list_firewall_zones_stub(stub_server: FastMCP) -> None:
+    zones = await _call(stub_server, "list_firewall_zones")
+    assert {z["zone_key"] for z in zones} >= {"wan", "lan"}
+
+
+async def test_firewall_read_descriptions_name_the_zone_split(stub_server: FastMCP) -> None:
+    """The prose above ``Args:`` is all FastMCP sends; pin what must survive.
+
+    ``list_firewall_rules`` has to tell an agent that ``[]`` on a Zone-Based
+    Firewall site is not "no firewall", and the two v2 tools have to carry
+    their return shape.
+    """
+    tools = {t.name: t for t in await stub_server.list_tools()}
+    rules = tools["list_firewall_rules"].description or ""
+    assert "Zone-Based" in rules
+    assert "list_firewall_policies" in rules
+    policies = tools["list_firewall_policies"].description or ""
+    assert "zone_id" in policies
+    assert "predefined" in policies
+    zones = tools["list_firewall_zones"].description or ""
+    assert "zone_key" in zones
+
+
+@respx.mock
+async def test_list_firewall_policies_real(real_server: FastMCP) -> None:
+    v2 = BASE.replace("/api/s/default", "/v2/api/site/default")
+    respx.get(f"{v2}/firewall-policies").mock(
+        return_value=httpx.Response(
+            200, json=[{"_id": "p1", "name": "Open SSH", "action": "ALLOW"}]
+        )
+    )
+    result = await _call(real_server, "list_firewall_policies")
+    assert result[0]["name"] == "Open SSH"
+
+
+@respx.mock
+async def test_list_firewall_policies_real_error_is_an_error(real_server: FastMCP) -> None:
+    v2 = BASE.replace("/api/s/default", "/v2/api/site/default")
+    respx.get(f"{v2}/firewall-policies").mock(return_value=httpx.Response(500))
+    result = await _call(real_server, "list_firewall_policies")
+    assert "error" in result

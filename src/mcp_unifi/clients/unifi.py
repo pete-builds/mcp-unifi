@@ -287,6 +287,36 @@ class UniFiClient:
         await self._delete(f"/rest/firewallrule/{path_segment(rule_id, 'rule_id')}")
         return True
 
+    # ----- Zone-Based Firewall (v2) -------------------------------------
+
+    async def list_firewall_policies(self) -> list[UniFiRecord]:
+        """List Zone-Based Firewall policies via the v2 API.
+
+        Network 9.x introduced the Zone-Based Firewall. A site that has
+        migrated to it keeps its policy under
+        ``/v2/api/site/<site>/firewall-policies``, and the legacy
+        ``/rest/firewallrule`` collection that :meth:`list_firewall_rules`
+        reads answers ``[]`` for it (issue #112). Verified 2026-09-13 against
+        a UCG-Fiber on Network 10.6.101 still on legacy rulesets: this route
+        answers HTTP 200 with a bare empty list, so a legacy site reads as
+        "no policies" rather than as an error, and the two reads can be
+        taken together safely in either direction.
+        """
+        result = await self._v2_request("GET", "/firewall-policies")
+        return result if isinstance(result, list) else []
+
+    async def list_firewall_zones(self) -> list[UniFiRecord]:
+        """List Zone-Based Firewall zones via the v2 API (``/firewall/zone``).
+
+        Each zone carries ``_id``, ``name``, ``zone_key`` (``"wan"``,
+        ``"lan"``, ...), ``default_zone`` and ``network_ids``. Policies refer
+        to zones only by ``source.zone_id`` / ``destination.zone_id``, so this
+        is what turns a policy record into "WAN to LAN". Same empty-list
+        behaviour on a legacy-ruleset site as :meth:`list_firewall_policies`.
+        """
+        result = await self._v2_request("GET", "/firewall/zone")
+        return result if isinstance(result, list) else []
+
     async def list_port_profiles(self) -> list[UniFiRecord]:
         return await self._get("/rest/portconf") or []
 

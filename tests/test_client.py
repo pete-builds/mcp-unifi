@@ -360,3 +360,52 @@ async def test_connect_error_still_retried_for_post(client: UniFiClient) -> None
     )
     assert (await client.create_network({"name": "Once", "vlan": 71}))["_id"] == "n-new"
     assert route.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Zone-Based Firewall (v2) reads, issue #112
+# ---------------------------------------------------------------------------
+
+V2 = "https://gateway.test:443/proxy/network/v2/api/site/default"
+
+
+@respx.mock
+async def test_list_firewall_policies_reads_v2_bare_list(client: UniFiClient) -> None:
+    """The v2 surface returns a bare list, not the legacy ``{"data": ...}`` envelope."""
+    respx.get(f"{V2}/firewall-policies").mock(
+        return_value=httpx.Response(200, json=[{"_id": "p1", "action": "ALLOW"}])
+    )
+    result = await client.list_firewall_policies()
+    assert result == [{"_id": "p1", "action": "ALLOW"}]
+
+
+@respx.mock
+async def test_list_firewall_policies_empty_on_legacy_site(client: UniFiClient) -> None:
+    """A site still on legacy rulesets answers 200 with ``[]`` (verified on 10.6.101)."""
+    respx.get(f"{V2}/firewall-policies").mock(return_value=httpx.Response(200, json=[]))
+    assert await client.list_firewall_policies() == []
+
+
+@respx.mock
+async def test_list_firewall_policies_4xx_raises(client: UniFiClient) -> None:
+    """A missing route is an error, never a fabricated empty list."""
+    respx.get(f"{V2}/firewall-policies").mock(return_value=httpx.Response(404, text="nope"))
+    with pytest.raises(UniFiError) as exc:
+        await client.list_firewall_policies()
+    assert "404" in str(exc.value)
+
+
+@respx.mock
+async def test_list_firewall_zones_reads_v2_bare_list(client: UniFiClient) -> None:
+    respx.get(f"{V2}/firewall/zone").mock(
+        return_value=httpx.Response(200, json=[{"_id": "z1", "name": "WAN", "zone_key": "wan"}])
+    )
+    result = await client.list_firewall_zones()
+    assert result[0]["zone_key"] == "wan"
+
+
+@respx.mock
+async def test_list_firewall_zones_4xx_raises(client: UniFiClient) -> None:
+    respx.get(f"{V2}/firewall/zone").mock(return_value=httpx.Response(500, text="boom"))
+    with pytest.raises(UniFiError):
+        await client.list_firewall_zones()

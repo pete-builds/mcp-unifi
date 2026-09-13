@@ -458,6 +458,8 @@ READ_ONLY_TOOLS = (
     "get_dynamic_dns_details",
     "list_wlans",
     "list_firewall_rules",
+    "list_firewall_policies",
+    "list_firewall_zones",
     "list_port_profiles",
     "list_dhcp_leases",
     "list_port_forwards",

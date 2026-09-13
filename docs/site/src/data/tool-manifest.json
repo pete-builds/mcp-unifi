@@ -1,5 +1,5 @@
 {
-  "tool_count": 134,
+  "tool_count": 136,
   "tools": [
     {
       "description": "Return credentials expiring within ``days_ahead`` days.\n\nSide effects: None (read-only).\n\nIterates ``list_credentials`` client-side and filters to those whose\n``expires_at`` falls inside the window ``[now, now + days_ahead]``.\nCredentials with no ``expires_at`` (typical for mobile credentials)\nare excluded. Each entry includes ``days_until_expiry`` so the LLM\ncan sort and summarise without re-doing the math.\n\nExample: audit_expiring_credentials(days_ahead=14)",
@@ -27,7 +27,7 @@
       "name": "audit_expiring_credentials"
     },
     {
-      "description": "Compare current controller state to a declared YAML spec.\n\nRead-only \u2014 never mutates the controller. Returns a structured diff\nshowing fields that drifted, resources missing from the controller, and\nresources present on the controller that the spec did not declare.\n\nSide effects:\n- None (read-only). Lists networks, WLANs, and firewall rules.\n\nSpec format (YAML, all sections optional):\n\n    networks:\n      - name: \"IoT\"\n        vlan: 50\n        subnet: \"10.50.0.0/24\"\n    wlans:\n      - name: \"Cameras-IoT\"\n        network: \"IoT\"        # references a network by name\n        security: \"wpapsk\"\n    firewall_rules:\n      - name: \"Block IoT to LAN\"\n        action: \"drop\"\n        src: \"10.50.0.0/24\"\n        dst: \"192.168.86.0/24\"\n\nResources are matched by ``name`` (case-insensitive). Sections you omit\nare not audited; sections you include audit BOTH directions (missing\nand extra). To audit a section as \"exactly these resources\", include it\nexplicitly. To audit as \"at least these resources\", omit the section\nand use ``audit_open_ports`` or other read-only tools instead.\n\nReturns ``{\"in_sync\": bool, \"controller\": str, \"summary\": str,\n\"drifts\": [...]}``. Each drift is ``{\"resource_type\", \"name\",\n\"field\", \"expected\", \"actual\"}``. The synthetic field ``_resource``\nflags presence/absence of an entire resource (``expected=null`` =\nextra; ``actual=null`` = missing).\n\nExample: audit_network_drift(spec_yaml=\"networks:\\n  - name: iot\\n    vlan: 50\\n\")",
+      "description": "Compare current controller state to a declared YAML spec.\n\nRead-only \u2014 never mutates the controller. Returns a structured diff\nshowing fields that drifted, resources missing from the controller, and\nresources present on the controller that the spec did not declare.\n\nSide effects:\n- None (read-only). Lists networks, WLANs, legacy firewall rules,\n  and Zone-Based Firewall policies and zones.\n\nSpec format (YAML, all sections optional):\n\n    networks:\n      - name: \"IoT\"\n        vlan: 50\n        subnet: \"10.50.0.0/24\"\n    wlans:\n      - name: \"Cameras-IoT\"\n        network: \"IoT\"        # references a network by name\n        security: \"wpapsk\"\n    firewall_rules:\n      - name: \"Block IoT to LAN\"\n        action: \"drop\"\n        src: \"10.50.0.0/24\"\n        dst: \"192.168.86.0/24\"\n    firewall_policies:          # Zone-Based Firewall sites\n      - name: \"Allow LAN to IoT\"\n        action: \"allow\"\n        source_zone: \"LAN\"\n        destination_zone: \"IoT\"\n\n``firewall_rules`` audits the legacy rulesets and ``firewall_policies``\nthe Zone-Based Firewall; a site uses one or the other, so declare the\nsection that matches it. Resources are matched by ``name`` (case-insensitive). Sections you omit\nare not audited; sections you include audit BOTH directions (missing\nand extra). To audit a section as \"exactly these resources\", include it\nexplicitly. To audit as \"at least these resources\", omit the section\nand use ``audit_open_ports`` or other read-only tools instead.\n\nReturns ``{\"in_sync\": bool, \"controller\": str, \"summary\": str,\n\"drifts\": [...]}``. Each drift is ``{\"resource_type\", \"name\",\n\"field\", \"expected\", \"actual\"}``. The synthetic field ``_resource``\nflags presence/absence of an entire resource (``expected=null`` =\nextra; ``actual=null`` = missing).\n\nExample: audit_network_drift(spec_yaml=\"networks:\\n  - name: iot\\n    vlan: 50\\n\")",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -50,7 +50,7 @@
       "name": "audit_network_drift"
     },
     {
-      "description": "Audit WAN-facing exposure (port forwards and WAN_IN accept rules).\n\nSide effects: None (read-only).\n\nCross-references firewall rules and port forwards to summarise what\nis reachable from the public internet:\n- Active port forwards (DNAT into the LAN).\n- WAN_IN ``accept`` rules, excluding the boilerplate\n  established/related rule.\n\nUseful as a \"did I leave something open?\" sanity check before\npublishing a service or shipping a config.\n\nExample: audit_open_ports(controller=\"default\")",
+      "description": "Audit WAN-facing exposure: port forwards plus WAN accept rules and policies.\n\nSide effects: None (read-only).\n\nCross-references port forwards with BOTH firewall models a controller\ncan run, so a site on the Zone-Based Firewall is not reported as\nclean just because its legacy rulesets are empty (issue #112):\n- Active port forwards (DNAT into the LAN).\n- Legacy ``WAN_*`` ``accept`` rules, excluding the boilerplate\n  established/related rule.\n- Zone-Based Firewall ``ALLOW`` policies whose source zone is the WAN\n  zone, excluding ``predefined`` (controller-managed) policies such\n  as the return-traffic allowance; the number excluded is reported.\n\nReturns ``{\"port_forwards\", \"wan_accept_rules\", \"wan_accept_policies\",\n\"firewall_model\", \"wan_zone_resolved\",\n\"predefined_wan_policies_excluded\", \"summary\"}``. ``firewall_model``\nis ``legacy``, ``zone-based``, ``mixed`` or ``none`` from what the\ncontroller actually returned. If the zone-based read fails the audit\nstill answers from the legacy side and carries the failure in\n``firewall_policies_error`` rather than reporting a clean WAN. If\npolicies exist but no zone could be identified as WAN,\n``wan_zone_resolved`` is false and none are classified.\n\nUseful as a \"did I leave something open?\" sanity check before\npublishing a service or shipping a config.\n\nExample: audit_open_ports(controller=\"default\")",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -2162,7 +2162,22 @@
       "name": "list_firewall_groups"
     },
     {
-      "description": "List every firewall rule on the controller.\n\nSide effects: None (read-only).\n\nReturns one record per rule with ``_id``, ``name``, ``ruleset``,\n``rule_index``, ``action``, ``enabled``, ``protocol``, and\n``src_*``/``dst_*`` fields.\n\nExample: list_firewall_rules(controller=\"default\")",
+      "description": "List every Zone-Based Firewall policy on the controller (v2 API).\n\nSide effects: None (read-only).\n\nSites on UniFi Network 9.x and newer that use the Zone-Based Firewall\nkeep their policy here, not in the legacy rulesets that\n``list_firewall_rules`` reads. A site still on legacy rulesets returns\n``[]`` from this tool and its rules from ``list_firewall_rules``;\n``audit_open_ports`` reads both so you do not have to guess which\nmodel a site uses.\n\nReturns one record per policy with ``_id``, ``name``, ``action``\n(``ALLOW``/``BLOCK``/``REJECT``), ``enabled``, ``predefined``\n(controller-managed, not user-created), ``index``, ``protocol``,\n``ip_version``, and ``source`` / ``destination`` objects whose\n``zone_id`` refers to a record from ``list_firewall_zones``. Read\nonly: this server does not create or edit zone policies yet.\n\nExample: list_firewall_policies(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_firewall_policies"
+    },
+    {
+      "description": "List every legacy-ruleset firewall rule on the controller.\n\nSide effects: None (read-only).\n\nReads the legacy ``/rest/firewallrule`` collection (rulesets such as\n``WAN_IN`` and ``LAN_IN``). A site that has migrated to the\nZone-Based Firewall (Network 9.x and newer) keeps its policy elsewhere\nand this returns ``[]`` even though the firewall is configured: use\n``list_firewall_policies`` for those sites, or ``audit_open_ports``,\nwhich reads both.\n\nReturns one record per rule with ``_id``, ``name``, ``ruleset``,\n``rule_index``, ``action``, ``enabled``, ``protocol``, and\n``src_*``/``dst_*`` fields.\n\nExample: list_firewall_rules(controller=\"default\")",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -2175,6 +2190,21 @@
         "type": "object"
       },
       "name": "list_firewall_rules"
+    },
+    {
+      "description": "List the Zone-Based Firewall zones on the controller (v2 API).\n\nSide effects: None (read-only).\n\nZones are what ``list_firewall_policies`` records point at through\n``source.zone_id`` and ``destination.zone_id``, so this is the lookup\nthat turns a policy into \"WAN to LAN\". A site still on legacy\nrulesets returns ``[]``.\n\nReturns one record per zone with ``_id``, ``name``, ``zone_key``\n(``\"wan\"``, ``\"lan\"``, ...), ``default_zone``, ``attr_no_edit`` and\nthe ``network_ids`` the zone spans.\n\nExample: list_firewall_zones(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_firewall_zones"
     },
     {
       "description": "List configured honeypots and the global honeypot toggle.\n\nSide effects: None (read-only).\n\nReturns ``{\"enabled\": bool, \"honeypots\": [...]}`` where each entry\ncarries ``id`` (synthesised ``network_id:ip``), ``network_id``,\n``network_name`` (looked up from ``list_networks``), ``ip``, and\n``version`` (always ``v4`` on UniFi 9.x).\n\nExample: list_honeypots(controller=\"default\")",

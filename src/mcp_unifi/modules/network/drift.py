@@ -23,6 +23,11 @@ not declared in the spec are simply not audited.
         action: "drop"
         src: "10.50.0.0/24"   # matches src_address
         dst: "192.168.86.0/24" # matches dst_address
+    firewall_policies:        # Zone-Based Firewall (Network 9.x+), v2 API
+      - name: "Allow LAN to IoT"
+        action: "allow"
+        source_zone: "LAN"    # resolved from source.zone_id
+        destination_zone: "IoT"
 
 Matching rules
 --------------
@@ -63,7 +68,7 @@ from mcp_unifi.modules._audit import audited
 from mcp_unifi.modules._params import (
     BoundedYaml,
 )
-from mcp_unifi.modules.network._common import format_json, make_err
+from mcp_unifi.modules.network._common import format_json, make_err, zone_names_by_id
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -99,6 +104,18 @@ FIREWALL_FIELDS: dict[str, str] = {
     "src": "src_address",
     "dst": "dst_address",
     "enabled": "enabled",
+}
+
+# Zone-Based Firewall policy spec fields. ``source_zone`` / ``destination_zone``
+# are resolved from ``source.zone_id`` / ``destination.zone_id`` via the zone
+# list before the diff runs; the wire record itself carries only ids.
+FIREWALL_POLICY_FIELDS: dict[str, str] = {
+    "action": "action",
+    "enabled": "enabled",
+    "protocol": "protocol",
+    "index": "index",
+    "source_zone": "source_zone",
+    "destination_zone": "destination_zone",
 }
 
 
@@ -330,19 +347,23 @@ def _diff_wlans(
     return drifts
 
 
-def _diff_firewall_rules(
-    spec_rules: list[Any],
-    actual_rules: list[dict[str, Any]],
+def _diff_named_resources(
+    *,
+    resource_type: str,
+    spec_items: list[Any],
+    actual_items: list[dict[str, Any]],
+    field_map: dict[str, str],
 ) -> list[dict[str, Any]]:
+    """Diff a name-keyed resource list both ways (missing, extra, field drift)."""
     drifts: list[dict[str, Any]] = []
-    actual_index = _index_by_name(actual_rules)
+    actual_index = _index_by_name(actual_items)
     spec_names: set[str] = set()
 
-    for spec_item in spec_rules:
+    for spec_item in spec_items:
         if not isinstance(spec_item, dict):
             drifts.append(
                 {
-                    "resource_type": "firewall_rule",
+                    "resource_type": resource_type,
                     "name": "<malformed>",
                     "field": "_spec",
                     "expected": "mapping",
@@ -354,7 +375,7 @@ def _diff_firewall_rules(
         if not name:
             drifts.append(
                 {
-                    "resource_type": "firewall_rule",
+                    "resource_type": resource_type,
                     "name": "<unnamed>",
                     "field": "name",
                     "expected": "non-empty string",
@@ -368,7 +389,7 @@ def _diff_firewall_rules(
         if actual is None:
             drifts.append(
                 {
-                    "resource_type": "firewall_rule",
+                    "resource_type": resource_type,
                     "name": name,
                     "field": "_resource",
                     "expected": "present",
@@ -379,11 +400,11 @@ def _diff_firewall_rules(
 
         drifts.extend(
             _diff_fields(
-                resource_type="firewall_rule",
+                resource_type=resource_type,
                 name=name,
                 spec_item=spec_item,
                 actual=actual,
-                field_map=FIREWALL_FIELDS,
+                field_map=field_map,
             )
         )
 
@@ -391,7 +412,7 @@ def _diff_firewall_rules(
         if actual_name not in spec_names:
             drifts.append(
                 {
-                    "resource_type": "firewall_rule",
+                    "resource_type": resource_type,
                     "name": actual_name,
                     "field": "_resource",
                     "expected": None,
@@ -400,6 +421,64 @@ def _diff_firewall_rules(
             )
 
     return drifts
+
+
+def _diff_firewall_rules(
+    spec_rules: list[Any],
+    actual_rules: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return _diff_named_resources(
+        resource_type="firewall_rule",
+        spec_items=spec_rules,
+        actual_items=actual_rules,
+        field_map=FIREWALL_FIELDS,
+    )
+
+
+def _diff_firewall_policies(
+    spec_policies: list[Any],
+    actual_policies: list[dict[str, Any]],
+    zones: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Diff Zone-Based Firewall policies against a spec.
+
+    Policies name their zones only by id, so each record is annotated with
+    ``source_zone`` / ``destination_zone`` display names first. ``action`` is
+    compared case-insensitively (the wire value is ``ALLOW``, a spec author
+    writes ``allow``) and zone names the same way, matching how resources
+    themselves are matched by name.
+    """
+    names = zone_names_by_id(zones)
+    annotated: list[dict[str, Any]] = []
+    for policy in actual_policies:
+        source = policy.get("source")
+        source = source if isinstance(source, dict) else {}
+        destination = policy.get("destination")
+        destination = destination if isinstance(destination, dict) else {}
+        record = dict(policy)
+        if isinstance(record.get("action"), str):
+            record["action"] = record["action"].upper()
+        record["source_zone"] = _norm_name(names.get(str(source.get("zone_id")), ""))
+        record["destination_zone"] = _norm_name(names.get(str(destination.get("zone_id")), ""))
+        annotated.append(record)
+
+    normalised_spec: list[Any] = []
+    for item in spec_policies:
+        if isinstance(item, dict):
+            item = dict(item)
+            if isinstance(item.get("action"), str):
+                item["action"] = item["action"].upper()
+            for key in ("source_zone", "destination_zone"):
+                if key in item:
+                    item[key] = _norm_name(item[key])
+        normalised_spec.append(item)
+
+    return _diff_named_resources(
+        resource_type="firewall_policy",
+        spec_items=normalised_spec,
+        actual_items=annotated,
+        field_map=FIREWALL_POLICY_FIELDS,
+    )
 
 
 def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> None:
@@ -418,7 +497,8 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         resources present on the controller that the spec did not declare.
 
         Side effects:
-        - None (read-only). Lists networks, WLANs, and firewall rules.
+        - None (read-only). Lists networks, WLANs, legacy firewall rules,
+          and Zone-Based Firewall policies and zones.
 
         Spec format (YAML, all sections optional):
 
@@ -435,8 +515,15 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 action: "drop"
                 src: "10.50.0.0/24"
                 dst: "192.168.86.0/24"
+            firewall_policies:          # Zone-Based Firewall sites
+              - name: "Allow LAN to IoT"
+                action: "allow"
+                source_zone: "LAN"
+                destination_zone: "IoT"
 
-        Resources are matched by ``name`` (case-insensitive). Sections you omit
+        ``firewall_rules`` audits the legacy rulesets and ``firewall_policies``
+        the Zone-Based Firewall; a site uses one or the other, so declare the
+        section that matches it. Resources are matched by ``name`` (case-insensitive). Sections you omit
         are not audited; sections you include audit BOTH directions (missing
         and extra). To audit a section as "exactly these resources", include it
         explicitly. To audit as "at least these resources", omit the section
@@ -507,6 +594,18 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 logger.exception("audit_network_drift: list_firewall_rules failed")
                 return err(str(exc))
             drifts.extend(_diff_firewall_rules(spec_rules, actual_rules))
+
+        if "firewall_policies" in spec:
+            spec_policies = spec.get("firewall_policies") or []
+            if not isinstance(spec_policies, list):
+                return err("spec.firewall_policies must be a list")
+            try:
+                actual_policies = list(await backend.list_firewall_policies())
+                zones = list(await backend.list_firewall_zones())
+            except UniFiError as exc:
+                logger.exception("audit_network_drift: list_firewall_policies failed")
+                return err(str(exc))
+            drifts.extend(_diff_firewall_policies(spec_policies, actual_policies, zones))
 
         in_sync = len(drifts) == 0
         resource_types = sorted({d["resource_type"] for d in drifts})

@@ -77,7 +77,16 @@ async def test_audit_open_ports_stub(stub_server: FastMCP) -> None:
     result = await _call(stub_server, "audit_open_ports")
     assert "port_forwards" in result
     assert "wan_accept_rules" in result
+    assert "wan_accept_policies" in result
     assert "summary" in result
+    # The seed carries one legacy rule and one predefined zone policy, so the
+    # controller reads as running both models, and the predefined
+    # return-traffic policy is excluded but counted rather than hidden.
+    assert result["firewall_model"] == "mixed"
+    assert result["wan_zone_resolved"] is True
+    assert result["wan_accept_policies"] == []
+    assert result["predefined_wan_policies_excluded"] == 1
+    assert "firewall_policies_error" not in result
     # The seed has one HTTPS->NAS forward and one established/related WAN_IN
     # rule (filtered out). Audit should surface the forward, no accept rules.
     assert len(result["port_forwards"]) >= 1
@@ -103,6 +112,80 @@ async def test_audit_open_ports_flags_wan_accept_rule(
     result = await _call(stub_server, "audit_open_ports")
     names = [r["name"] for r in result["wan_accept_rules"]]
     assert "Open SSH from anywhere" in names
+
+
+def _policy(
+    name: str,
+    *,
+    src: str,
+    dst: str,
+    action: str = "ALLOW",
+    enabled: bool = True,
+    predefined: bool = False,
+) -> dict[str, object]:
+    endpoint = {
+        "matching_target": "ANY",
+        "port_matching_type": "ANY",
+        "match_opposite_ports": False,
+    }
+    return {
+        "_id": name.lower().replace(" ", "-"),
+        "name": name,
+        "action": action,
+        "enabled": enabled,
+        "predefined": predefined,
+        "index": 20000,
+        "protocol": "all",
+        "source": {"zone_id": src, **endpoint},
+        "destination": {"zone_id": dst, **endpoint},
+    }
+
+
+def _zone_ids(stub_state: StubState) -> dict[str, str]:
+    return {z["zone_key"]: z["_id"] for z in stub_state.list_firewall_zones()}
+
+
+async def test_audit_open_ports_flags_wan_allow_policy(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """Issue #112: a Zone-Based Firewall site must not read as 0 WAN accepts."""
+    zones = _zone_ids(stub_state)
+    stub_state.firewall_policies.append(
+        _policy("Open SSH from WAN", src=zones["wan"], dst=zones["lan"])
+    )
+    result = await _call(stub_server, "audit_open_ports")
+    flagged = {p["name"]: p for p in result["wan_accept_policies"]}
+    assert "Open SSH from WAN" in flagged
+    assert flagged["Open SSH from WAN"]["source_zone"] == "WAN"
+    assert flagged["Open SSH from WAN"]["destination_zone"] == "LAN"
+    assert "1 WAN allow policy(ies)" in result["summary"]
+
+
+async def test_audit_open_ports_ignores_non_exposing_policies(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    zones = _zone_ids(stub_state)
+    stub_state.firewall_policies.extend(
+        [
+            _policy("LAN to WAN", src=zones["lan"], dst=zones["wan"]),
+            _policy("Disabled WAN allow", src=zones["wan"], dst=zones["lan"], enabled=False),
+            _policy("WAN block", src=zones["wan"], dst=zones["lan"], action="BLOCK"),
+        ]
+    )
+    result = await _call(stub_server, "audit_open_ports")
+    assert result["wan_accept_policies"] == []
+
+
+async def test_audit_open_ports_says_when_wan_zone_is_unresolved(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """Policies with no identifiable WAN zone are reported as unclassified, not clean."""
+    stub_state.firewall_zones.clear()
+    stub_state.firewall_policies.append(_policy("Mystery", src="zone-x", dst="zone-y"))
+    result = await _call(stub_server, "audit_open_ports")
+    assert result["wan_zone_resolved"] is False
+    assert result["wan_accept_policies"] == []
+    assert "WAN zone unresolved" in result["summary"]
 
 
 # ---------------------------------------------------------------------------
@@ -370,10 +453,65 @@ async def test_real_audit_open_ports(real_server: FastMCP) -> None:
             json={"data": [{"_id": "pf1", "enabled": True, "name": "HTTPS to NAS"}]},
         )
     )
+    respx.get(f"{V2}/firewall-policies").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{V2}/firewall/zone").mock(return_value=httpx.Response(200, json=[]))
     result = await _call(real_server, "audit_open_ports")
     assert len(result["port_forwards"]) == 1
     names = [r["name"] for r in result["wan_accept_rules"]]
     assert names == ["Open SSH"]
+    assert result["firewall_model"] == "legacy"
+
+
+V2 = BASE.replace("/api/s/default", "/v2/api/site/default")
+
+_ZONES = [
+    {"_id": "z-lan", "name": "LAN", "zone_key": "lan", "default_zone": True},
+    {"_id": "z-wan", "name": "WAN", "zone_key": "wan", "default_zone": True},
+]
+
+
+@respx.mock
+async def test_real_audit_open_ports_zone_based_site(real_server: FastMCP) -> None:
+    """Issue #112 as reported: legacy rulesets empty, policy lives in v2."""
+    respx.get(f"{BASE}/rest/firewallrule").mock(return_value=httpx.Response(200, json={"data": []}))
+    respx.get(f"{BASE}/rest/portforward").mock(return_value=httpx.Response(200, json={"data": []}))
+    respx.get(f"{V2}/firewall/zone").mock(return_value=httpx.Response(200, json=_ZONES))
+    respx.get(f"{V2}/firewall-policies").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                _policy("Allow Return Traffic", src="z-wan", dst="z-lan", predefined=True),
+                _policy("Open SSH", src="z-wan", dst="z-lan"),
+                _policy("Block IoT", src="z-lan", dst="z-wan", action="BLOCK"),
+            ],
+        )
+    )
+    result = await _call(real_server, "audit_open_ports")
+    assert result["wan_accept_rules"] == []
+    assert [p["name"] for p in result["wan_accept_policies"]] == ["Open SSH"]
+    assert result["firewall_model"] == "zone-based"
+    assert result["predefined_wan_policies_excluded"] == 1
+    assert "1 WAN allow policy(ies)" in result["summary"]
+
+
+@respx.mock
+async def test_real_audit_open_ports_carries_v2_failure(real_server: FastMCP) -> None:
+    """A failed zone-based read is reported, never turned into a clean WAN."""
+    respx.get(f"{BASE}/rest/firewallrule").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [{"_id": "r2", "ruleset": "WAN_IN", "action": "accept", "name": "Open SSH"}]
+            },
+        )
+    )
+    respx.get(f"{BASE}/rest/portforward").mock(return_value=httpx.Response(200, json={"data": []}))
+    respx.get(f"{V2}/firewall-policies").mock(return_value=httpx.Response(500, text="boom"))
+    result = await _call(real_server, "audit_open_ports")
+    assert "error" not in result
+    assert [r["name"] for r in result["wan_accept_rules"]] == ["Open SSH"]
+    assert "500" in result["firewall_policies_error"]
+    assert "FAILED" in result["summary"]
 
 
 @respx.mock

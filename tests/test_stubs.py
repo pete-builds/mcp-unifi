@@ -162,6 +162,8 @@ def test_delete_firewall_rule(stub_state: StubState) -> None:
         "list_networks",
         "list_wlans",
         "list_firewall_rules",
+        "list_firewall_policies",
+        "list_firewall_zones",
         "list_port_profiles",
         "list_clients",
     ],
@@ -316,3 +318,22 @@ def test_speedtest_appends_result(stub_state: StubState) -> None:
     assert res["started"] is True
     after = stub_state.get_speedtest_results(100)
     assert len(after) == before + 1
+
+
+# ---------------------------------------------------------------------------
+# Zone-Based Firewall seed shape (issue #112)
+# ---------------------------------------------------------------------------
+
+
+def test_firewall_zone_seed_has_wan_and_lan(stub_state: StubState) -> None:
+    keys = {z["zone_key"] for z in stub_state.list_firewall_zones()}
+    assert {"wan", "lan"} <= keys
+
+
+def test_firewall_policy_seed_points_at_seeded_zones(stub_state: StubState) -> None:
+    zone_ids = {z["_id"] for z in stub_state.list_firewall_zones()}
+    policies = stub_state.list_firewall_policies()
+    assert len(policies) == 1
+    assert policies[0]["predefined"] is True
+    assert policies[0]["source"]["zone_id"] in zone_ids
+    assert policies[0]["destination"]["zone_id"] in zone_ids

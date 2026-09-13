@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`list_firewall_policies` and `list_firewall_zones`** read the Zone-Based
+  Firewall through the v2 API (`/v2/api/site/<site>/firewall-policies` and
+  `/firewall/zone`). Sites on Network 9.x and newer that have migrated to
+  zones keep their policy there, and the legacy `/rest/firewallrule`
+  collection answers `[]` for them. Both endpoints answer `200 []` on a site
+  still using legacy rulesets (verified on a UCG-Fiber, Network 10.6.101), so
+  the two models can be read together in either direction. Read-only; zone
+  policies cannot be created or edited from this server yet. (#112)
+- **`audit_network_drift` accepts a `firewall_policies:` section** that diffs
+  zone policies by name on `action`, `enabled`, `protocol`, `index`,
+  `source_zone` and `destination_zone`, with zone names resolved from the
+  zone list and compared case-insensitively. `firewall_rules:` keeps auditing
+  the legacy rulesets.
+
+### Fixed
+
+- **`audit_open_ports` no longer reports a clean firewall on a Zone-Based
+  Firewall site.** It derived `wan_accept_rules` from the legacy rulesets
+  only, so on a migrated site it said `0 WAN accept rule(s)` with policy
+  configured. It now also reads the zone policies and reports enabled
+  `ALLOW` policies whose source zone is the WAN zone under
+  `wan_accept_policies`, excluding `predefined` (controller-managed) policies
+  such as the return-traffic allowance and reporting how many it excluded.
+  The result carries `firewall_model` (`legacy`, `zone-based`, `mixed`,
+  `none`) and `wan_zone_resolved`; a failed zone-based read is surfaced in
+  `firewall_policies_error` rather than turning into a clean answer. Existing
+  keys are unchanged. Reported by @MarkusNiGit. (#112)
+- **`list_firewall_rules` says which firewall model it reads.** Its
+  description now states that `[]` on a Zone-Based Firewall site is not "no
+  firewall" and points at `list_firewall_policies`.
+
+### Changed
+
+- Compatibility prose in the README and docs site now says which firewall
+  model each tool reads instead of "UniFi Network 9.x or newer" alone.
+
 ## [0.21.2] - 2026-09-09
 
 ### Security
