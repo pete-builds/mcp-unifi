@@ -79,13 +79,13 @@ async def test_audit_open_ports_stub(stub_server: FastMCP) -> None:
     assert "wan_accept_rules" in result
     assert "wan_accept_policies" in result
     assert "summary" in result
-    # The seed carries one legacy rule and one predefined zone policy, so the
-    # controller reads as running both models, and the predefined
-    # return-traffic policy is excluded but counted rather than hidden.
+    # The seed carries one legacy rule and one RESPOND_ONLY zone policy, so
+    # the controller reads as running both models, and the return-traffic
+    # policy is excluded but counted rather than hidden.
     assert result["firewall_model"] == "mixed"
     assert result["wan_zone_resolved"] is True
     assert result["wan_accept_policies"] == []
-    assert result["predefined_wan_policies_excluded"] == 1
+    assert result["return_traffic_policies_excluded"] == 1
     assert "firewall_policies_error" not in result
     # The seed has one HTTPS->NAS forward and one established/related WAN_IN
     # rule (filtered out). Audit should surface the forward, no accept rules.
@@ -122,6 +122,7 @@ def _policy(
     action: str = "ALLOW",
     enabled: bool = True,
     predefined: bool = False,
+    connection_state_type: str = "ALL",
 ) -> dict[str, object]:
     endpoint = {
         "matching_target": "ANY",
@@ -134,6 +135,7 @@ def _policy(
         "action": action,
         "enabled": enabled,
         "predefined": predefined,
+        "connection_state_type": connection_state_type,
         "index": 20000,
         "protocol": "all",
         "source": {"zone_id": src, **endpoint},
@@ -472,7 +474,15 @@ _ZONES = [
 
 @respx.mock
 async def test_real_audit_open_ports_zone_based_site(real_server: FastMCP) -> None:
-    """Issue #112 as reported: legacy rulesets empty, policy lives in v2."""
+    """Issue #112 as reported: legacy rulesets empty, policy lives in v2.
+
+    Policy shapes mirror captured controller data: the return-traffic
+    boilerplate is ``predefined`` AND ``RESPOND_ONLY``; the zone matrix's
+    "Allow All Traffic" is ``predefined`` with ``connection_state_type ALL``.
+    Only the first is boilerplate. The second, sourced from the WAN zone, is
+    the worst thing this audit can find and must never be filtered as
+    "predefined, ignore".
+    """
     respx.get(f"{BASE}/rest/firewallrule").mock(return_value=httpx.Response(200, json={"data": []}))
     respx.get(f"{BASE}/rest/portforward").mock(return_value=httpx.Response(200, json={"data": []}))
     respx.get(f"{V2}/firewall/zone").mock(return_value=httpx.Response(200, json=_ZONES))
@@ -480,7 +490,14 @@ async def test_real_audit_open_ports_zone_based_site(real_server: FastMCP) -> No
         return_value=httpx.Response(
             200,
             json=[
-                _policy("Allow Return Traffic", src="z-wan", dst="z-lan", predefined=True),
+                _policy(
+                    "Allow Return Traffic",
+                    src="z-wan",
+                    dst="z-lan",
+                    predefined=True,
+                    connection_state_type="RESPOND_ONLY",
+                ),
+                _policy("Allow All Traffic", src="z-wan", dst="z-lan", predefined=True),
                 _policy("Open SSH", src="z-wan", dst="z-lan"),
                 _policy("Block IoT", src="z-lan", dst="z-wan", action="BLOCK"),
             ],
@@ -488,10 +505,39 @@ async def test_real_audit_open_ports_zone_based_site(real_server: FastMCP) -> No
     )
     result = await _call(real_server, "audit_open_ports")
     assert result["wan_accept_rules"] == []
-    assert [p["name"] for p in result["wan_accept_policies"]] == ["Open SSH"]
+    flagged = {p["name"]: p for p in result["wan_accept_policies"]}
+    assert set(flagged) == {"Allow All Traffic", "Open SSH"}
+    assert flagged["Allow All Traffic"]["predefined"] is True
     assert result["firewall_model"] == "zone-based"
-    assert result["predefined_wan_policies_excluded"] == 1
-    assert "1 WAN allow policy(ies)" in result["summary"]
+    assert result["return_traffic_policies_excluded"] == 1
+    assert "2 WAN allow policy(ies)" in result["summary"]
+
+
+@respx.mock
+async def test_real_audit_open_ports_resolves_external_zone_by_name(real_server: FastMCP) -> None:
+    """UniFi's default name for the internet-facing zone is "External"; a
+    record with no ``zone_key`` must still classify by that name."""
+    respx.get(f"{BASE}/rest/firewallrule").mock(return_value=httpx.Response(200, json={"data": []}))
+    respx.get(f"{BASE}/rest/portforward").mock(return_value=httpx.Response(200, json={"data": []}))
+    respx.get(f"{V2}/firewall/zone").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {"_id": "z-int", "name": "Internal", "default_zone": True},
+                {"_id": "z-ext", "name": "External", "default_zone": True},
+            ],
+        )
+    )
+    respx.get(f"{V2}/firewall-policies").mock(
+        return_value=httpx.Response(
+            200,
+            json=[_policy("Allow All Traffic", src="z-ext", dst="z-int", predefined=True)],
+        )
+    )
+    result = await _call(real_server, "audit_open_ports")
+    assert result["wan_zone_resolved"] is True
+    assert [p["name"] for p in result["wan_accept_policies"]] == ["Allow All Traffic"]
+    assert result["wan_accept_policies"][0]["source_zone"] == "External"
 
 
 @respx.mock

@@ -132,8 +132,15 @@ async def resolve_default_ap_group(backend: Backend) -> list[str]:
 # Zone-Based Firewall helpers (shared by audit_open_ports and drift)
 # ---------------------------------------------------------------------------
 
+#: Lowercased ``zone_key`` values the controller uses for the internet-facing
+#: zone. UniFi names that zone "External" in the UI; ``wan`` is the key seen
+#: in captured records.
+_WAN_ZONE_KEYS: frozenset[str] = frozenset({"wan", "external"})
+
 #: Lowercased zone names that front the public internet, for controllers
-#: whose WAN zone carries no ``zone_key`` or has been renamed.
+#: whose WAN zone carries no ``zone_key`` or has been renamed. "External" is
+#: the controller's own default name (captured 2026-09-07 readback); "WAN"
+#: and "Internet" cover renames.
 _WAN_ZONE_NAMES: frozenset[str] = frozenset({"wan", "external", "internet"})
 
 
@@ -150,10 +157,11 @@ def zone_names_by_id(zones: list[Any]) -> dict[str, str]:
 def wan_zone_ids(zones: list[Any]) -> set[str]:
     """Ids of every Zone-Based Firewall zone that faces the internet.
 
-    ``zone_key == "wan"`` is the controller's own marker. The name fallback
-    covers a renamed zone and the "External" label some builds use. An empty
-    result on a site that has policies means "could not classify", and the
-    callers say so rather than reporting a clean WAN.
+    ``zone_key`` is the controller's own marker and is checked first. The
+    name fallback covers a record with no key and the default "External"
+    label the UI shows. An empty result on a site that has policies means
+    "could not classify", and the callers say so rather than reporting a
+    clean WAN.
     """
     out: set[str] = set()
     for zone in zones:
@@ -161,6 +169,6 @@ def wan_zone_ids(zones: list[Any]) -> set[str]:
             continue
         key = str(zone.get("zone_key") or "").lower()
         name = str(zone.get("name") or "").lower()
-        if key == "wan" or name in _WAN_ZONE_NAMES:
+        if key in _WAN_ZONE_KEYS or name in _WAN_ZONE_NAMES:
             out.add(str(zone["_id"]))
     return out

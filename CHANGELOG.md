@@ -29,10 +29,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Firewall site.** It derived `wan_accept_rules` from the legacy rulesets
   only, so on a migrated site it said `0 WAN accept rule(s)` with policy
   configured. It now also reads the zone policies and reports enabled
-  `ALLOW` policies whose source zone is the WAN zone under
-  `wan_accept_policies`, excluding `predefined` (controller-managed) policies
-  such as the return-traffic allowance and reporting how many it excluded.
-  The result carries `firewall_model` (`legacy`, `zone-based`, `mixed`,
+  `ALLOW` policies whose source zone is the WAN (`External`) zone under
+  `wan_accept_policies`, excluding only return-traffic allowances
+  (`connection_state_type: RESPOND_ONLY`) and reporting how many it
+  excluded. `predefined` policies are deliberately kept: captured controller
+  data shows the zone matrix's "Allow All Traffic" is predefined too, and
+  from the WAN zone that is the finding, not boilerplate. Each flagged
+  record carries `predefined` so matrix defaults and hand-written policies
+  can be told apart. The result carries `firewall_model` (`legacy`, `zone-based`, `mixed`,
   `none`) and `wan_zone_resolved`; a failed zone-based read is surfaced in
   `firewall_policies_error` rather than turning into a clean answer. Existing
   keys are unchanged. Reported by @MarkusNiGit. (#112)

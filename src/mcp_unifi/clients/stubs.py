@@ -228,15 +228,17 @@ def _seed_firewall_zones() -> list[UniFiRecord]:
 
 
 def _seed_firewall_policies(zones: list[UniFiRecord]) -> list[UniFiRecord]:
-    """Seed one predefined (controller-managed) WAN-to-LAN policy.
+    """Seed one predefined return-traffic WAN-to-LAN policy.
 
     Mirrors the ``/v2/api/site/<site>/firewall-policies`` record shape: an
     ``action`` (``ALLOW``/``BLOCK``/``REJECT``), ``enabled``, ``predefined``,
-    ``index``, ``protocol``, and ``source``/``destination`` objects that name
-    a zone by ``zone_id``. The seed is ``predefined`` so that, like the
-    established/related rule in :func:`_seed_firewall_rules`, the default
+    ``connection_state_type``, ``index``, ``protocol``, and
+    ``source``/``destination`` objects that name a zone by ``zone_id``. The
+    seed is a ``RESPOND_ONLY`` allowance, which captured controller data
+    shows is how the return-traffic boilerplate is marked, so that like the
+    established/related rule in :func:`_seed_firewall_rules` the default
     ``audit_open_ports`` answer has nothing to flag; tests append their own
-    user policies on top.
+    policies on top.
     """
     by_key = {str(z.get("zone_key")): str(z["_id"]) for z in zones}
     endpoint = {
@@ -254,7 +256,7 @@ def _seed_firewall_policies(zones: list[UniFiRecord]) -> list[UniFiRecord]:
             "index": 10000,
             "protocol": "all",
             "ip_version": "BOTH",
-            "connection_state_type": "ALL",
+            "connection_state_type": "RESPOND_ONLY",
             "connection_states": [],
             "create_allow_respond": True,
             "logging": False,
