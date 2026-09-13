@@ -17,12 +17,17 @@ clean just because its legacy rulesets are empty (issue #112):
 - Legacy ``WAN_*`` ``accept`` rules, excluding the boilerplate
   established/related rule.
 - Zone-Based Firewall ``ALLOW`` policies whose source zone is the WAN
-  zone, excluding ``predefined`` (controller-managed) policies such
-  as the return-traffic allowance; the number excluded is reported.
+  (``External``) zone, excluding return-traffic allowances
+  (``connection_state_type == "RESPOND_ONLY"``); the number excluded
+  is reported. ``predefined`` policies are NOT excluded: the zone
+  matrix implements "External to Internal: Allow" as a predefined
+  "Allow All Traffic" policy, which is exactly the exposure this
+  audit exists to surface, so each record carries ``predefined`` and
+  the caller can tell matrix defaults from hand-written policies.
 
 Returns ``{"port_forwards", "wan_accept_rules", "wan_accept_policies",
 "firewall_model", "wan_zone_resolved",
-"predefined_wan_policies_excluded", "summary"}``. ``firewall_model``
+"return_traffic_policies_excluded", "summary"}``. ``firewall_model``
 is ``legacy``, ``zone-based``, ``mixed`` or ``none`` from what the
 controller actually returned. If the zone-based read fails the audit
 still answers from the legacy side and carries the failure in

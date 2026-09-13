@@ -764,12 +764,17 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         - Legacy ``WAN_*`` ``accept`` rules, excluding the boilerplate
           established/related rule.
         - Zone-Based Firewall ``ALLOW`` policies whose source zone is the WAN
-          zone, excluding ``predefined`` (controller-managed) policies such
-          as the return-traffic allowance; the number excluded is reported.
+          (``External``) zone, excluding return-traffic allowances
+          (``connection_state_type == "RESPOND_ONLY"``); the number excluded
+          is reported. ``predefined`` policies are NOT excluded: the zone
+          matrix implements "External to Internal: Allow" as a predefined
+          "Allow All Traffic" policy, which is exactly the exposure this
+          audit exists to surface, so each record carries ``predefined`` and
+          the caller can tell matrix defaults from hand-written policies.
 
         Returns ``{"port_forwards", "wan_accept_rules", "wan_accept_policies",
         "firewall_model", "wan_zone_resolved",
-        "predefined_wan_policies_excluded", "summary"}``. ``firewall_model``
+        "return_traffic_policies_excluded", "summary"}``. ``firewall_model``
         is ``legacy``, ``zone-based``, ``mixed`` or ``none`` from what the
         controller actually returned. If the zone-based read fails the audit
         still answers from the legacy side and carries the failure in
@@ -820,7 +825,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             wan_ids = wan_zone_ids(zones)
             zone_names = zone_names_by_id(zones)
             wan_accept_policies: list[dict[str, Any]] = []
-            predefined_excluded = 0
+            return_traffic_excluded = 0
             for policy in policies:
                 if not isinstance(policy, dict):
                     continue
@@ -832,8 +837,13 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                     continue
                 if str(source.get("zone_id")) not in wan_ids:
                     continue
-                if policy.get("predefined"):
-                    predefined_excluded += 1
+                # Return-traffic allowances only admit replies to connections
+                # the inside opened; they expose nothing. Captured controller
+                # data marks them RESPOND_ONLY. Do NOT key this on
+                # ``predefined``: the matrix's "Allow All Traffic" is
+                # predefined too, and from the WAN zone it is the finding.
+                if str(policy.get("connection_state_type", "")).upper() == "RESPOND_ONLY":
+                    return_traffic_excluded += 1
                     continue
                 destination = policy.get("destination")
                 destination = destination if isinstance(destination, dict) else {}
@@ -858,8 +868,10 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             summary_parts.append(f"{len(active_pfs)} active port forward(s)")
             summary_parts.append(f"{len(wan_accept_rules)} WAN accept rule(s)")
             summary_parts.append(f"{len(wan_accept_policies)} WAN allow policy(ies)")
-            if predefined_excluded:
-                summary_parts.append(f"{predefined_excluded} predefined WAN policy(ies) excluded")
+            if return_traffic_excluded:
+                summary_parts.append(
+                    f"{return_traffic_excluded} return-traffic WAN policy(ies) excluded"
+                )
             if policies_error:
                 summary_parts.append("zone-based firewall read FAILED, policies not audited")
             elif policies and not wan_ids:
@@ -872,7 +884,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 "wan_accept_policies": wan_accept_policies,
                 "firewall_model": firewall_model,
                 "wan_zone_resolved": bool(wan_ids),
-                "predefined_wan_policies_excluded": predefined_excluded,
+                "return_traffic_policies_excluded": return_traffic_excluded,
                 "summary": summary,
             }
             if policies_error:
