@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-09-13
+
 ### Added
 
 - **`list_firewall_policies` and `list_firewall_zones`** read the Zone-Based
@@ -1980,6 +1982,7 @@ UniFi controller endpoint paths were cross-referenced against the
 [`sirkirby/unifi-mcp`](https://github.com/sirkirby/unifi-mcp) project. No code
 was copied; the implementation here is an independent FastMCP + httpx build.
 
+[0.22.0]: https://github.com/pete-builds/mcp-unifi/releases/tag/v0.22.0
 [0.5.0-rc.1]: https://github.com/pete-builds/mcp-unifi/releases/tag/v0.5.0-rc.1
 [0.4.0]: https://github.com/pete-builds/mcp-unifi/releases/tag/v0.4.0
 [0.3.0]: https://github.com/pete-builds/mcp-unifi/releases/tag/v0.3.0
