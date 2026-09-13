@@ -50,6 +50,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Compatibility prose in the README and docs site now says which firewall
   model each tool reads instead of "UniFi Network 9.x or newer" alone.
+- The "verified against" line now names what this release was actually
+  checked on: a UCG-Fiber on UniFi OS 5.1.33 running UniFi Network 10.6.101
+  (2026-09-13). Release notes for Network 10.6.97, 10.6.101, 10.6.106 and
+  9.0.120 were reviewed for API, endpoint, firewall-model or deprecation
+  changes; none affect this server.
 
 ## [0.21.2] - 2026-09-09
 
