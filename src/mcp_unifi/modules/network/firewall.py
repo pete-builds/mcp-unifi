@@ -35,9 +35,16 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     @mcp.tool(annotations=READ_ONLY)
     @audited("list_firewall_rules", mutates=False)
     async def list_firewall_rules(controller: str = "default") -> str:
-        """List every firewall rule on the controller.
+        """List every legacy-ruleset firewall rule on the controller.
 
         Side effects: None (read-only).
+
+        Reads the legacy ``/rest/firewallrule`` collection (rulesets such as
+        ``WAN_IN`` and ``LAN_IN``). A site that has migrated to the
+        Zone-Based Firewall (Network 9.x and newer) keeps its policy elsewhere
+        and this returns ``[]`` even though the firewall is configured: use
+        ``list_firewall_policies`` for those sites, or ``audit_open_ports``,
+        which reads both.
 
         Returns one record per rule with ``_id``, ``name``, ``ruleset``,
         ``rule_index``, ``action``, ``enabled``, ``protocol``, and
@@ -54,6 +61,69 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return format_json(await backend.list_firewall_rules())
         except UniFiError as exc:
             logger.exception("list_firewall_rules failed")
+            return err(str(exc))
+
+    @mcp.tool(annotations=READ_ONLY)
+    @audited("list_firewall_policies", mutates=False)
+    async def list_firewall_policies(controller: str = "default") -> str:
+        """List every Zone-Based Firewall policy on the controller (v2 API).
+
+        Side effects: None (read-only).
+
+        Sites on UniFi Network 9.x and newer that use the Zone-Based Firewall
+        keep their policy here, not in the legacy rulesets that
+        ``list_firewall_rules`` reads. A site still on legacy rulesets returns
+        ``[]`` from this tool and its rules from ``list_firewall_rules``;
+        ``audit_open_ports`` reads both so you do not have to guess which
+        model a site uses.
+
+        Returns one record per policy with ``_id``, ``name``, ``action``
+        (``ALLOW``/``BLOCK``/``REJECT``), ``enabled``, ``predefined``
+        (controller-managed, not user-created), ``index``, ``protocol``,
+        ``ip_version``, and ``source`` / ``destination`` objects whose
+        ``zone_id`` refers to a record from ``list_firewall_zones``. Read
+        only: this server does not create or edit zone policies yet.
+
+        Example: list_firewall_policies(controller="default")
+
+        Args:
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+        """
+        try:
+            backend = resolve_backend(registry, controller)
+            return format_json(await backend.list_firewall_policies())
+        except UniFiError as exc:
+            logger.exception("list_firewall_policies failed")
+            return err(str(exc))
+
+    @mcp.tool(annotations=READ_ONLY)
+    @audited("list_firewall_zones", mutates=False)
+    async def list_firewall_zones(controller: str = "default") -> str:
+        """List the Zone-Based Firewall zones on the controller (v2 API).
+
+        Side effects: None (read-only).
+
+        Zones are what ``list_firewall_policies`` records point at through
+        ``source.zone_id`` and ``destination.zone_id``, so this is the lookup
+        that turns a policy into "WAN to LAN". A site still on legacy
+        rulesets returns ``[]``.
+
+        Returns one record per zone with ``_id``, ``name``, ``zone_key``
+        (``"wan"``, ``"lan"``, ...), ``default_zone``, ``attr_no_edit`` and
+        the ``network_ids`` the zone spans.
+
+        Example: list_firewall_zones(controller="default")
+
+        Args:
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+        """
+        try:
+            backend = resolve_backend(registry, controller)
+            return format_json(await backend.list_firewall_zones())
+        except UniFiError as exc:
+            logger.exception("list_firewall_zones failed")
             return err(str(exc))
 
     @mcp.tool(annotations=CREATE)

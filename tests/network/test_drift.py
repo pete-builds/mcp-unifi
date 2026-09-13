@@ -354,3 +354,81 @@ async def test_drift_unknown_controller(stub_server: FastMCP) -> None:
     )
     assert "error" in result
     assert "Unknown controller" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# Zone-Based Firewall policies (issue #112)
+# ---------------------------------------------------------------------------
+
+
+def _zone_ids(stub_state: StubState) -> dict[str, str]:
+    return {z["zone_key"]: z["_id"] for z in stub_state.list_firewall_zones()}
+
+
+async def test_drift_firewall_policies_section(stub_server: FastMCP, stub_state: StubState) -> None:
+    zones = _zone_ids(stub_state)
+    stub_state.firewall_policies.append(
+        {
+            "_id": "p-ssh",
+            "name": "Open SSH",
+            "action": "ALLOW",
+            "enabled": True,
+            "predefined": False,
+            "index": 20000,
+            "protocol": "tcp",
+            "source": {"zone_id": zones["wan"]},
+            "destination": {"zone_id": zones["lan"]},
+        }
+    )
+    spec = textwrap.dedent(
+        """
+        firewall_policies:
+          - name: "Open SSH"
+            action: "block"          # mismatch, case-insensitive
+            source_zone: "wan"       # matches, case-insensitive
+            destination_zone: "LAN"
+          - name: "Allow Return Traffic"
+          - name: "Block IoT to LAN"  # missing on the controller
+        """
+    )
+    result = await _call(stub_server, "audit_network_drift", {"spec_yaml": spec})
+    assert result["in_sync"] is False
+    policy_drifts = [d for d in result["drifts"] if d["resource_type"] == "firewall_policy"]
+
+    action = [d for d in policy_drifts if d["name"] == "open ssh" and d["field"] == "action"]
+    assert len(action) == 1
+    assert action[0] == {
+        "resource_type": "firewall_policy",
+        "name": "open ssh",
+        "field": "action",
+        "expected": "BLOCK",
+        "actual": "ALLOW",
+    }
+    assert not [d for d in policy_drifts if d["field"] in ("source_zone", "destination_zone")]
+
+    missing = [d for d in policy_drifts if d["name"] == "block iot to lan"]
+    assert len(missing) == 1
+    assert missing[0]["field"] == "_resource"
+    assert missing[0]["actual"] is None
+
+    assert "firewall_policy" in result["summary"]
+
+
+async def test_drift_firewall_policies_not_declared_is_not_audited(
+    stub_server: FastMCP,
+) -> None:
+    spec = textwrap.dedent(
+        """
+        networks:
+          - name: "Default"
+        """
+    )
+    result = await _call(stub_server, "audit_network_drift", {"spec_yaml": spec})
+    assert [d for d in result["drifts"] if d["resource_type"] == "firewall_policy"] == []
+
+
+async def test_drift_firewall_policies_must_be_a_list(stub_server: FastMCP) -> None:
+    result = await _call(
+        stub_server, "audit_network_drift", {"spec_yaml": "firewall_policies: 1\n"}
+    )
+    assert "firewall_policies must be a list" in result["error"]

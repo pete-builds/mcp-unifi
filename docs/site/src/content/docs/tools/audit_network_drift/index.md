@@ -13,7 +13,8 @@ showing fields that drifted, resources missing from the controller, and
 resources present on the controller that the spec did not declare.
 
 Side effects:
-- None (read-only). Lists networks, WLANs, and firewall rules.
+- None (read-only). Lists networks, WLANs, legacy firewall rules,
+  and Zone-Based Firewall policies and zones.
 
 Spec format (YAML, all sections optional):
 
@@ -30,8 +31,15 @@ Spec format (YAML, all sections optional):
         action: "drop"
         src: "10.50.0.0/24"
         dst: "192.168.86.0/24"
+    firewall_policies:          # Zone-Based Firewall sites
+      - name: "Allow LAN to IoT"
+        action: "allow"
+        source_zone: "LAN"
+        destination_zone: "IoT"
 
-Resources are matched by ``name`` (case-insensitive). Sections you omit
+``firewall_rules`` audits the legacy rulesets and ``firewall_policies``
+the Zone-Based Firewall; a site uses one or the other, so declare the
+section that matches it. Resources are matched by ``name`` (case-insensitive). Sections you omit
 are not audited; sections you include audit BOTH directions (missing
 and extra). To audit a section as "exactly these resources", include it
 explicitly. To audit as "at least these resources", omit the section

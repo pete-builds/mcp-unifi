@@ -1,14 +1,21 @@
 ---
 title: list_firewall_rules
-description: "List every firewall rule on the controller."
+description: "List every legacy-ruleset firewall rule on the controller."
 draft: false
 ---
 
 # `list_firewall_rules`
 
-List every firewall rule on the controller.
+List every legacy-ruleset firewall rule on the controller.
 
 Side effects: None (read-only).
+
+Reads the legacy ``/rest/firewallrule`` collection (rulesets such as
+``WAN_IN`` and ``LAN_IN``). A site that has migrated to the
+Zone-Based Firewall (Network 9.x and newer) keeps its policy elsewhere
+and this returns ``[]`` even though the firewall is configured: use
+``list_firewall_policies`` for those sites, or ``audit_open_ports``,
+which reads both.
 
 Returns one record per rule with ``_id``, ``name``, ``ruleset``,
 ``rule_index``, ``action``, ``enabled``, ``protocol``, and

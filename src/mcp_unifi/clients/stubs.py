@@ -199,6 +199,77 @@ def _seed_firewall_rules() -> list[UniFiRecord]:
     ]
 
 
+def _seed_firewall_zones() -> list[UniFiRecord]:
+    """Seed the two default Zone-Based Firewall zones.
+
+    Mirrors the ``/v2/api/site/<site>/firewall/zone`` record shape (a bare
+    list): ``name``, ``zone_key``, ``default_zone``, ``attr_no_edit`` and the
+    ``network_ids`` the zone spans. Shape taken from a captured controller
+    response, not invented here.
+    """
+    return [
+        {
+            "_id": _oid(),
+            "name": "LAN",
+            "zone_key": "lan",
+            "default_zone": True,
+            "attr_no_edit": True,
+            "network_ids": [],
+        },
+        {
+            "_id": _oid(),
+            "name": "WAN",
+            "zone_key": "wan",
+            "default_zone": True,
+            "attr_no_edit": True,
+            "network_ids": [],
+        },
+    ]
+
+
+def _seed_firewall_policies(zones: list[UniFiRecord]) -> list[UniFiRecord]:
+    """Seed one predefined (controller-managed) WAN-to-LAN policy.
+
+    Mirrors the ``/v2/api/site/<site>/firewall-policies`` record shape: an
+    ``action`` (``ALLOW``/``BLOCK``/``REJECT``), ``enabled``, ``predefined``,
+    ``index``, ``protocol``, and ``source``/``destination`` objects that name
+    a zone by ``zone_id``. The seed is ``predefined`` so that, like the
+    established/related rule in :func:`_seed_firewall_rules`, the default
+    ``audit_open_ports`` answer has nothing to flag; tests append their own
+    user policies on top.
+    """
+    by_key = {str(z.get("zone_key")): str(z["_id"]) for z in zones}
+    endpoint = {
+        "matching_target": "ANY",
+        "port_matching_type": "ANY",
+        "match_opposite_ports": False,
+    }
+    return [
+        {
+            "_id": _oid(),
+            "name": "Allow Return Traffic",
+            "action": "ALLOW",
+            "enabled": True,
+            "predefined": True,
+            "index": 10000,
+            "protocol": "all",
+            "ip_version": "BOTH",
+            "connection_state_type": "ALL",
+            "connection_states": [],
+            "create_allow_respond": True,
+            "logging": False,
+            "match_ip_sec": False,
+            "match_opposite_protocol": False,
+            "icmp_typename": "ANY",
+            "icmp_v6_typename": "ANY",
+            "description": "",
+            "source": {"zone_id": by_key["wan"], **endpoint},
+            "destination": {"zone_id": by_key["lan"], **endpoint},
+            "schedule": {"mode": "ALWAYS", "repeat_on_days": [], "time_all_day": True},
+        },
+    ]
+
+
 def _seed_firewall_groups() -> list[UniFiRecord]:
     """Seed one reusable firewall group of each common type.
 
@@ -738,6 +809,8 @@ class StubState:
         self.wlans: list[UniFiRecord] = _seed_wlans(default_net_id)
         self.firewall_rules: list[UniFiRecord] = _seed_firewall_rules()
         self.firewall_groups: list[UniFiRecord] = _seed_firewall_groups()
+        self.firewall_zones: list[UniFiRecord] = _seed_firewall_zones()
+        self.firewall_policies: list[UniFiRecord] = _seed_firewall_policies(self.firewall_zones)
         self.routes: list[UniFiRecord] = _seed_routes()
         self.traffic_rules: list[UniFiRecord] = _seed_traffic_rules()
         self.traffic_routes: list[UniFiRecord] = _seed_traffic_routes()
@@ -917,6 +990,13 @@ class StubState:
     # ----- Firewall -------------------------------------------------------
     def list_firewall_rules(self) -> list[UniFiRecord]:
         return self.firewall_rules
+
+    # ----- Zone-Based Firewall (v2, read-only) -----------------------------
+    def list_firewall_policies(self) -> list[UniFiRecord]:
+        return self.firewall_policies
+
+    def list_firewall_zones(self) -> list[UniFiRecord]:
+        return self.firewall_zones
 
     def create_firewall_rule(self, payload: dict[str, Any]) -> UniFiRecord:
         self._check_failure("create_firewall_rule")

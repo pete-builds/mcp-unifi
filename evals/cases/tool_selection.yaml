@@ -80,6 +80,7 @@
 - id: firewall_rules
   prompt: "Show me every firewall rule that's configured."
   answer: list_firewall_rules
+  also_correct: [list_firewall_policies]
   trap: list_firewall_groups
 
 - id: wan_ipv6

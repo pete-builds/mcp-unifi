@@ -40,6 +40,8 @@ from mcp_unifi.modules.network._common import (
     resolve_default_ap_group,
     subnet_to_dhcp,
     subnet_to_network_form,
+    wan_zone_ids,
+    zone_names_by_id,
 )
 from mcp_unifi.redaction import redact
 
@@ -751,15 +753,29 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     @mcp.tool(annotations=READ_ONLY)
     @audited("audit_open_ports", mutates=False)
     async def audit_open_ports(controller: str = "default") -> str:
-        """Audit WAN-facing exposure (port forwards and WAN_IN accept rules).
+        """Audit WAN-facing exposure: port forwards plus WAN accept rules and policies.
 
         Side effects: None (read-only).
 
-        Cross-references firewall rules and port forwards to summarise what
-        is reachable from the public internet:
+        Cross-references port forwards with BOTH firewall models a controller
+        can run, so a site on the Zone-Based Firewall is not reported as
+        clean just because its legacy rulesets are empty (issue #112):
         - Active port forwards (DNAT into the LAN).
-        - WAN_IN ``accept`` rules, excluding the boilerplate
+        - Legacy ``WAN_*`` ``accept`` rules, excluding the boilerplate
           established/related rule.
+        - Zone-Based Firewall ``ALLOW`` policies whose source zone is the WAN
+          zone, excluding ``predefined`` (controller-managed) policies such
+          as the return-traffic allowance; the number excluded is reported.
+
+        Returns ``{"port_forwards", "wan_accept_rules", "wan_accept_policies",
+        "firewall_model", "wan_zone_resolved",
+        "predefined_wan_policies_excluded", "summary"}``. ``firewall_model``
+        is ``legacy``, ``zone-based``, ``mixed`` or ``none`` from what the
+        controller actually returned. If the zone-based read fails the audit
+        still answers from the legacy side and carries the failure in
+        ``firewall_policies_error`` rather than reporting a clean WAN. If
+        policies exist but no zone could be identified as WAN,
+        ``wan_zone_resolved`` is false and none are classified.
 
         Useful as a "did I leave something open?" sanity check before
         publishing a service or shipping a config.
@@ -789,18 +805,79 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 )
             ]
 
+            # Zone-Based Firewall side. A failure here must not turn into a
+            # clean report: keep the legacy answer and carry the error.
+            policies: list[Any] = []
+            zones: list[Any] = []
+            policies_error: str | None = None
+            try:
+                policies = list(await backend.list_firewall_policies())
+                zones = list(await backend.list_firewall_zones())
+            except UniFiError as exc:
+                logger.warning("audit_open_ports: zone-based firewall read failed: %s", exc)
+                policies_error = str(exc)
+
+            wan_ids = wan_zone_ids(zones)
+            zone_names = zone_names_by_id(zones)
+            wan_accept_policies: list[dict[str, Any]] = []
+            predefined_excluded = 0
+            for policy in policies:
+                if not isinstance(policy, dict):
+                    continue
+                source = policy.get("source")
+                source = source if isinstance(source, dict) else {}
+                if str(policy.get("action", "")).upper() != "ALLOW":
+                    continue
+                if not policy.get("enabled", True):
+                    continue
+                if str(source.get("zone_id")) not in wan_ids:
+                    continue
+                if policy.get("predefined"):
+                    predefined_excluded += 1
+                    continue
+                destination = policy.get("destination")
+                destination = destination if isinstance(destination, dict) else {}
+                wan_accept_policies.append(
+                    {
+                        **policy,
+                        "source_zone": zone_names.get(str(source.get("zone_id")), ""),
+                        "destination_zone": zone_names.get(str(destination.get("zone_id")), ""),
+                    }
+                )
+
+            if fw_rules and policies:
+                firewall_model = "mixed"
+            elif policies:
+                firewall_model = "zone-based"
+            elif fw_rules:
+                firewall_model = "legacy"
+            else:
+                firewall_model = "none"
+
             summary_parts: list[str] = []
             summary_parts.append(f"{len(active_pfs)} active port forward(s)")
             summary_parts.append(f"{len(wan_accept_rules)} WAN accept rule(s)")
+            summary_parts.append(f"{len(wan_accept_policies)} WAN allow policy(ies)")
+            if predefined_excluded:
+                summary_parts.append(f"{predefined_excluded} predefined WAN policy(ies) excluded")
+            if policies_error:
+                summary_parts.append("zone-based firewall read FAILED, policies not audited")
+            elif policies and not wan_ids:
+                summary_parts.append("WAN zone unresolved, policies not classified")
             summary = "; ".join(summary_parts)
 
-            return format_json(
-                {
-                    "port_forwards": active_pfs,
-                    "wan_accept_rules": wan_accept_rules,
-                    "summary": summary,
-                }
-            )
+            result: dict[str, Any] = {
+                "port_forwards": active_pfs,
+                "wan_accept_rules": wan_accept_rules,
+                "wan_accept_policies": wan_accept_policies,
+                "firewall_model": firewall_model,
+                "wan_zone_resolved": bool(wan_ids),
+                "predefined_wan_policies_excluded": predefined_excluded,
+                "summary": summary,
+            }
+            if policies_error:
+                result["firewall_policies_error"] = policies_error
+            return format_json(result)
         except UniFiError as exc:
             logger.exception("audit_open_ports failed")
             return err(str(exc))

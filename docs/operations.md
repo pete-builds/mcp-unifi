@@ -436,6 +436,8 @@ wire and the controller are simulated; the request objects are real.
 | `list_clients` | 1 | `GET /stat/sta` |
 | `list_devices` | 1 | `GET /stat/device` |
 | `list_firewall_rules` | 1 | `GET /rest/firewallrule` |
+| `list_firewall_policies` | 1 | `GET /v2/api/site/<site>/firewall-policies` |
+| `list_firewall_zones` | 1 | `GET /v2/api/site/<site>/firewall/zone` |
 | `get_site_health` | 1 | `GET /stat/health` |
 | `get_wan_status` | 1 | `GET /stat/health` |
 | `list_wlans` | 1 | `GET /rest/wlanconf` |

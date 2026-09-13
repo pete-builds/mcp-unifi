@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from mcp_unifi.config import Settings
 
@@ -126,3 +126,41 @@ async def resolve_default_ap_group(backend: Backend) -> list[str]:
             if isinstance(gid, str):
                 return [gid]
     return []
+
+
+# ---------------------------------------------------------------------------
+# Zone-Based Firewall helpers (shared by audit_open_ports and drift)
+# ---------------------------------------------------------------------------
+
+#: Lowercased zone names that front the public internet, for controllers
+#: whose WAN zone carries no ``zone_key`` or has been renamed.
+_WAN_ZONE_NAMES: frozenset[str] = frozenset({"wan", "external", "internet"})
+
+
+def zone_names_by_id(zones: list[Any]) -> dict[str, str]:
+    """Map ``zone._id`` to a display name (``name``, else ``zone_key``)."""
+    out: dict[str, str] = {}
+    for zone in zones:
+        if not isinstance(zone, dict) or not zone.get("_id"):
+            continue
+        out[str(zone["_id"])] = str(zone.get("name") or zone.get("zone_key") or "")
+    return out
+
+
+def wan_zone_ids(zones: list[Any]) -> set[str]:
+    """Ids of every Zone-Based Firewall zone that faces the internet.
+
+    ``zone_key == "wan"`` is the controller's own marker. The name fallback
+    covers a renamed zone and the "External" label some builds use. An empty
+    result on a site that has policies means "could not classify", and the
+    callers say so rather than reporting a clean WAN.
+    """
+    out: set[str] = set()
+    for zone in zones:
+        if not isinstance(zone, dict) or not zone.get("_id"):
+            continue
+        key = str(zone.get("zone_key") or "").lower()
+        name = str(zone.get("name") or "").lower()
+        if key == "wan" or name in _WAN_ZONE_NAMES:
+            out.add(str(zone["_id"]))
+    return out

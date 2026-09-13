@@ -1,20 +1,34 @@
 ---
 title: audit_open_ports
-description: "Audit WAN-facing exposure (port forwards and WAN_IN accept rules)."
+description: "Audit WAN-facing exposure: port forwards plus WAN accept rules and policies."
 draft: false
 ---
 
 # `audit_open_ports`
 
-Audit WAN-facing exposure (port forwards and WAN_IN accept rules).
+Audit WAN-facing exposure: port forwards plus WAN accept rules and policies.
 
 Side effects: None (read-only).
 
-Cross-references firewall rules and port forwards to summarise what
-is reachable from the public internet:
+Cross-references port forwards with BOTH firewall models a controller
+can run, so a site on the Zone-Based Firewall is not reported as
+clean just because its legacy rulesets are empty (issue #112):
 - Active port forwards (DNAT into the LAN).
-- WAN_IN ``accept`` rules, excluding the boilerplate
+- Legacy ``WAN_*`` ``accept`` rules, excluding the boilerplate
   established/related rule.
+- Zone-Based Firewall ``ALLOW`` policies whose source zone is the WAN
+  zone, excluding ``predefined`` (controller-managed) policies such
+  as the return-traffic allowance; the number excluded is reported.
+
+Returns ``{"port_forwards", "wan_accept_rules", "wan_accept_policies",
+"firewall_model", "wan_zone_resolved",
+"predefined_wan_policies_excluded", "summary"}``. ``firewall_model``
+is ``legacy``, ``zone-based``, ``mixed`` or ``none`` from what the
+controller actually returned. If the zone-based read fails the audit
+still answers from the legacy side and carries the failure in
+``firewall_policies_error`` rather than reporting a clean WAN. If
+policies exist but no zone could be identified as WAN,
+``wan_zone_resolved`` is false and none are classified.
 
 Useful as a "did I leave something open?" sanity check before
 publishing a service or shipping a config.
