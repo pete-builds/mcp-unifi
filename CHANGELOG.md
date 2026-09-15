@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Protect API mode per controller: `protect_api: integration` uses the
+  API-key-compatible `/proxy/protect/integration/v1` surface on UniFi OS 5.x;
+  `UNIFI_PROTECT_API=integration` covers legacy single-controller config.
+  The default remains `internal` for backward compatibility. Integration v1
+  provides camera reads and snapshots, not events/recordings; unsupported
+  tools now report that limitation explicitly. Based on live verification
+  from the two-controller field report in #124 (item 13).
+
 ## [0.23.0] - 2026-09-15
 
 ### Security

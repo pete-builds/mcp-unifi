@@ -25,6 +25,43 @@ from mcp_unifi.server import build_server
 from tests.protect.conftest import _call
 
 PROTECT_BASE = "https://gateway.test:443/proxy/protect/api"
+PROTECT_INTEGRATION_BASE = "https://gateway.test:443/proxy/protect/integration/v1"
+
+
+@respx.mock
+async def test_integration_api_key_cameras_and_snapshot() -> None:
+    """OS 5.x API keys use the Integration API's camera read surface."""
+    client = ProtectClient(host="gateway.test", api_key="test-key", api_mode="integration")
+    cameras = respx.get(f"{PROTECT_INTEGRATION_BASE}/cameras").mock(
+        return_value=httpx.Response(200, json=[{"id": "camera-1", "name": "Front"}])
+    )
+    camera = respx.get(f"{PROTECT_INTEGRATION_BASE}/cameras/camera-1").mock(
+        return_value=httpx.Response(200, json={"id": "camera-1", "name": "Front"})
+    )
+    snapshot = respx.get(f"{PROTECT_INTEGRATION_BASE}/cameras/camera-1/snapshot").mock(
+        return_value=httpx.Response(200, content=b"\xff\xd8\xff\xd9")
+    )
+    try:
+        assert (await client.list_cameras())[0]["id"] == "camera-1"
+        assert (await client.get_camera("camera-1"))["name"] == "Front"
+        assert await client.get_snapshot("camera-1") == b"\xff\xd8\xff\xd9"
+        assert cameras.called and camera.called and snapshot.called
+        assert cameras.calls[0].request.headers["X-API-Key"] == "test-key"
+    finally:
+        await client.aclose()
+
+
+async def test_integration_api_reports_unsupported_event_endpoints() -> None:
+    client = ProtectClient(host="gateway.test", api_key="test-key", api_mode="integration")
+    try:
+        with pytest.raises(UniFiError, match="unavailable on the Integration API"):
+            await client.list_events(["motion"], 0, 1, 10)
+        with pytest.raises(UniFiError, match="unavailable on the Integration API"):
+            await client.list_recordings("camera-1", 0, 1)
+        with pytest.raises(UniFiError, match="unavailable on the Integration API"):
+            await client.get_event_thumbnail("event-1")
+    finally:
+        await client.aclose()
 
 
 @pytest.fixture

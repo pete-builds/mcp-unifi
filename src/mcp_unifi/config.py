@@ -58,6 +58,15 @@ class ControllerConfig(BaseModel):
     port: int = Field(default=443, ge=1, le=65535)
     site: str = Field(default="default")
     verify_ssl: bool = Field(default=False)
+    protect_api: Literal["internal", "integration"] = Field(
+        default="internal",
+        description=(
+            "Protect API surface. 'internal' uses /proxy/protect/api (existing "
+            "behavior); 'integration' uses /proxy/protect/integration/v1 for "
+            "UniFi OS 5.x API keys. The Integration API exposes cameras and "
+            "snapshots but not event/recording endpoints."
+        ),
+    )
 
     access_host: str = Field(
         default="",
@@ -174,6 +183,7 @@ class Settings(BaseSettings):
     unifi_site: str = Field(default="default")
     unifi_api_key: str = Field(default="")
     unifi_verify_ssl: bool = Field(default=False)
+    unifi_protect_api: Literal["internal", "integration"] = Field(default="internal")
 
     # ------------------------------------------------------------------
     # Legacy single-controller UniFi Access connection (v0.10+).
@@ -415,6 +425,7 @@ class Settings(BaseSettings):
                         port=self.unifi_port,
                         site=self.unifi_site,
                         verify_ssl=self.unifi_verify_ssl,
+                        protect_api=self.unifi_protect_api,
                         access_host=self.unifi_access_host,
                         access_api_key=(
                             SecretStr(self.unifi_access_api_key)
@@ -438,6 +449,7 @@ class Settings(BaseSettings):
                         port=self.unifi_port,
                         site=self.unifi_site,
                         verify_ssl=self.unifi_verify_ssl,
+                        protect_api=self.unifi_protect_api,
                         access_host=self.unifi_access_host or "stub",
                         access_api_key=SecretStr(self.unifi_access_api_key or "stub"),
                         access_port=self.unifi_access_port,
@@ -482,6 +494,7 @@ class Settings(BaseSettings):
                     "port": c.port,
                     "site": c.site,
                     "verify_ssl": c.verify_ssl,
+                    "protect_api": c.protect_api,
                     "api_key_set": bool(c.api_key.get_secret_value()),
                     "os_username_set": bool(c.os_username),
                     "os_password_set": bool(c.os_password and c.os_password.get_secret_value()),

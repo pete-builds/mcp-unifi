@@ -102,6 +102,22 @@ def test_single_controller_env_auto_promotes() -> None:
     assert c.port == 8443
     assert c.site == "alpha"
     assert c.verify_ssl is True
+    assert c.protect_api == "internal"
+
+
+def test_legacy_protect_api_promotes_to_controller() -> None:
+    s = Settings(
+        stub_mode=False,
+        unifi_host="192.168.1.1",
+        unifi_api_key="test-key",
+        unifi_protect_api="integration",
+    )
+    assert s.controllers[0].protect_api == "integration"
+
+
+def test_invalid_protect_api_fails_controller_validation() -> None:
+    with pytest.raises(ValueError, match="protect_api"):
+        ControllerConfig(name="office", host="gateway.test", api_key="key", protect_api="wrong")
 
 
 def test_multi_controller_yaml_loads(tmp_path: Path) -> None:
@@ -117,6 +133,7 @@ def test_multi_controller_yaml_loads(tmp_path: Path) -> None:
 - name: office
   host: 10.0.0.1
   api_key: office-key
+  protect_api: integration
   port: 8443
   site: hq
   verify_ssl: true
@@ -137,11 +154,13 @@ def test_multi_controller_yaml_loads(tmp_path: Path) -> None:
     assert office.port == 8443
     assert office.site == "hq"
     assert office.verify_ssl is True
+    assert office.protect_api == "integration"
     parents = s.controllers[2]
     # Defaults applied.
     assert parents.port == 443
     assert parents.site == "default"
     assert parents.verify_ssl is False
+    assert parents.protect_api == "internal"
 
 
 def test_yaml_with_top_level_controllers_key(tmp_path: Path) -> None:

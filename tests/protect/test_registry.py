@@ -74,3 +74,27 @@ def test_build_registry_real_mode_wires_protect_client(
     from mcp_unifi.backends import ProtectRealBackend
 
     assert isinstance(registry.get_protect("default"), ProtectRealBackend)
+
+
+def test_build_registry_selects_protect_api_per_controller(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("MCP_UNIFI_CONTROLLERS_FILE", raising=False)
+    settings = Settings(
+        stub_mode=False,
+        controllers=[
+            ControllerConfig(
+                name="home", host="gateway.test", api_key="key", protect_api="integration"
+            ),
+            ControllerConfig(name="office", host="other.test", api_key="key"),
+        ],
+    )
+    registry = build_registry(settings)
+    from mcp_unifi.backends import ProtectRealBackend
+
+    home = registry.get_protect("home")
+    office = registry.get_protect("office")
+    assert isinstance(home, ProtectRealBackend)
+    assert isinstance(office, ProtectRealBackend)
+    assert home.client._base == "https://gateway.test:443/proxy/protect/integration/v1"
+    assert office.client._base == "https://other.test:443/proxy/protect/api"
