@@ -189,6 +189,27 @@ without applying.</li>
 <td>Destination port match. Same syntax as <code dir="auto">src_port</code>. The headline use case: <code dir="auto">dst_port="32400"</code> with <code dir="auto">protocol="tcp"</code> to allow IoT→Plex without opening the rest of MGMT.</td>
 </tr>
 <tr>
+<td><code dir="auto">src_firewallgroup_ids</code></td>
+<td>`array</td>
+<td>null`</td>
+<td>no</td>
+<td>null</td>
+</tr>
+<tr>
+<td><code dir="auto">dst_firewallgroup_ids</code></td>
+<td>`array</td>
+<td>null`</td>
+<td>no</td>
+<td>null</td>
+</tr>
+<tr>
+<td><code dir="auto">logging</code></td>
+<td><code dir="auto">boolean</code></td>
+<td>no</td>
+<td>false</td>
+<td><code dir="auto">True</code> logs every match to the controller’s firewall log. Only sent to the controller when true.</td>
+</tr>
+<tr>
 <td><code dir="auto">enabled</code></td>
 <td><code dir="auto">boolean</code></td>
 <td>no</td>

@@ -79,7 +79,11 @@
 <li>Modifies the named network in place. Only fields supplied in
 <code dir="auto">updates</code> change; everything else is preserved.</li>
 <li>Changes to <code dir="auto">vlan</code> or <code dir="auto">ip_subnet</code> may disconnect clients on the
-affected network.</li>
+affected network. A change to <code dir="auto">ip_subnet</code> that would leave the
+existing <code dir="auto">dhcpd_start</code> / <code dir="auto">dhcpd_stop</code> outside the new subnet is
+refused unless both are passed in the same update, because the
+controller keeps the old pool and the network then hands out no
+addresses.</li>
 <li>Mutates controller state. Use dry_run=True to preview the change
 without applying.</li>
 </ul>
