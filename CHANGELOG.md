@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   spellings are now in `SENSITIVE_KEY_PATTERNS`; the certificate fields
   beside them (`x_ca_crt`, `x_server_crt`) are public and stay visible.
   Reported from a live two-controller deployment in #124.
+- **Protect event types are validated before they reach the query string.**
+  `ProtectClient.list_events` built `types[]=<value>` from its argument
+  unchecked while every other query-building client method runs
+  `path_segment`. Not reachable today, since `list_motion_events` and
+  `list_smart_detections` pass fixed literals, but the next tool that
+  forwards a caller-supplied event type would have reintroduced the
+  parameter-smuggling class that #125 closed. The values now go through the
+  same validator as `AccessClient.list_events`' filters.
 - **Every tool response is redacted at the serialiser.** Redaction used to
   run only where a module called `redact` on the way out, and after three
   rounds of per-tool wiring (0.20.0, #125, #130) a stub-mode sweep still
