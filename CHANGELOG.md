@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-09-15
+
 The rest of the field report @simonsorcerer23 filed in #124 after a day
 against two UDM Pro Max on UniFi OS 5.1.31 / Network 10.6.101. Items 1, 2
 and 4 shipped in 0.23.0; item 13 (Protect on UniFi OS 5.x via the
