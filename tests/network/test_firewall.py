@@ -105,6 +105,74 @@ async def test_update_firewall_rule_stub(stub_server: FastMCP, stub_state: StubS
         {"rule_id": rule_id, "updates": {"action": "drop"}},
     )
     assert result["action"] == "drop"
+    # Same verification block as the other update_* tools (issue #124, item 9),
+    # with the rule's own fields kept at the top level for existing callers.
+    assert result["rule_id"] == rule_id
+    assert result["verification"]["verified"] is True
+    assert result["verification"]["mutation_applied"] is True
+    assert "action" in result["verification"]["persisted_fields"]
+
+
+async def test_update_firewall_rule_description_names_the_verification_block(
+    stub_server: FastMCP,
+) -> None:
+    tools = {t.name: t for t in await stub_server.list_tools()}
+    description = tools["update_firewall_rule"].description or ""
+    assert "verification" in description
+    assert "persisted_fields" in description
+
+
+async def test_create_firewall_rule_with_groups_and_logging(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """Group-based rules used to need create followed by update (issue #124,
+    item 8). The three new parameters land in the record in one call."""
+    group_id = stub_state.list_firewall_groups()[0]["_id"]
+    result = await _call(
+        stub_server,
+        "create_firewall_rule",
+        {
+            "name": "Block bad hosts",
+            "ruleset": "LAN_IN",
+            "action": "drop",
+            "src_firewallgroup_ids": [group_id],
+            "dst_firewallgroup_ids": [group_id],
+            "logging": True,
+        },
+    )
+    assert result["src_firewallgroup_ids"] == [group_id]
+    assert result["dst_firewallgroup_ids"] == [group_id]
+    assert result["logging"] is True
+
+
+async def test_create_firewall_rule_omits_groups_and_logging_when_unset(
+    stub_server: FastMCP,
+) -> None:
+    result = await _call(
+        stub_server,
+        "create_firewall_rule",
+        {"name": "Plain", "ruleset": "LAN_IN", "action": "accept"},
+    )
+    assert "src_firewallgroup_ids" not in result
+    assert "dst_firewallgroup_ids" not in result
+    assert "logging" not in result
+
+
+async def test_create_firewall_rule_rejects_unsafe_group_id(stub_server: FastMCP) -> None:
+    """Group ids are interpolated nowhere today, but they are caller-supplied
+    identifiers and go through the same allowlist as every other id."""
+    result = await _call(
+        stub_server,
+        "create_firewall_rule",
+        {
+            "name": "Evil",
+            "ruleset": "LAN_IN",
+            "action": "drop",
+            "src_firewallgroup_ids": ["../../rest/wlanconf"],
+        },
+    )
+    assert "error" in result
+    assert "src_firewallgroup_ids" in result["error"]
 
 
 async def test_update_firewall_rule_missing(stub_server: FastMCP) -> None:
@@ -286,6 +354,13 @@ async def test_create_firewall_rule_default_rule_index_is_zbf_range(
 
 @respx.mock
 async def test_real_update_firewall_rule(real_server: FastMCP) -> None:
+    # Verification re-reads the collection before and after the write.
+    respx.get(f"{BASE}/rest/firewallrule").mock(
+        side_effect=[
+            httpx.Response(200, json={"data": [{"_id": "r1", "action": "accept"}]}),
+            httpx.Response(200, json={"data": [{"_id": "r1", "action": "drop"}]}),
+        ]
+    )
     respx.put(f"{BASE}/rest/firewallrule/r1").mock(
         return_value=httpx.Response(200, json={"data": [{"_id": "r1", "action": "drop"}]})
     )
@@ -295,10 +370,15 @@ async def test_real_update_firewall_rule(real_server: FastMCP) -> None:
         {"rule_id": "r1", "updates": {"action": "drop"}},
     )
     assert result["action"] == "drop"
+    assert result["verification"]["verified"] is True
+    assert "action" in result["verification"]["persisted_fields"]
 
 
 @respx.mock
 async def test_real_update_firewall_rule_500(real_server: FastMCP) -> None:
+    respx.get(f"{BASE}/rest/firewallrule").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "r1", "action": "accept"}]})
+    )
     respx.put(f"{BASE}/rest/firewallrule/r1").mock(return_value=httpx.Response(500))
     result = await _call(
         real_server,

@@ -98,7 +98,7 @@ from mcp_unifi.modules._audit import audited
 from mcp_unifi.modules._params import (
     BoundedJson,
 )
-from mcp_unifi.modules.network._common import format_json, make_err
+from mcp_unifi.modules.network._common import format_json, make_err, upsert_dhcp_lease
 from mcp_unifi.modules.network._pending import format_preview_envelope, get_pending_actions
 from mcp_unifi.redaction import REDACTED, REDACTED_OUTPUT, is_sensitive
 
@@ -356,7 +356,10 @@ async def _create_by_type(backend: Backend, rtype: str, payload: dict[str, Any])
     if rtype == "port_profiles":
         return await backend.create_port_profile(payload)
     if rtype == "dhcp_leases":
-        return await backend.create_dhcp_lease(payload)
+        # A lease removed earlier in this plan (or ever) leaves its user
+        # record behind with use_fixedip off, so a plain create would answer
+        # api.err.MacUsed on a real controller. Upsert instead.
+        return await upsert_dhcp_lease(backend, payload)
     if rtype == "port_forwards":
         return await backend.create_port_forward(payload)
     raise ValueError(f"unknown resource type for create: {rtype}")

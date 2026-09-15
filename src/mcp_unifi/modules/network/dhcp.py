@@ -111,6 +111,12 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return format_json(await backend.create_dhcp_lease(payload))
         except UniFiError as exc:
             logger.exception("create_static_dhcp_lease failed", extra={"mac": mac})
+            if "api.err.MacUsed" in str(exc):
+                return err(
+                    f"{mac} already has a user record on the controller (api.err.MacUsed), "
+                    "so a new one cannot be created. Use update_static_dhcp_lease with the "
+                    "same mac to set or change its reservation instead."
+                )
             return err(str(exc))
 
     @mcp.tool(annotations=WRITE_IDEMPOTENT)

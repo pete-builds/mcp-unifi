@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from mcp_unifi.annotations import CREATE, DESTRUCTIVE, READ_ONLY, WRITE_IDEMPOTENT
+from mcp_unifi.clients.ids import path_segment
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
@@ -14,6 +15,7 @@ from mcp_unifi.modules._params import (
 )
 from mcp_unifi.modules.network._common import format_json, make_err
 from mcp_unifi.modules.network._pending import format_preview_envelope, get_pending_actions
+from mcp_unifi.modules.network._verify import verified_update
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -142,6 +144,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         dst_networkconf_type: str = "NETv4",
         src_port: str = "",
         dst_port: str = "",
+        src_firewallgroup_ids: list[str] | None = None,
+        dst_firewallgroup_ids: list[str] | None = None,
+        logging: bool = False,
         enabled: bool = True,
         controller: str = "default",
         dry_run: bool = False,
@@ -195,6 +200,14 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 The headline use case: ``dst_port="32400"`` with
                 ``protocol="tcp"`` to allow IoT→Plex without opening the
                 rest of MGMT.
+            src_firewallgroup_ids: Firewall group ``_id`` values (from
+                ``list_firewall_groups``) to match as the source, so a
+                group-based rule is one call instead of create followed by
+                ``update_firewall_rule``. Empty = none.
+            dst_firewallgroup_ids: Firewall group ``_id`` values to match as
+                the destination. Empty = none.
+            logging: ``True`` logs every match to the controller's firewall
+                log. Only sent to the controller when true.
             enabled: ``False`` creates the rule disabled for staging.
             controller: Name of the UniFi controller to target. Defaults to
                 ``"default"``.
@@ -223,6 +236,17 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             payload["src_port"] = src_port
         if dst_port:
             payload["dst_port"] = dst_port
+        for label, group_ids in (
+            ("src_firewallgroup_ids", src_firewallgroup_ids),
+            ("dst_firewallgroup_ids", dst_firewallgroup_ids),
+        ):
+            if group_ids:
+                try:
+                    payload[label] = [path_segment(group_id, label) for group_id in group_ids]
+                except UniFiError as exc:
+                    return err(str(exc))
+        if logging:
+            payload["logging"] = True
         if dry_run:
             return format_json(
                 {
@@ -257,6 +281,14 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         - Mutates controller state. Use dry_run=True to preview the change
           without applying.
 
+        Verified write: after applying, the rule is re-read from the
+        controller and the response carries the rule's fields plus a
+        ``verification`` block (``verified``, ``mutation_applied``,
+        ``persisted_fields``, ``unchanged_fields``, ``dropped_fields``,
+        ``coerced_fields``, ``unverifiable_fields``), the same block the other
+        ``update_*`` tools return. The rule's own fields stay at the top level
+        so existing callers keep working.
+
         Example: update_firewall_rule(rule_id="65f...", updates={"enabled": False})
 
         Args:
@@ -281,10 +313,16 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             )
         try:
             backend = resolve_backend(registry, controller)
-            updated = await backend.update_firewall_rule(rule_id, updates)
-            if updated is None:
+            outcome = await verified_update(
+                lister=backend.list_firewall_rules,
+                updater=lambda: backend.update_firewall_rule(rule_id, updates),
+                record_id=rule_id,
+                updates=updates,
+            )
+            if outcome is None:
                 return err(f"firewall rule {rule_id} not found")
-            return format_json(updated)
+            record, verification = outcome
+            return format_json({**(record or {}), "rule_id": rule_id, "verification": verification})
         except UniFiError as exc:
             logger.exception("update_firewall_rule failed", extra={"rule_id": rule_id})
             return err(str(exc))

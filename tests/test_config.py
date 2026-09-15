@@ -378,3 +378,33 @@ def test_yaml_priority_over_legacy_env(tmp_path: Path) -> None:
     assert len(s.controllers) == 1
     assert s.controllers[0].name == "yaml-wins"
     assert s.controllers[0].host == "1.2.3.4"
+
+
+def test_default_controller_env_var_binds(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _clear_controller_env(monkeypatch)
+    monkeypatch.delenv("MCP_UNIFI_DEFAULT_CONTROLLER", raising=False)
+    yaml_path = tmp_path / "controllers.yml"
+    yaml_path.write_text(
+        "- name: office\n  host: 10.0.0.1\n  api_key: k1\n"
+        "- name: lab\n  host: 10.0.0.2\n  api_key: k2\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("STUB_MODE", "false")
+    monkeypatch.setenv("MCP_UNIFI_CONTROLLERS_FILE", str(yaml_path))
+    monkeypatch.setenv("MCP_UNIFI_DEFAULT_CONTROLLER", "lab")
+
+    s = Settings()
+    assert s.default_controller == "lab"
+    assert s.safe_repr()["default_controller"] == "lab"
+
+
+def test_default_controller_must_name_a_configured_controller() -> None:
+    with pytest.raises(ValueError, match="MCP_UNIFI_DEFAULT_CONTROLLER names 'ghost'"):
+        Settings(
+            stub_mode=True,
+            default_controller="ghost",
+            controllers=[
+                ControllerConfig(name="office", host="stub", api_key="k"),
+                ControllerConfig(name="lab", host="stub", api_key="k"),
+            ],
+        )

@@ -553,6 +553,9 @@ async def test_create_guest_network_rollback_on_vlan_failure(
 
 @respx.mock
 async def test_real_provision_homelab_service_full_flow(real_server: FastMCP) -> None:
+    # The lease step is an upsert: it looks the MAC up first and creates
+    # only when the controller has no user record for it (issue #124).
+    respx.get(f"{BASE}/list/user").mock(return_value=httpx.Response(200, json={"data": []}))
     respx.post(f"{BASE}/rest/user").mock(
         return_value=httpx.Response(200, json={"data": [{"_id": "lease1"}]})
     )
@@ -583,6 +586,9 @@ async def test_real_provision_homelab_service_full_flow(real_server: FastMCP) ->
 async def test_real_provision_homelab_service_rolls_back_on_pf_failure(
     real_server: FastMCP,
 ) -> None:
+    # The lease step is an upsert: it looks the MAC up first and creates
+    # only when the controller has no user record for it (issue #124).
+    respx.get(f"{BASE}/list/user").mock(return_value=httpx.Response(200, json={"data": []}))
     respx.post(f"{BASE}/rest/user").mock(
         return_value=httpx.Response(200, json={"data": [{"_id": "lease-x"}]})
     )
@@ -593,7 +599,11 @@ async def test_real_provision_homelab_service_rolls_back_on_pf_failure(
     fw_delete = respx.delete(f"{BASE}/rest/firewallrule/fw-x").mock(
         return_value=httpx.Response(200)
     )
-    lease_delete = respx.delete(f"{BASE}/rest/user/lease-x").mock(return_value=httpx.Response(200))
+    # Rollback clears the reservation with a PUT; a DELETE 404s on a real
+    # controller (issue #124, item 3). The user record itself persists.
+    lease_delete = respx.put(f"{BASE}/rest/user/lease-x").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "lease-x", "use_fixedip": False}]})
+    )
     result = await _call(
         real_server,
         "provision_homelab_service",
@@ -898,3 +908,21 @@ async def test_provision_homelab_service_unknown_controller_returns_envelope(
         },
     )
     assert "Unknown controller" in result["error"]
+
+
+async def test_provision_homelab_service_for_a_known_client_upserts_the_lease(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """A client that has ever connected already has a user record, and the
+    controller refuses a second one (issue #124, item 7). Provisioning it
+    must reuse that record rather than fail at step one."""
+    known = stub_state.clients[0]
+    net_id = stub_state.list_networks()[0]["_id"]
+    result = await _call(
+        stub_server,
+        "provision_homelab_service",
+        {"name": "NAS", "mac": known["mac"], "ip": "192.168.1.90", "network_id": net_id},
+    )
+    assert "error" not in result, result
+    assert result["lease"]["_id"] == known["_id"]
+    assert any(lease["_id"] == known["_id"] for lease in stub_state.list_dhcp_leases())

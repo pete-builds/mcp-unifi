@@ -12,7 +12,11 @@ Side effects:
 - Modifies the named network in place. Only fields supplied in
   ``updates`` change; everything else is preserved.
 - Changes to ``vlan`` or ``ip_subnet`` may disconnect clients on the
-  affected network.
+  affected network. A change to ``ip_subnet`` that would leave the
+  existing ``dhcpd_start`` / ``dhcpd_stop`` outside the new subnet is
+  refused unless both are passed in the same update, because the
+  controller keeps the old pool and the network then hands out no
+  addresses.
 - Mutates controller state. Use dry_run=True to preview the change
   without applying.
 

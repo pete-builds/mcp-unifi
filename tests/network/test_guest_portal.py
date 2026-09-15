@@ -136,3 +136,35 @@ async def test_get_guest_portal_redacts_projected_secrets(
     assert "do-not-leak" not in str(result)
     # Operational fields are untouched.
     assert "portal_enabled" in result
+
+
+async def test_set_guest_portal_sets_restricted_subnets(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """The three ``restricted_subnet_*`` slots could be read but not written
+    (issue #124, item 10)."""
+    preview = await _call(
+        stub_server,
+        "set_guest_portal",
+        {"restricted_subnet_1": "10.0.0.0/8", "restricted_subnet_3": "192.168.86.0/24"},
+    )
+    assert preview["preview"] is True
+    result = await _call(stub_server, "confirm_destructive_action", {"token": preview["token"]})
+    assert result["applied"] == {
+        "restricted_subnet_1": "10.0.0.0/8",
+        "restricted_subnet_3": "192.168.86.0/24",
+    }
+    stored = stub_state.get_setting(SETTING_KEY)
+    assert stored["restricted_subnet_1"] == "10.0.0.0/8"
+    assert stored["restricted_subnet_3"] == "192.168.86.0/24"
+    assert result["current"]["restricted_subnet_3"] == "192.168.86.0/24"
+
+
+async def test_set_guest_portal_dry_run_previews_a_restricted_subnet(stub_server: FastMCP) -> None:
+    result = await _call(
+        stub_server,
+        "set_guest_portal",
+        {"restricted_subnet_2": "172.16.0.0/12", "dry_run": True},
+    )
+    assert result["dry_run"] is True
+    assert result["would_patch"]["patch"] == {"restricted_subnet_2": "172.16.0.0/12"}

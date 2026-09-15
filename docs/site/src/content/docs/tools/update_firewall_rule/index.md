@@ -16,6 +16,14 @@ Side effects:
 - Mutates controller state. Use dry_run=True to preview the change
   without applying.
 
+Verified write: after applying, the rule is re-read from the
+controller and the response carries the rule's fields plus a
+``verification`` block (``verified``, ``mutation_applied``,
+``persisted_fields``, ``unchanged_fields``, ``dropped_fields``,
+``coerced_fields``, ``unverifiable_fields``), the same block the other
+``update_*`` tools return. The rule's own fields stay at the top level
+so existing callers keep working.
+
 ## Example
 
 ```python

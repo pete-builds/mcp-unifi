@@ -40,6 +40,7 @@ from mcp_unifi.modules.network._common import (
     resolve_default_ap_group,
     subnet_to_dhcp,
     subnet_to_network_form,
+    upsert_dhcp_lease,
     wan_zone_ids,
     zone_names_by_id,
 )
@@ -446,9 +447,12 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 }
             )
 
-        # Step 1: lease
+        # Step 1: lease. A known client (anything that ever connected) has a
+        # user record already and the controller refuses a second one with
+        # api.err.MacUsed, so this is an upsert: PUT to the existing record
+        # or POST a new one. Rollback clears the flag either way.
         try:
-            created["lease"] = await backend.create_dhcp_lease(lease_payload)
+            created["lease"] = await upsert_dhcp_lease(backend, lease_payload)
         except UniFiError as exc:
             return await _fail("lease", exc)
 

@@ -72,7 +72,7 @@ list_devices(controller="office")
 create_vlan(name="iot", vlan_id=50, subnet="10.50.0.0/24", controller="home", dry_run=True)
 ```
 
-If `controller` is omitted, the call routes to the controller named `default`. If no `default` controller exists in your config, every call must name a controller explicitly.
+If `controller` is omitted, the call routes to the controller named `default`. When no controller has that name, the alias resolves to `MCP_UNIFI_DEFAULT_CONTROLLER` if it is set, or to the only controller when exactly one is configured. With several controllers and no default named, every call must pass `controller=` explicitly: the server never silently picks the first entry, because a forgotten argument on a multi-site deployment must not write to whichever site happens to be listed first.
 
 ## Docker example
 

@@ -159,6 +159,25 @@ async def resolve_default_ap_group(backend: Backend) -> list[str]:
     return []
 
 
+async def upsert_dhcp_lease(backend: Backend, payload: dict[str, Any]) -> UniFiRecord:
+    """Make the reservation in ``payload`` exist, whether or not the MAC is known.
+
+    ``POST /rest/user`` answers ``api.err.MacUsed`` for any MAC the controller
+    already holds a user record for, which is every client that has ever
+    connected and every lease whose reservation was cleared (clearing keeps
+    the record, issue #124 item 3). Callers whose intent is "this reservation
+    should exist" (``restore_config``, ``provision_homelab_service``) resolve
+    the existing record and PUT to it, and create only when the MAC is new.
+    ``create_static_dhcp_lease`` deliberately does not use this: it reports
+    ``MacUsed`` with a pointer to ``update_static_dhcp_lease`` instead, so an
+    agent learns which record it is touching.
+    """
+    existing = await backend.find_user_by_mac(str(payload.get("mac", "")))
+    if existing is not None and isinstance(existing.get("_id"), str):
+        return await backend.update_dhcp_lease(existing["_id"], {**payload, "use_fixedip": True})
+    return await backend.create_dhcp_lease(payload)
+
+
 # ---------------------------------------------------------------------------
 # Zone-Based Firewall helpers (shared by audit_open_ports and drift)
 # ---------------------------------------------------------------------------
