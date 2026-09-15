@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **OpenVPN key material is redacted.** A `remote-user-vpn` network record
+  on UniFi OS 5.1 carries the server's whole OpenVPN PKI in `x_ca_key`,
+  `x_server_key`, `x_dh_key`, `x_shared_client_key` and `x_auth_key`. None
+  of the five contains a listed substring (`x_auth_key` is not the device
+  `x_authkey`), so `list_networks`, `get_network_details` and
+  `backup_config` returned the CA private key in cleartext. The five exact
+  spellings are now in `SENSITIVE_KEY_PATTERNS`; the certificate fields
+  beside them (`x_ca_crt`, `x_server_crt`) are public and stay visible.
+  Reported from a live two-controller deployment in #124.
+
 ## [0.22.0] - 2026-09-13
 
 ### Added
