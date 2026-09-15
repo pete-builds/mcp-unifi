@@ -98,6 +98,7 @@ _PROJECTED = (
     "redirect_url",
     "restricted_subnet_1",
     "restricted_subnet_2",
+    "restricted_subnet_3",
     "payment_enabled",
     "voucher_enabled",
     "facebook_wifi_enabled",
@@ -186,6 +187,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         portal_enabled: bool | None = None,
         auth: str | None = None,
         expire_minutes: int | None = None,
+        restricted_subnet_1: str | None = None,
+        restricted_subnet_2: str | None = None,
+        restricted_subnet_3: str | None = None,
         controller: str = "default",
         dry_run: bool = False,
     ) -> str:
@@ -223,12 +227,24 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             expire_minutes: How long an authorised guest session lasts before
                 the portal reappears, in minutes (e.g. ``480`` for 8 hours).
                 ``None`` (default) leaves it alone.
+            restricted_subnet_1: CIDR that authorised guests may NOT reach
+                (the controller's "restricted subnets"). ``""`` clears the
+                slot; ``None`` (default) leaves it alone.
+            restricted_subnet_2: Second restricted CIDR, same semantics.
+            restricted_subnet_3: Third restricted CIDR, same semantics.
             controller: Name of the UniFi controller to target. Defaults to
                 ``"default"``.
             dry_run: Preview the change without applying it. Returns the
                 predicted patch and no confirmation token.
         """
         patch: dict[str, Any] = {}
+        for key, value in (
+            ("restricted_subnet_1", restricted_subnet_1),
+            ("restricted_subnet_2", restricted_subnet_2),
+            ("restricted_subnet_3", restricted_subnet_3),
+        ):
+            if value is not None:
+                patch[key] = value
         if portal_enabled is not None:
             patch["portal_enabled"] = portal_enabled
         if auth is not None:
@@ -244,7 +260,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         if not patch:
             return err(
                 "No changes requested. Pass at least one of portal_enabled, "
-                "auth, or expire_minutes."
+                "auth, expire_minutes, or restricted_subnet_1..3."
             )
 
         try:

@@ -565,3 +565,14 @@ async def test_real_get_site_health_handles_500(real_server: FastMCP) -> None:
     respx.get(f"{BASE}/stat/health").mock(return_value=httpx.Response(500))
     result = await _call(real_server, "get_site_health")
     assert "error" in result
+
+
+async def test_event_and_alarm_descriptions_name_the_firmware_gap(stub_server: FastMCP) -> None:
+    """The tool manifest is generated from these descriptions, and it used to
+    advertise ``list_alarms`` / ``list_events`` with no hint that Network
+    10.5 and 10.6 expose neither (issue #124, item 14)."""
+    tools = {t.name: t for t in await stub_server.list_tools()}
+    for name in ("list_events", "list_alarms"):
+        description = tools[name].description or ""
+        assert "10.6" in description, name
+        assert "unsupported" in description, name

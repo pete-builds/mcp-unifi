@@ -54,6 +54,21 @@ settings.load_profile("ci")
 
 
 def _snapshot(state: StubState) -> dict[str, Any]:
+    """Resource state as tools see it: every mutable list, leases filtered.
+
+    ``dhcp_leases`` is the persistent user-record list. A rollback clears a
+    reservation by turning ``use_fixedip`` off (a DELETE 404s on a real
+    controller, issue #124 item 3), so the record it created stays behind
+    with the flag off, on the stub and on real hardware alike. What must be
+    restored is what ``list_dhcp_leases`` shows, so that list is snapshotted
+    through the filter.
+    """
+    snap = _snapshot_every_list(state)
+    snap["dhcp_leases"] = copy.deepcopy(state.list_dhcp_leases())
+    return snap
+
+
+def _snapshot_every_list(state: StubState) -> dict[str, Any]:
     """Deep copy of every mutable list on the StubState.
 
     Excludes the failure-injection queue (test-only scaffolding, not part of

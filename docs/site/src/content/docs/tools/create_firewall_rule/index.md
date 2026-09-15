@@ -39,6 +39,9 @@ create_firewall_rule(name="Allow IoT to Plex", ruleset="LAN_IN", action="accept"
 | `dst_networkconf_type` | `string` | no | "NETv4" | Discriminator that pairs with ``dst_networkconf_id``. Same semantics as ``src_networkconf_type``. Defaults to ``"NETv4"``. |
 | `src_port` | `string` | no | "" | Source port match. Single port (``"443"``), CSV (``"80,443"``), or range (``"3000-3100"``). Empty = any. Requires ``protocol`` set to ``"tcp"`` or ``"udp"``. |
 | `dst_port` | `string` | no | "" | Destination port match. Same syntax as ``src_port``. The headline use case: ``dst_port="32400"`` with ``protocol="tcp"`` to allow IoT→Plex without opening the rest of MGMT. |
+| `src_firewallgroup_ids` | `array | null` | no | null | Firewall group ``_id`` values (from ``list_firewall_groups``) to match as the source, so a group-based rule is one call instead of create followed by ``update_firewall_rule``. Empty = none. |
+| `dst_firewallgroup_ids` | `array | null` | no | null | Firewall group ``_id`` values to match as the destination. Empty = none. |
+| `logging` | `boolean` | no | false | ``True`` logs every match to the controller's firewall log. Only sent to the controller when true. |
 | `enabled` | `boolean` | no | true | ``False`` creates the rule disabled for staging. |
 | `controller` | `string` | no | "default" | Name of the UniFi controller to target. Defaults to ``"default"``. |
 | `dry_run` | `boolean` | no | false | Preview the change without applying it. Returns the predicted change set. |

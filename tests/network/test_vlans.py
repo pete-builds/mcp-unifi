@@ -345,3 +345,87 @@ async def test_update_vlan_dry_run_redacts_patch(
     assert result["would_update"]["patch"]["x_ipsec_pre_shared_key"] == "[REDACTED]"
     assert result["would_update"]["patch"]["name"] == "Renamed"
     assert "psk2" not in json.dumps(result)
+
+
+# ---------------------------------------------------------------------------
+# Subnet change must carry its DHCP pool (issue #124, item 6)
+# ---------------------------------------------------------------------------
+
+
+def _seed_vpn_like_network(stub_state: StubState) -> str:
+    record = stub_state.create_network(
+        {
+            "name": "Remote Users",
+            "purpose": "remote-user-vpn",
+            "ip_subnet": "10.0.50.1/24",
+            "dhcpd_start": "10.0.50.100",
+            "dhcpd_stop": "10.0.50.200",
+            "enabled": True,
+        }
+    )
+    return str(record["_id"])
+
+
+async def test_update_vlan_refuses_a_subnet_change_that_strands_the_dhcp_pool(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """Before: the write went through, the pool stayed in the old range, and
+    the response said ``verified: true`` because ``ip_subnet`` did persist."""
+    network_id = _seed_vpn_like_network(stub_state)
+    result = await _call(
+        stub_server,
+        "update_vlan",
+        {"network_id": network_id, "updates": {"ip_subnet": "10.0.60.1/24"}},
+    )
+    assert "error" in result
+    assert "dhcpd_start=10.0.50.100" in result["error"]
+    assert "dhcpd_stop=10.0.50.200" in result["error"]
+    unchanged = next(n for n in stub_state.list_networks() if n["_id"] == network_id)
+    assert unchanged["ip_subnet"] == "10.0.50.1/24"
+
+
+async def test_update_vlan_dry_run_reports_the_stranded_pool_too(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    network_id = _seed_vpn_like_network(stub_state)
+    result = await _call(
+        stub_server,
+        "update_vlan",
+        {"network_id": network_id, "updates": {"ip_subnet": "10.0.60.1/24"}, "dry_run": True},
+    )
+    assert "error" in result
+    assert "dhcpd_start" in result["error"]
+
+
+async def test_update_vlan_accepts_a_subnet_change_with_its_pool(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    network_id = _seed_vpn_like_network(stub_state)
+    result = await _call(
+        stub_server,
+        "update_vlan",
+        {
+            "network_id": network_id,
+            "updates": {
+                "ip_subnet": "10.0.60.1/24",
+                "dhcpd_start": "10.0.60.100",
+                "dhcpd_stop": "10.0.60.200",
+            },
+        },
+    )
+    assert "error" not in result
+    assert result["verification"]["verified"] is True
+    assert result["network"]["dhcpd_stop"] == "10.0.60.200"
+
+
+async def test_update_vlan_without_a_subnet_change_is_unaffected(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    network_id = _seed_vpn_like_network(stub_state)
+    result = await _call(
+        stub_server,
+        "update_vlan",
+        {"network_id": network_id, "updates": {"enabled": False}},
+    )
+    assert "error" not in result
+    assert result["network"]["enabled"] is False

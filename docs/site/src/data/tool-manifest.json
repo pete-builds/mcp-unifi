@@ -249,6 +249,21 @@
             "description": "Destination CIDR. Empty = any.",
             "type": "string"
           },
+          "dst_firewallgroup_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Firewall group ``_id`` values to match as\nthe destination. Empty = none."
+          },
           "dst_networkconf_id": {
             "default": "",
             "description": "Destination network ``_id``. Use this OR\n``dst_address``.",
@@ -267,6 +282,11 @@
           "enabled": {
             "default": true,
             "description": "``False`` creates the rule disabled for staging.",
+            "type": "boolean"
+          },
+          "logging": {
+            "default": false,
+            "description": "``True`` logs every match to the controller's firewall\nlog. Only sent to the controller when true.",
             "type": "boolean"
           },
           "name": {
@@ -292,6 +312,21 @@
             "default": "",
             "description": "Source CIDR (e.g. ``\"10.50.0.0/24\"``). Empty = any.",
             "type": "string"
+          },
+          "src_firewallgroup_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Firewall group ``_id`` values (from\n``list_firewall_groups``) to match as the source, so a\ngroup-based rule is one call instead of create followed by\n``update_firewall_rule``. Empty = none."
           },
           "src_networkconf_id": {
             "default": "",
@@ -1907,7 +1942,7 @@
       "name": "list_access_users"
     },
     {
-      "description": "List controller alarms, active or archived.\n\nSide effects: None (read-only).\n\nReturns the most recent ``limit`` alarm records.\n\nExample: list_alarms(limit=20, archived=False)",
+      "description": "List controller alarms, active or archived.\n\nSide effects: None (read-only).\n\nReturns the most recent ``limit`` alarm records.\n\nNot available on every firmware: UniFi Network 10.5 and 10.6 answer\n400 ``api.err.InvalidObject`` on every alarm route, so on those\ncontrollers this tool returns an error saying the feature is\nunsupported rather than an empty list. It works on 10.4 and older.\n\nExample: list_alarms(limit=20, archived=False)",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -2007,10 +2042,15 @@
       "name": "list_credentials"
     },
     {
-      "description": "List every UniFi device adopted by this controller.\n\nSide effects: None (read-only).\n\nReturns one record per device (gateway, AP, switch) with ``_id``,\n``mac``, ``type``, ``model``, ``name``, ``ip``, ``version``,\n``state``, ``uptime``, ``num_sta``, and ``satisfaction``.\n\nExample: list_devices(controller=\"default\")",
+      "description": "List every UniFi device adopted by this controller.\n\nSide effects: None (read-only).\n\nReturns one record per device (gateway, AP, switch). By default that\nis the full controller record (``_id``, ``mac``, ``type``, ``model``,\n``name``, ``ip``, ``version``, ``state``, ``uptime``, ``num_sta``,\n``satisfaction`` and every other field the controller carries, which\nruns to roughly 35 KB per device). With ``compact=True`` each record\nis reduced to ``_id``, ``name``, ``mac``, ``model``, ``type``, ``ip``\nand ``state``, which is what an inventory or \"which AP is that\"\nquestion needs and fits a context window at any fleet size.\n\nExample: list_devices(controller=\"default\", compact=True)",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
+          "compact": {
+            "default": false,
+            "description": "``True`` returns the seven identity fields per device\ninstead of the full record. Default ``False`` keeps the\nexisting full output.",
+            "type": "boolean"
+          },
           "controller": {
             "default": "default",
             "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
@@ -2097,7 +2137,7 @@
       "name": "list_dynamic_dns"
     },
     {
-      "description": "List recent controller events (connections, disconnections, etc.).\n\nSide effects: None (read-only).\n\nReturns the most recent ``limit`` event records, newest first.\n\nExample: list_events(limit=100)",
+      "description": "List recent controller events (connections, disconnections, etc.).\n\nSide effects: None (read-only).\n\nReturns the most recent ``limit`` event records, newest first.\n\nNot available on every firmware: UniFi Network 10.5 and 10.6 expose no\nevent log on the local API-key surface (``/stat/event`` answers 404),\nso on those controllers this tool returns an error saying the feature\nis unsupported rather than an empty list. It works on 10.4 and older.\n\nExample: list_events(limit=100)",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -2857,6 +2897,42 @@
             ],
             "default": null,
             "description": "``False`` disables the captive portal entirely.\n``True`` re-enables it. ``None`` (default) leaves it alone."
+          },
+          "restricted_subnet_1": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "CIDR that authorised guests may NOT reach\n(the controller's \"restricted subnets\"). ``\"\"`` clears the\nslot; ``None`` (default) leaves it alone."
+          },
+          "restricted_subnet_2": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Second restricted CIDR, same semantics."
+          },
+          "restricted_subnet_3": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Third restricted CIDR, same semantics."
           }
         },
         "type": "object"
@@ -3516,7 +3592,7 @@
       "name": "update_firewall_group"
     },
     {
-      "description": "Patch fields on an existing firewall rule.\n\nSide effects:\n- Modifies the named rule in place. Only fields supplied in\n  ``updates`` change; everything else is preserved.\n- Takes effect immediately on the next packet hitting the affected\n  datapath.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: update_firewall_rule(rule_id=\"65f...\", updates={\"enabled\": False})",
+      "description": "Patch fields on an existing firewall rule.\n\nSide effects:\n- Modifies the named rule in place. Only fields supplied in\n  ``updates`` change; everything else is preserved.\n- Takes effect immediately on the next packet hitting the affected\n  datapath.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nVerified write: after applying, the rule is re-read from the\ncontroller and the response carries the rule's fields plus a\n``verification`` block (``verified``, ``mutation_applied``,\n``persisted_fields``, ``unchanged_fields``, ``dropped_fields``,\n``coerced_fields``, ``unverifiable_fields``), the same block the other\n``update_*`` tools return. The rule's own fields stay at the top level\nso existing callers keep working.\n\nExample: update_firewall_rule(rule_id=\"65f...\", updates={\"enabled\": False})",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -3782,7 +3858,7 @@
       "name": "update_traffic_rule"
     },
     {
-      "description": "Patch fields on an existing VLAN/network record.\n\nSide effects:\n- Modifies the named network in place. Only fields supplied in\n  ``updates`` change; everything else is preserved.\n- Changes to ``vlan`` or ``ip_subnet`` may disconnect clients on the\n  affected network.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nVerified write: after applying, the network is re-read from the\ncontroller and the response carries a ``verification`` block listing\n``persisted_fields``, ``unchanged_fields`` (already correct before\nthe write), ``dropped_fields`` (silently discarded by the\ncontroller), ``coerced_fields`` (stored with a different value or\ntype), and ``unverifiable_fields``. ``purpose`` is a known coercion\nsite: controllers running the zone-based firewall model may accept\n``purpose=\"guest\"`` and store ``\"corporate\"``. A response with\n``verified: false`` and ``mutation_applied: true`` means the\ncontroller accepted the write but did not store it exactly \u2014 that is\n**not a rollback**, and the record may be in a mixed state.\n\nExample: update_vlan(network_id=\"65f...\", updates={\"enabled\": False})",
+      "description": "Patch fields on an existing VLAN/network record.\n\nSide effects:\n- Modifies the named network in place. Only fields supplied in\n  ``updates`` change; everything else is preserved.\n- Changes to ``vlan`` or ``ip_subnet`` may disconnect clients on the\n  affected network. A change to ``ip_subnet`` that would leave the\n  existing ``dhcpd_start`` / ``dhcpd_stop`` outside the new subnet is\n  refused unless both are passed in the same update, because the\n  controller keeps the old pool and the network then hands out no\n  addresses.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nVerified write: after applying, the network is re-read from the\ncontroller and the response carries a ``verification`` block listing\n``persisted_fields``, ``unchanged_fields`` (already correct before\nthe write), ``dropped_fields`` (silently discarded by the\ncontroller), ``coerced_fields`` (stored with a different value or\ntype), and ``unverifiable_fields``. ``purpose`` is a known coercion\nsite: controllers running the zone-based firewall model may accept\n``purpose=\"guest\"`` and store ``\"corporate\"``. A response with\n``verified: false`` and ``mutation_applied: true`` means the\ncontroller accepted the write but did not store it exactly \u2014 that is\n**not a rollback**, and the record may be in a mixed state.\n\nExample: update_vlan(network_id=\"65f...\", updates={\"enabled\": False})",
       "input_schema": {
         "additionalProperties": false,
         "properties": {

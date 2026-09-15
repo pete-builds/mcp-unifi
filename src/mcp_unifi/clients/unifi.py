@@ -637,7 +637,20 @@ class UniFiClient:
         )
 
     async def delete_dhcp_lease(self, lease_id: str) -> bool:
-        await self._delete(f"/rest/user/{path_segment(lease_id, 'lease_id')}")
+        """Remove the fixed-IP reservation from a user record.
+
+        ``DELETE /rest/user/{id}`` answers 404 ``api.err.NotFound``: the
+        collection accepts GET, POST and PUT only, so the previous
+        implementation could never succeed against a controller. Reported and
+        verified live on two UDM Pro Max (UniFi OS 5.1.31, Network 10.6.101)
+        in issue #124; it has NOT been verified on a controller this project's
+        maintainer owns. The working form clears the reservation with
+        ``PUT ... {"use_fixedip": false}`` and keeps the client record and its
+        history. ``POST /cmd/stamgr {"cmd": "forget-sta"}`` also works but
+        erases the client entirely, which is more than "delete the lease"
+        asks for.
+        """
+        await self._put(f"/rest/user/{path_segment(lease_id, 'lease_id')}", {"use_fixedip": False})
         return True
 
     # ------------------------------------------------------------------

@@ -413,7 +413,9 @@ async def test_provision_homelab_service_real_apply_rollback(
     """Failure on a port-forward step rolls back the lease and firewall rule."""
     from mcp_unifi.clients.unifi import UniFiError
 
-    leases_before = len(stub_state.dhcp_leases)
+    # Reservations, not raw user records: rollback clears a lease by turning
+    # use_fixedip off and the record survives (issue #124, item 3).
+    leases_before = len(stub_state.list_dhcp_leases())
     fw_before = len(stub_state.firewall_rules)
     pf_before = len(stub_state.port_forwards)
 
@@ -439,7 +441,7 @@ async def test_provision_homelab_service_real_apply_rollback(
 
     assert "error" in payload
     assert "port_forward" in payload["error"]
-    assert len(stub_state.dhcp_leases) == leases_before
+    assert len(stub_state.list_dhcp_leases()) == leases_before
     assert len(stub_state.firewall_rules) == fw_before
     assert len(stub_state.port_forwards) == pf_before
 

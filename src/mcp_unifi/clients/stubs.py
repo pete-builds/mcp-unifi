@@ -20,6 +20,7 @@ import uuid
 from collections import defaultdict, deque
 from typing import Any
 
+from mcp_unifi.clients.errors import UniFiError
 from mcp_unifi.models import UniFiRecord
 
 
@@ -1225,6 +1226,12 @@ class StubState:
 
     def create_dhcp_lease(self, payload: dict[str, Any]) -> UniFiRecord:
         self._check_failure("create_dhcp_lease")
+        # The controller refuses POST /rest/user for any MAC it already holds
+        # a user record for (issue #124, item 7). The stub used to accept it,
+        # which hid that restore_config and provision_homelab_service could
+        # not recreate a reservation for a known client on real hardware.
+        if self.find_user_by_mac(str(payload.get("mac", ""))) is not None:
+            raise UniFiError("UniFi API error 400: api.err.MacUsed")
         record: UniFiRecord = {"_id": _oid(), "use_fixedip": True, **payload}
         self.dhcp_leases.append(record)
         return record
@@ -1246,10 +1253,23 @@ class StubState:
         raise KeyError(f"user_id {user_id} not found")
 
     def delete_dhcp_lease(self, lease_id: str) -> bool:
+        """Clear the reservation the way the real controller does.
+
+        The real client sends ``PUT /rest/user/{id} {"use_fixedip": false}``
+        (a DELETE 404s, issue #124), so the user record survives with the flag
+        off. The stub used to drop the record outright, which let the suite
+        pass against a wire path that could not work.
+        """
         self._check_failure("delete_dhcp_lease")
-        before = len(self.dhcp_leases)
-        self.dhcp_leases = [u for u in self.dhcp_leases if u.get("_id") != lease_id]
-        return len(self.dhcp_leases) < before
+        for record in self.dhcp_leases:
+            if record.get("_id") == lease_id and record.get("use_fixedip"):
+                # ``self.dhcp_leases`` is the persistent user-record list
+                # (``/list/user``); ``list_dhcp_leases`` filters it by the
+                # flag, so flipping the flag hides the reservation and keeps
+                # the record, exactly as the controller does.
+                record["use_fixedip"] = False
+                return True
+        return False
 
     # ----- Port forwarding ------------------------------------------------
     def list_port_forwards(self) -> list[UniFiRecord]:

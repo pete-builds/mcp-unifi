@@ -410,7 +410,16 @@ number is a floor, not a full accounting.
 
 ---
 
-## 7. Cost per tool call
+## 7. Client sessions after a restart
+
+Streamable HTTP sessions are process state. A restart invalidates every
+session id a client holds, and the next call on a stale id answers `404
+Session not found`. Well-behaved clients reconnect on that status. Observed
+with `mcp-remote` 0.1.38 (issue #124): the first call after a restart times
+out, the second reconnects. A single failed call immediately after a deploy is
+therefore expected and is not a page.
+
+## 8. Cost per tool call
 
 There is no per-call billing to attribute. This is a self-hosted server talking
 to hardware you already own, so a dollar figure would be invented, and inventing

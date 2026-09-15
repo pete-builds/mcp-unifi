@@ -20,7 +20,7 @@ import pytest
 from fastmcp import FastMCP
 
 from mcp_unifi.clients.stubs import StubState
-from mcp_unifi.config import Settings
+from mcp_unifi.config import ControllerConfig, Settings
 from mcp_unifi.server import build_server
 from tests.network.conftest import _call
 
@@ -134,3 +134,62 @@ async def test_legacy_single_controller_env_still_works(
     server = build_server(settings)
     devices = await _call(server, "list_devices")
     assert any(d["model"] == "UCGFiber" for d in devices)
+
+
+# ---------------------------------------------------------------------------
+# Resolving the "default" alias (issue #124, item 5)
+# ---------------------------------------------------------------------------
+
+
+def _settings(*names: str, default_controller: str = "") -> Settings:
+    return Settings(
+        stub_mode=True,
+        log_format="text",
+        auth_required=False,
+        default_controller=default_controller,
+        controllers=[ControllerConfig(name=n, host="stub", api_key="k") for n in names],
+    )
+
+
+async def test_single_named_controller_answers_the_default_alias() -> None:
+    """A controllers file whose only entry is called ``lab`` used to fail
+    every call that omitted ``controller=``."""
+    server = build_server(_settings("lab"))
+    devices = await _call(server, "list_devices")
+    assert any(d["model"] == "UCGFiber" for d in devices)
+
+
+async def test_two_controllers_without_a_default_still_refuse_the_alias() -> None:
+    """No silent 'first in the list': a forgotten argument on a multi-site
+    deployment must not pick a site. The error names the fix."""
+    server = build_server(_settings("office", "lab"))
+    result = await _call(server, "list_devices")
+    assert "error" in result
+    assert "MCP_UNIFI_DEFAULT_CONTROLLER" in result["error"]
+    assert "office" in result["error"] and "lab" in result["error"]
+
+
+async def test_configured_default_controller_routes_the_alias() -> None:
+    server = build_server(_settings("office", "lab", default_controller="lab"))
+    created = await _call(
+        server,
+        "create_vlan",
+        {"name": "only-on-lab", "vlan_id": 77, "subnet": "10.0.77.0/24", "controller": "lab"},
+    )
+    assert "error" not in created
+    via_alias = await _call(server, "list_networks")
+    via_office = await _call(server, "list_networks", {"controller": "office"})
+    assert any(n["name"] == "only-on-lab" for n in via_alias)
+    assert not any(n["name"] == "only-on-lab" for n in via_office)
+
+
+async def test_a_controller_literally_named_default_wins_over_the_setting() -> None:
+    server = build_server(_settings("default", "lab", default_controller="lab"))
+    created = await _call(
+        server,
+        "create_vlan",
+        {"name": "on-default", "vlan_id": 78, "subnet": "10.0.78.0/24", "controller": "default"},
+    )
+    assert "error" not in created
+    via_alias = await _call(server, "list_networks")
+    assert any(n["name"] == "on-default" for n in via_alias)

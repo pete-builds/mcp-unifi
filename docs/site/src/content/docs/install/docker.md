@@ -117,6 +117,10 @@ docker run --rm -p 3714:3714 \
 
 Access uses a separate API key generated on the Access controller's developer settings. See the [Protect Tools reference](/mcp-unifi/reference/protect/) and the [Access setup guide](/mcp-unifi/guides/access-setup/) for the full surface.
 
+## Sessions do not survive a restart
+
+Streamable HTTP sessions live in the server process. After a container restart every client still holding its old session id gets `404 Session not found` on the next call. Clients that reconnect on that status recover on their own; with `mcp-remote` 0.1.38 the first call after a restart times out and the second one reconnects. If a call fails right after a deploy, retry once before reading it as an outage.
+
 ## Verify the image signature
 
 Published images are signed with [cosign](https://docs.sigstore.dev/cosign/overview/) keyless OIDC. See the [Security Model guide](/mcp-unifi/guides/security/) for the verification command and SBOM download.

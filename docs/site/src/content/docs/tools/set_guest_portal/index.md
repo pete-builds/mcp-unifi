@@ -42,6 +42,9 @@ set_guest_portal(portal_enabled=False)
 | `portal_enabled` | `boolean | null` | no | null | ``False`` disables the captive portal entirely. ``True`` re-enables it. ``None`` (default) leaves it alone. |
 | `auth` | `string | null` | no | null | Portal authentication mode: ``"none"`` (click-through, no credential), ``"hotspot"``, or ``"custom"``. ``None`` (default) leaves it alone. Independent of ``portal_enabled``. |
 | `expire_minutes` | `integer | null` | no | null | How long an authorised guest session lasts before the portal reappears, in minutes (e.g. ``480`` for 8 hours). ``None`` (default) leaves it alone. |
+| `restricted_subnet_1` | `string | null` | no | null | CIDR that authorised guests may NOT reach (the controller's "restricted subnets"). ``""`` clears the slot; ``None`` (default) leaves it alone. |
+| `restricted_subnet_2` | `string | null` | no | null | Second restricted CIDR, same semantics. |
+| `restricted_subnet_3` | `string | null` | no | null | Third restricted CIDR, same semantics. |
 | `controller` | `string` | no | "default" | Name of the UniFi controller to target. Defaults to ``"default"``. |
 | `dry_run` | `boolean` | no | false | Preview the change without applying it. Returns the predicted patch and no confirmation token. |
 

@@ -127,6 +127,24 @@ class Settings(BaseSettings):
     )
 
     # ------------------------------------------------------------------
+    # Default controller (issue #124, item 5)
+    # ------------------------------------------------------------------
+    default_controller: str = Field(
+        default="",
+        validation_alias=AliasChoices("MCP_UNIFI_DEFAULT_CONTROLLER", "default_controller"),
+        description=(
+            "Name of the controller a tool call targets when it omits "
+            "``controller`` and no controller is literally named 'default'. "
+            "With exactly one controller configured it is used automatically; "
+            "with several, this must name one or every call has to pass "
+            "``controller=`` explicitly. Deliberately no silent 'first in the "
+            "list' fallback: a forgotten argument on a multi-site deployment "
+            "must not write to whichever site happens to be listed first. "
+            "Env var: MCP_UNIFI_DEFAULT_CONTROLLER."
+        ),
+    )
+
+    # ------------------------------------------------------------------
     # Response shaping
     # ------------------------------------------------------------------
     force_full_text_responses: bool = Field(
@@ -457,6 +475,12 @@ class Settings(BaseSettings):
         if duplicates:
             raise ValueError(f"Duplicate controller names: {duplicates}")
 
+        if self.default_controller and self.default_controller not in names:
+            raise ValueError(
+                f"MCP_UNIFI_DEFAULT_CONTROLLER names '{self.default_controller}', which is "
+                f"not a configured controller. Configured: {sorted(names)}"
+            )
+
         # Real mode requires at least one controller. (Stub mode always
         # synthesizes a default above, so this only fires if a caller passed
         # an explicit empty list with stub_mode=False.)
@@ -475,6 +499,7 @@ class Settings(BaseSettings):
             "stub_mode": self.stub_mode,
             "readonly": self.readonly,
             "controllers_file": str(self.controllers_file) if self.controllers_file else None,
+            "default_controller": self.default_controller or None,
             "controllers": [
                 {
                     "name": c.name,
