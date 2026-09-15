@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Protect event types are validated before they reach the query string.**
+  `ProtectClient.list_events` built `types[]=<value>` from its argument
+  unchecked while every other query-building client method runs
+  `path_segment`. Not reachable today, since `list_motion_events` and
+  `list_smart_detections` pass fixed literals, but the next tool that
+  forwards a caller-supplied event type would have reintroduced the
+  parameter-smuggling class that #125 closed. The values now go through the
+  same validator as `AccessClient.list_events`' filters.
+
 ## [0.22.0] - 2026-09-13
 
 ### Added

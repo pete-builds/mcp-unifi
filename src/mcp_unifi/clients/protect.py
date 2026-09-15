@@ -170,9 +170,15 @@ class ProtectClient:
         params (e.g. ``types[]=motion&types[]=smartDetectZone``) plus
         ``start`` / ``end`` (epoch milliseconds) and ``limit``.
         """
+        # Each type is a query value, and ``&`` or ``#`` inside one would
+        # add or truncate parameters. Both callers pass literals today, but
+        # ``ids.py`` promises that every query-building client method
+        # validates, and the next tool that forwards a caller-supplied type
+        # would otherwise reintroduce the class silently. ``AccessClient``
+        # does the same for its ``result`` and ``door_id`` filters.
         parts: list[str] = []
         for t in types:
-            parts.append(f"types[]={t}")
+            parts.append(f"types[]={path_segment(t, 'event_type')}")
         parts.append(f"start={start_ms}")
         parts.append(f"end={end_ms}")
         parts.append(f"limit={limit}")

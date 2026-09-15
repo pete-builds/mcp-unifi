@@ -556,6 +556,30 @@ async def test_real_get_snapshot_rejects_path_traversal(real_protect_server: Fas
 
 
 @respx.mock
+async def test_real_list_events_rejects_unsafe_event_type() -> None:
+    """An event type is interpolated into the query string, so ``&`` inside
+    one would smuggle extra parameters. Both tools pass literals today; this
+    pins the client-level check so a future tool that forwards a caller value
+    cannot reopen it. The route is mocked so a regression shows up as
+    ``called`` rather than as a respx "no mock" error.
+    """
+    route = respx.get(host="gateway.test", path__regex=r"^/proxy/protect/api/events.*").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    client = ProtectClient(host="gateway.test", api_key="test-api-key-real", port=443)
+    try:
+        with pytest.raises(UniFiError, match="event_type"):
+            await client.list_events(["motion&limit=100000"], 0, 1, 10)
+        assert not route.called
+        # The legitimate spellings still go out unchanged.
+        await client.list_events(["motion", "smartDetectZone"], 0, 1, 10)
+        assert route.called
+        assert "types[]=motion&types[]=smartDetectZone" in str(route.calls.last.request.url)
+    finally:
+        await client.aclose()
+
+
+@respx.mock
 async def test_real_get_camera_redacts_sensitive_keys(real_protect_server: FastMCP) -> None:
     """Protect records pass through the same redaction as Network records."""
     respx.get(f"{PROTECT_BASE}/cameras/c1").mock(
