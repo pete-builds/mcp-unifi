@@ -53,6 +53,9 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from mcp_unifi.modules.network._common import dump_json
+from mcp_unifi.redaction import redact
+
 #: How long a preview token stays valid before it's swept. Tracks the spec.
 TOKEN_TTL_SECONDS: float = 300.0  # 5 minutes
 
@@ -215,11 +218,30 @@ def build_preview_envelope(pending: PendingAction) -> dict[str, Any]:
     }
 
 
+def format_preview_envelope(pending: PendingAction) -> str:
+    """Serialise the preview envelope, redacted, with the ``token`` intact.
+
+    ``format_json`` redacts every key containing ``token``, which is right
+    for every tool response except this one: the preview token is the value
+    the caller must pass back to ``confirm_destructive_action``, and a
+    ``[REDACTED]`` token would make every delete unconfirmable. So the
+    envelope is redacted first (the ``resource`` snapshot can carry a WLAN
+    or network record) and the top-level token is restored afterwards. This
+    is the only place a tool response is serialised without going through
+    ``format_json``.
+    """
+    envelope = build_preview_envelope(pending)
+    out = redact(envelope)
+    out["token"] = envelope["token"]
+    return dump_json(out)
+
+
 __all__ = [
     "TOKEN_TTL_SECONDS",
     "PendingAction",
     "PendingActionsRegistry",
     "build_preview_envelope",
+    "format_preview_envelope",
     "get_pending_actions",
     "preview_id",
     "reset_pending_actions",

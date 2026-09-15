@@ -80,6 +80,9 @@ NON_SECRET_KEYS = [
     # OpenVPN certificates are public material; only the keys are secret
     "x_ca_crt",
     "x_server_crt",
+    # a flag that contains ``secret``: the backup envelope's boolean. Pinned
+    # by NON_SECRET_KEYS, since no narrower pattern than ``secret`` exists.
+    "secrets_stripped",
     # identity and shape
     "x_ipsec_esp_dh_group",
     "wpa_mode",

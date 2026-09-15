@@ -61,14 +61,19 @@ Behavior depends on transport:
   `pass_code`/`passcode`.
 - The structured logger scrubs those keys from any log record, and the audit
   log applies the same scrub to tool kwargs and results before writing.
-- Read paths that return controller records redact those values to
-  `[REDACTED]` before the response leaves the server: WLANs, networks
-  (WireGuard, site-to-site IPsec, OpenVPN, and RADIUS key material), devices
-  (`x_authkey`, `x_vwirekey`) and the device-stats views built from them,
-  dynamic DNS, the guest portal, Teleport, Access credentials, and Access
-  visitor passes. `backup_config` substitutes the `<redacted-on-backup>`
-  sentinel instead, which `restore_config` recognises and answers by forcing
-  the restored resource to `enabled=false`.
+- Every tool response is redacted to `[REDACTED]` by the serialiser it
+  returns through (`modules.network._common.format_json`), at any depth, so
+  coverage does not depend on a tool remembering to call `redact`. The
+  records known to carry secrets are WLANs, networks (WireGuard, site-to-site
+  IPsec, OpenVPN, and RADIUS key material), devices (`x_authkey`,
+  `x_vwirekey`) and the device-stats views built from them, dynamic DNS, the
+  guest portal, Teleport, Access credentials, and Access visitor passes; a
+  stub-mode sweep in `tests/test_output_redaction.py` calls every tool it
+  can and fails on the first leak. The one deliberate exception is the
+  preview-then-confirm `token`, which the caller must hand back.
+  `backup_config` marks stripped secrets with `<redacted-on-backup>` before
+  the serialiser rewrites them, and `restore_config` recognises both
+  spellings by forcing the restored resource to `enabled=false`.
 - Write paths redact too, on both the `dry_run` preview that echoes the
   caller's payload and the record the controller echoes back: `create_wlan`,
   `update_wlan`, `create_iot_network`, and `create_guest_network`. The
