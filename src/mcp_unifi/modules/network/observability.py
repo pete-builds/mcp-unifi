@@ -79,6 +79,11 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
 
         Returns the most recent ``limit`` event records, newest first.
 
+        Not available on every firmware: UniFi Network 10.5 and 10.6 expose no
+        event log on the local API-key surface (``/stat/event`` answers 404),
+        so on those controllers this tool returns an error saying the feature
+        is unsupported rather than an empty list. It works on 10.4 and older.
+
         Example: list_events(limit=100)
 
         Args:
@@ -107,6 +112,11 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         Side effects: None (read-only).
 
         Returns the most recent ``limit`` alarm records.
+
+        Not available on every firmware: UniFi Network 10.5 and 10.6 answer
+        400 ``api.err.InvalidObject`` on every alarm route, so on those
+        controllers this tool returns an error saying the feature is
+        unsupported rather than an empty list. It works on 10.4 and older.
 
         Example: list_alarms(limit=20, archived=False)
 

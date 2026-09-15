@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+The rest of the field report @simonsorcerer23 filed in #124 after a day
+against two UDM Pro Max on UniFi OS 5.1.31 / Network 10.6.101. Items 1, 2
+and 4 shipped in 0.23.0; item 13 (Protect on UniFi OS 5.x via the
+Integration API) is their own PR, #149.
+
+### Fixed
+
+- **`delete_static_dhcp_lease` sends a request the controller accepts.**
+  `DELETE /rest/user/{id}` answers 404 `api.err.NotFound`; the collection
+  takes GET, POST and PUT only, so the tool could never succeed against a
+  real controller while the stub backend deleted happily and the suite
+  stayed green. It now sends `PUT /rest/user/{id} {"use_fixedip": false}`,
+  which clears the reservation and keeps the client record and its history,
+  and the stub does the same. The wire behaviour comes from the reporter's
+  live verification, not from a controller this project's maintainer owns.
+  Because the record survives, a later create for the same MAC answers
+  `api.err.MacUsed`, so `restore_config` and `provision_homelab_service`
+  now upsert a lease (PUT to the existing user record, POST only for a new
+  MAC) instead of creating blindly; the stub refuses a duplicate MAC the
+  way the controller does, which is what exposed that both paths could not
+  recreate a reservation for a known client on real hardware. (#124 item 3)
+- **`update_vlan` refuses a subnet change that strands the DHCP pool.**
+  Changing `ip_subnet` alone left `dhcpd_start` / `dhcpd_stop` in the old
+  range on the controller, and the verified write reported `verified: true`
+  because the one field asked for had persisted. The tool now reads the
+  record first and, when the existing pool would fall outside the new
+  subnet, returns an error naming both fields unless they are passed in the
+  same update. `dry_run` reports it too. (#124 item 6)
+- **`create_static_dhcp_lease` explains `api.err.MacUsed`.** A client the
+  controller already knows cannot be created again; the error now says so
+  and points at `update_static_dhcp_lease`. (#124 item 7)
+- **`list_alarms` and `list_events` say where they do not work.** Their
+  descriptions, and therefore the generated tool manifest, now state that
+  UniFi Network 10.5 and 10.6 expose neither surface on the local API-key
+  interface and that the tools return an unsupported-feature error there
+  rather than an empty list. (#124 item 14)
+
 ### Added
 
 - Protect API mode per controller: `protect_api: integration` uses the
@@ -15,7 +52,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The default remains `internal` for backward compatibility. Integration v1
   provides camera reads and snapshots, not events/recordings; unsupported
   tools now report that limitation explicitly. Based on live verification
-  from the two-controller field report in #124 (item 13).
+  from the two-controller field report in #124 (item 13). Contributed by @simonsorcerer23 (#149).
+- **`MCP_UNIFI_DEFAULT_CONTROLLER`, and a sensible default for one
+  controller.** A controllers file whose only entry was named anything but
+  `default` failed every call that omitted `controller=`. The `default`
+  alias now resolves, in order, to a controller literally named `default`,
+  to the one named by `MCP_UNIFI_DEFAULT_CONTROLLER`, or to the only
+  controller when exactly one is configured. With several controllers and
+  no default named it stays an error that says which variable to set:
+  there is deliberately no "first in the list" fallback, because a
+  forgotten argument on a multi-site deployment must not write to whichever
+  site happens to be listed first. The variable must name a configured
+  controller or startup fails. (#124 item 5)
+- **`create_firewall_rule` takes `src_firewallgroup_ids`,
+  `dst_firewallgroup_ids` and `logging`.** Group-based rules used to need a
+  create followed by `update_firewall_rule`. Group ids go through the same
+  single-segment validator as every other id. (#124 item 8)
+- **`update_firewall_rule` returns a `verification` block**, the same
+  read-back classification the other `update_*` tools carry. The rule's own
+  fields stay at the top level so existing callers keep working. (#124
+  item 9)
+- **`set_guest_portal` takes `restricted_subnet_1`, `_2` and `_3`.** They
+  could be read through `get_guest_portal` but not written; `""` clears a
+  slot. `restricted_subnet_3` now appears in the read projection too.
+  (#124 item 10)
+- **`list_devices(compact=True)`** returns `_id`, `name`, `mac`, `model`,
+  `type`, `ip` and `state` per device instead of the full record, which
+  runs to roughly 35 KB each and swamped a twelve-device site's context.
+  The default is unchanged. (#124 item 12)
+
+### Changed
+
+- The Docker install page and `docs/operations.md` explain that a server
+  restart invalidates every client session (`404 Session not found` on the
+  next call) and that `mcp-remote` 0.1.38 needs one retry to reconnect.
+  (#124 item 11)
 
 ## [0.23.0] - 2026-09-15
 
@@ -29,7 +100,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `backup_config` returned the CA private key in cleartext. The five exact
   spellings are now in `SENSITIVE_KEY_PATTERNS`; the certificate fields
   beside them (`x_ca_crt`, `x_server_crt`) are public and stay visible.
-  Reported from a live two-controller deployment in #124.
+  Reported by @simonsorcerer23 from a live two-controller deployment in #124.
 - **Protect event types are validated before they reach the query string.**
   `ProtectClient.list_events` built `types[]=<value>` from its argument
   unchecked while every other query-building client method runs
@@ -56,7 +127,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `restore_config` recognises both spellings, at any depth, when deciding
   to force a restored WLAN or network to `enabled=false`. A sweep test
   calls every tool the seeded stub can satisfy and fails on the first leak.
-  Suggested in #124.
+  Suggested by @simonsorcerer23 in #124.
 
 ### Fixed
 
@@ -67,7 +138,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   configured as documented fell through to the legacy single-controller
   variables, or failed with "real mode + no config". The field now accepts
   both spellings, like `MCP_UNIFI_READONLY` and `MCP_UNIFI_AUTH_TOKENS`
-  already did. Reported from a live two-controller deployment in #124.
+  already did. Reported by @simonsorcerer23 from a live two-controller
+  deployment in #124.
 
 ## [0.22.0] - 2026-09-13
 

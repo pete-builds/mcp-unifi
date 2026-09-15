@@ -46,6 +46,9 @@ _RADIO_BY_BAND: dict[str, str] = {"2g": "ng", "5g": "na", "6g": "6e"}
 _BAND_BY_RADIO: dict[str, str] = {v: k for k, v in _RADIO_BY_BAND.items()}
 
 _TX_POWER_MODES: frozenset[str] = frozenset({"auto", "high", "medium", "low", "custom"})
+
+#: What ``list_devices(compact=True)`` keeps per device (issue #124, item 12).
+_COMPACT_DEVICE_FIELDS: tuple[str, ...] = ("_id", "name", "mac", "model", "type", "ip", "state")
 _CHANNEL_WIDTHS: frozenset[int] = frozenset({20, 40, 80, 160, 240, 320})
 
 
@@ -142,27 +145,42 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
 
     @mcp.tool(annotations=READ_ONLY)
     @audited("list_devices", mutates=False)
-    async def list_devices(controller: str = "default") -> str:
+    async def list_devices(controller: str = "default", compact: bool = False) -> str:
         """List every UniFi device adopted by this controller.
 
         Side effects: None (read-only).
 
-        Returns one record per device (gateway, AP, switch) with ``_id``,
-        ``mac``, ``type``, ``model``, ``name``, ``ip``, ``version``,
-        ``state``, ``uptime``, ``num_sta``, and ``satisfaction``.
+        Returns one record per device (gateway, AP, switch). By default that
+        is the full controller record (``_id``, ``mac``, ``type``, ``model``,
+        ``name``, ``ip``, ``version``, ``state``, ``uptime``, ``num_sta``,
+        ``satisfaction`` and every other field the controller carries, which
+        runs to roughly 35 KB per device). With ``compact=True`` each record
+        is reduced to ``_id``, ``name``, ``mac``, ``model``, ``type``, ``ip``
+        and ``state``, which is what an inventory or "which AP is that"
+        question needs and fits a context window at any fleet size.
 
-        Example: list_devices(controller="default")
+        Example: list_devices(controller="default", compact=True)
 
         Args:
             controller: Name of the UniFi controller to target. Defaults to
                 ``"default"``.
+            compact: ``True`` returns the seven identity fields per device
+                instead of the full record. Default ``False`` keeps the
+                existing full output.
         """
         try:
             backend = resolve_backend(registry, controller)
             # Device records carry x_authkey / x_vwirekey. See the module
             # docstring: the patterns had to be added before this wrapper
             # meant anything.
-            return format_json(redact(await backend.list_devices()))
+            devices = await backend.list_devices()
+            if compact:
+                devices = [
+                    {key: d.get(key) for key in _COMPACT_DEVICE_FIELDS}
+                    for d in devices
+                    if isinstance(d, dict)
+                ]
+            return format_json(redact(devices))
         except UniFiError as exc:
             logger.exception("list_devices failed")
             return err(str(exc))

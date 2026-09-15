@@ -27,6 +27,29 @@ async def test_list_devices_stub(stub_server: FastMCP) -> None:
     assert any(d["model"] == "UCGFiber" for d in devices)
 
 
+async def test_list_devices_compact_keeps_only_identity_fields(stub_server: FastMCP) -> None:
+    """Full device records run to ~35 KB each (issue #124, item 12). The
+    opt-in compact view carries what an inventory question needs and the
+    default stays the full record so existing callers are untouched."""
+    compact = await _call(stub_server, "list_devices", {"compact": True})
+    full = await _call(stub_server, "list_devices")
+    assert len(compact) == len(full)
+    allowed = {"_id", "name", "mac", "model", "type", "ip", "state"}
+    for record in compact:
+        assert set(record) <= allowed
+        assert record["mac"]
+    assert any("version" in d for d in full), "default output must stay the full record"
+
+
+async def test_list_devices_description_explains_compact(stub_server: FastMCP) -> None:
+    """The prose above ``Args:`` is all FastMCP sends; the return shape of
+    both modes has to survive there."""
+    tools = {t.name: t for t in await stub_server.list_tools()}
+    description = tools["list_devices"].description or ""
+    assert "compact=True" in description
+    assert "full controller record" in description
+
+
 async def test_restart_device_stub(stub_server: FastMCP) -> None:
     result = await _call(stub_server, "restart_device", {"mac": "f4:e2:c6:00:00:01"})
     assert result["restarted"] is True

@@ -73,13 +73,19 @@ hyp_settings.load_profile("backup_restore_ci")
 
 
 def _resource_snapshot(state: StubState) -> dict[str, list[dict[str, Any]]]:
-    """Deep copy every resource list ``backup_config`` cares about."""
+    """Deep copy every resource list ``backup_config`` cares about.
+
+    Leases are taken through ``list_dhcp_leases`` (the ``use_fixedip``
+    filter): clearing a reservation keeps the user record with the flag off,
+    on real hardware and in the stub alike (issue #124, item 3), so the raw
+    user list legitimately grows while the reservations are restored.
+    """
     return {
         "networks": copy.deepcopy(state.networks),
         "wlans": copy.deepcopy(state.wlans),
         "firewall_rules": copy.deepcopy(state.firewall_rules),
         "port_profiles": copy.deepcopy(state.port_profiles),
-        "dhcp_leases": copy.deepcopy(state.dhcp_leases),
+        "dhcp_leases": copy.deepcopy(state.list_dhcp_leases()),
         "port_forwards": copy.deepcopy(state.port_forwards),
     }
 
@@ -569,9 +575,15 @@ def _apply_mutation(state: StubState, kind: str, name: str, vlan_id: int) -> Non
             }
         )
     elif kind == "add_dhcp_lease":
+        mac = f"aa:bb:cc:99:{vlan_id // 256:02x}:{vlan_id % 256:02x}"
+        if state.find_user_by_mac(mac) is not None:
+            # The stub now refuses a duplicate MAC the way the controller
+            # does (api.err.MacUsed); a generated collision is a no-op
+            # mutation, not a failure of the property under test.
+            return
         state.create_dhcp_lease(
             {
-                "mac": f"aa:bb:cc:99:{vlan_id // 256:02x}:{vlan_id % 256:02x}",
+                "mac": mac,
                 "name": f"Extra-Lease-{name}",
                 "fixed_ip": f"192.168.1.{(vlan_id % 200) + 50}",
                 "network_id": state.networks[0]["_id"],
@@ -836,3 +848,24 @@ async def test_restore_config_token_is_single_use(
     await _call(fresh_server, "confirm_destructive_action", {"token": preview["token"]})
     second = await _call(fresh_server, "confirm_destructive_action", {"token": preview["token"]})
     assert "error" in second
+
+
+async def test_restore_recreates_a_lease_whose_user_record_survived(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """Clearing a reservation keeps the user record with the flag off, and a
+    plain create for that MAC would answer ``api.err.MacUsed`` on a real
+    controller. Restore upserts, so the reservation comes back on the same
+    record and the user list does not grow (issue #124, items 3 and 7)."""
+    envelope = await _call(stub_server, "backup_config", {})
+    victim = stub_state.list_dhcp_leases()[0]
+    stub_state.delete_dhcp_lease(victim["_id"])
+    assert all(lease["_id"] != victim["_id"] for lease in stub_state.list_dhcp_leases())
+    raw_before = len(stub_state.dhcp_leases)
+
+    await _restore_applying(stub_server, json.dumps(envelope))
+
+    restored = next(u for u in stub_state.dhcp_leases if u["mac"] == victim["mac"])
+    assert restored["use_fixedip"] is True
+    assert restored["_id"] == victim["_id"], "restore must reuse the surviving record"
+    assert len(stub_state.dhcp_leases) == raw_before

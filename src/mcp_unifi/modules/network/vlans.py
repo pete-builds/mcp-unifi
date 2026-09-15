@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -29,6 +30,46 @@ if TYPE_CHECKING:
     from mcp_unifi.dispatcher import ControllerRegistry
 
 logger = logging.getLogger("mcp_unifi.network.vlans")
+
+
+def _dhcp_range_left_outside(current: dict[str, Any], updates: dict[str, Any]) -> str | None:
+    """Explain why a subnet change must carry its DHCP pool, or ``None``.
+
+    ``update_vlan(updates={"ip_subnet": ...})`` on its own leaves
+    ``dhcpd_start`` / ``dhcpd_stop`` in the old range on the controller, and
+    the verified write reported ``verified: true`` because every field the
+    caller asked for did persist (issue #124, item 6). A pool outside its
+    subnet is a network no client can get an address on. The check runs only
+    when ``ip_subnet`` changes and only complains about a pool bound the
+    caller did not also supply; bounds the caller passes are the controller's
+    to validate.
+    """
+    if "ip_subnet" not in updates:
+        return None
+    try:
+        network = ipaddress.ip_network(str(updates["ip_subnet"]), strict=False)
+    except ValueError:
+        return None
+    stale: list[str] = []
+    for key in ("dhcpd_start", "dhcpd_stop"):
+        if key in updates:
+            continue
+        value = current.get(key)
+        if not value:
+            continue
+        try:
+            address = ipaddress.ip_address(str(value))
+        except ValueError:
+            continue
+        if address not in network:
+            stale.append(f"{key}={value}")
+    if not stale:
+        return None
+    return (
+        f"ip_subnet {updates['ip_subnet']} would leave {' and '.join(stale)} outside the new "
+        "subnet. Pass dhcpd_start and dhcpd_stop in the same update; the controller keeps "
+        "the old pool otherwise and no client on the network can get an address."
+    )
 
 
 def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> None:
@@ -265,7 +306,11 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         - Modifies the named network in place. Only fields supplied in
           ``updates`` change; everything else is preserved.
         - Changes to ``vlan`` or ``ip_subnet`` may disconnect clients on the
-          affected network.
+          affected network. A change to ``ip_subnet`` that would leave the
+          existing ``dhcpd_start`` / ``dhcpd_stop`` outside the new subnet is
+          refused unless both are passed in the same update, because the
+          controller keeps the old pool and the network then hands out no
+          addresses.
         - Mutates controller state. Use dry_run=True to preview the change
           without applying.
 
@@ -294,6 +339,21 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             dry_run: Preview the change without applying it. Returns the
                 predicted change set.
         """
+        if "ip_subnet" in updates:
+            try:
+                backend = resolve_backend(registry, controller)
+                networks = await backend.list_networks()
+            except UniFiError as exc:
+                logger.exception("update_vlan pre-read failed", extra={"network_id": network_id})
+                return err(str(exc))
+            current = next(
+                (n for n in networks if isinstance(n, dict) and n.get("_id") == network_id), None
+            )
+            if current is None:
+                return err(f"network {network_id} not found")
+            problem = _dhcp_range_left_outside(current, updates)
+            if problem:
+                return err(problem)
         if dry_run:
             return format_json(
                 {

@@ -5,6 +5,8 @@ Split from the pre-Step-5 ``tests/test_tools.py``. Bodies are unchanged.
 
 from __future__ import annotations
 
+import json
+
 import httpx
 import respx
 from fastmcp import FastMCP
@@ -49,6 +51,11 @@ async def test_delete_static_dhcp_lease_stub(stub_server: FastMCP, stub_state: S
     assert preview["resource"]["_id"] == lease_id
     result = await _call(stub_server, "confirm_destructive_action", {"token": preview["token"]})
     assert result["deleted"] is True
+    # The reservation is gone but the client record survives with the flag
+    # off, which is what the real controller does (issue #124, item 3).
+    assert all(lease["_id"] != lease_id for lease in stub_state.list_dhcp_leases())
+    survivor = next(u for u in stub_state.dhcp_leases if u.get("_id") == lease_id)
+    assert survivor["use_fixedip"] is False
 
 
 async def test_delete_static_dhcp_lease_missing(stub_server: FastMCP) -> None:
@@ -102,11 +109,44 @@ async def test_real_delete_static_dhcp_lease(real_server: FastMCP) -> None:
             json={"data": [{"_id": "u9", "use_fixedip": True, "fixed_ip": "1.2.3.4"}]},
         )
     )
-    respx.delete(f"{BASE}/rest/user/u9").mock(return_value=httpx.Response(200))
+    # ``DELETE /rest/user/{id}`` answers 404 on a real controller (the
+    # collection is GET/POST/PUT only, issue #124 item 3). The lease is
+    # cleared with a PUT that turns ``use_fixedip`` off. The DELETE route is
+    # mocked too so a regression shows as ``called`` rather than as a respx
+    # "not mocked" error that looks like a different bug.
+    delete_route = respx.delete(f"{BASE}/rest/user/u9").mock(return_value=httpx.Response(404))
+    put_route = respx.put(f"{BASE}/rest/user/u9").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "u9", "use_fixedip": False}]})
+    )
     preview = await _call(real_server, "delete_static_dhcp_lease", {"lease_id": "u9"})
     assert preview["preview"] is True
     result = await _call(real_server, "confirm_destructive_action", {"token": preview["token"]})
     assert result["deleted"] is True
+    assert not delete_route.called
+    assert put_route.called
+    assert json.loads(put_route.calls.last.request.content) == {"use_fixedip": False}
+
+
+@respx.mock
+async def test_real_create_static_dhcp_lease_mac_used_names_the_update_tool(
+    real_server: FastMCP,
+) -> None:
+    """A client the controller already knows answers ``api.err.MacUsed`` on
+    create. The error must point at ``update_static_dhcp_lease`` rather than
+    leave the caller to guess (issue #124, item 7)."""
+    respx.post(f"{BASE}/rest/user").mock(
+        return_value=httpx.Response(
+            400, json={"meta": {"rc": "error", "msg": "api.err.MacUsed"}, "data": []}
+        )
+    )
+    result = await _call(
+        real_server,
+        "create_static_dhcp_lease",
+        {"mac": "aa:bb:cc:dd:ee:ff", "ip": "192.168.1.42", "network_id": "n1"},
+    )
+    assert "error" in result
+    assert "update_static_dhcp_lease" in result["error"]
+    assert "MacUsed" in result["error"]
 
 
 # ---------------------------------------------------------------------------
@@ -270,3 +310,20 @@ async def test_real_update_static_dhcp_lease_unknown_mac(real_server: FastMCP) -
     )
     assert "error" in result
     assert "create_static_dhcp_lease" in result["error"]
+
+
+async def test_create_static_dhcp_lease_for_a_known_client_points_at_update(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """The stub now answers ``api.err.MacUsed`` for a MAC it already holds,
+    like the controller (issue #124, item 7), and the tool turns that into a
+    pointer at ``update_static_dhcp_lease``."""
+    known = stub_state.clients[0]["mac"]
+    net_id = stub_state.list_networks()[0]["_id"]
+    result = await _call(
+        stub_server,
+        "create_static_dhcp_lease",
+        {"mac": known, "ip": "192.168.1.42", "network_id": net_id},
+    )
+    assert "error" in result
+    assert "update_static_dhcp_lease" in result["error"]

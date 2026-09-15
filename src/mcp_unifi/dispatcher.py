@@ -48,6 +48,10 @@ logger = logging.getLogger("mcp_unifi.dispatcher")
 #: Default module set when ``MCP_UNIFI_MODULES_ENABLED`` is unset.
 DEFAULT_MODULES = ("network",)
 
+#: The ``controller`` value every tool defaults to. See
+#: :meth:`ControllerRegistry.resolve_name` for how it maps to a real name.
+DEFAULT_CONTROLLER_ALIAS = "default"
+
 #: All modules the dispatcher knows how to import. Keep this in sync with the
 #: ``src/mcp_unifi/modules/<name>/__init__.py`` packages on disk.
 KNOWN_MODULES = frozenset({"network", "protect", "access"})
@@ -113,10 +117,16 @@ class ControllerRegistry:
         *,
         protect_backends: dict[str, ProtectBackend] | None = None,
         access_backends: dict[str, AccessBackend] | None = None,
+        default_name: str | None = None,
     ) -> None:
         if not backends:
             raise ValueError("ControllerRegistry requires at least one backend.")
+        if default_name is not None and default_name not in backends:
+            raise ValueError(
+                f"default_name '{default_name}' is not a registered controller: {sorted(backends)}"
+            )
         self._backends = dict(backends)
+        self._default_name = default_name
         self._protect_backends: dict[str, ProtectBackend] = (
             dict(protect_backends) if protect_backends else {}
         )
@@ -124,14 +134,44 @@ class ControllerRegistry:
             dict(access_backends) if access_backends else {}
         )
 
-    def get(self, name: str) -> Backend:
-        try:
-            return self._backends[name]
-        except KeyError as exc:
-            available = ", ".join(sorted(self._backends)) or "(none)"
+    def resolve_name(self, name: str) -> str:
+        """Map the ``controller`` argument a tool received to a registered name.
+
+        Every tool defaults ``controller`` to ``"default"``. That used to be
+        a literal lookup, so a deployment whose controllers file named its
+        sites ``office`` and ``lab`` failed every call that omitted the
+        argument (issue #124, item 5). The alias now resolves in this order:
+
+        1. a controller literally named ``default`` (unchanged behaviour);
+        2. the name given by ``MCP_UNIFI_DEFAULT_CONTROLLER``;
+        3. the only controller, when exactly one is configured.
+
+        With several controllers and no configured default, the alias stays
+        an error. A silent "first in the list" fallback was rejected on
+        purpose: a forgotten ``controller=`` on a multi-site deployment must
+        not quietly write to whichever site was listed first.
+
+        Note for audit readers: the audit record's ``controller`` field is
+        the argument as the caller passed it (``"default"``), not the name
+        it resolved to.
+        """
+        if name in self._backends:
+            return name
+        available = ", ".join(sorted(self._backends)) or "(none)"
+        if name == DEFAULT_CONTROLLER_ALIAS:
+            if self._default_name is not None:
+                return self._default_name
+            if len(self._backends) == 1:
+                return next(iter(self._backends))
             raise UnknownControllerError(
-                f"Unknown controller '{name}'. Available: {available}."
-            ) from exc
+                f"No controller is named 'default' and MCP_UNIFI_DEFAULT_CONTROLLER is "
+                f"unset. Pass controller=<name> or set that variable. Available: "
+                f"{available}."
+            )
+        raise UnknownControllerError(f"Unknown controller '{name}'. Available: {available}.")
+
+    def get(self, name: str) -> Backend:
+        return self._backends[self.resolve_name(name)]
 
     def get_protect(self, name: str) -> ProtectBackend:
         """Return the Protect backend registered for ``name``.
@@ -150,7 +190,7 @@ class ControllerRegistry:
                 "Enable the 'protect' module via MCP_UNIFI_MODULES_ENABLED."
             )
         try:
-            return self._protect_backends[name]
+            return self._protect_backends[self.resolve_name(name)]
         except KeyError as exc:
             available = ", ".join(sorted(self._protect_backends)) or "(none)"
             raise UnknownControllerError(
@@ -175,7 +215,7 @@ class ControllerRegistry:
                 "access_* fields in the controllers YAML)."
             )
         try:
-            return self._access_backends[name]
+            return self._access_backends[self.resolve_name(name)]
         except KeyError as exc:
             available = ", ".join(sorted(self._access_backends)) or "(none)"
             raise UnknownControllerError(
@@ -293,6 +333,7 @@ def build_registry(
         backends,
         protect_backends=protect_backends,
         access_backends=access_backends,
+        default_name=settings.default_controller or None,
     )
 
 
