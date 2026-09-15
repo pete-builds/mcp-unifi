@@ -311,6 +311,57 @@ def test_backward_compat_unifi_api_key_env_works(monkeypatch: pytest.MonkeyPatch
     assert s.controllers[0].name == "default"
 
 
+def _clear_controller_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for var in (
+        "STUB_MODE",
+        "UNIFI_HOST",
+        "UNIFI_API_KEY",
+        "MCP_UNIFI_CONTROLLERS_FILE",
+        "CONTROLLERS_FILE",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+
+def test_documented_controllers_file_env_var_binds(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``MCP_UNIFI_CONTROLLERS_FILE`` is the spelling every doc page and
+    ``server.json`` give. Before the alias it bound nothing: pydantic-settings
+    matched the bare field name only and ``extra="ignore"`` swallowed the
+    documented one, so a multi-site deployment silently ran single-site.
+    Reported from a live two-controller deployment in #124.
+    """
+    _clear_controller_env(monkeypatch)
+    yaml_path = tmp_path / "controllers.yml"
+    yaml_path.write_text(
+        "- name: office\n  host: 10.0.0.1\n  api_key: k1\n"
+        "- name: lab\n  host: 10.0.0.2\n  api_key: k2\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("STUB_MODE", "false")
+    monkeypatch.setenv("MCP_UNIFI_CONTROLLERS_FILE", str(yaml_path))
+
+    s = Settings()
+    assert s.controllers_file == yaml_path
+    assert [c.name for c in s.controllers] == ["office", "lab"]
+
+
+def test_bare_controllers_file_env_var_still_binds(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The undocumented bare spelling worked before and keeps working, so a
+    deployment that discovered it by trial does not break on upgrade."""
+    _clear_controller_env(monkeypatch)
+    yaml_path = tmp_path / "controllers.yml"
+    yaml_path.write_text("- name: only\n  host: 10.0.0.9\n  api_key: k\n", encoding="utf-8")
+    monkeypatch.setenv("STUB_MODE", "false")
+    monkeypatch.setenv("CONTROLLERS_FILE", str(yaml_path))
+
+    s = Settings()
+    assert s.controllers_file == yaml_path
+    assert [c.name for c in s.controllers] == ["only"]
+
+
 def test_yaml_priority_over_legacy_env(tmp_path: Path) -> None:
     """If both YAML and legacy env are set, YAML wins (file is more explicit)."""
     yaml_path = tmp_path / "controllers.yml"
