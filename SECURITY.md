@@ -63,7 +63,7 @@ Behavior depends on transport:
   log applies the same scrub to tool kwargs and results before writing.
 - Read paths that return controller records redact those values to
   `[REDACTED]` before the response leaves the server: WLANs, networks
-  (WireGuard, site-to-site IPsec, and RADIUS key material), devices
+  (WireGuard, site-to-site IPsec, OpenVPN, and RADIUS key material), devices
   (`x_authkey`, `x_vwirekey`) and the device-stats views built from them,
   dynamic DNS, the guest portal, Teleport, Access credentials, and Access
   visitor passes. `backup_config` substitutes the `<redacted-on-backup>`
