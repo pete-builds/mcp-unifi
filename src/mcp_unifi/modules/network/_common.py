@@ -7,16 +7,47 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from mcp_unifi.config import Settings
+from mcp_unifi.redaction import redact
 
 if TYPE_CHECKING:
     from mcp_unifi.backends import Backend
     from mcp_unifi.models import UniFiRecord
 
 
-def format_json(data: object) -> str:
-    """Serialise a payload to the indented JSON the tools return."""
+def dump_json(data: object) -> str:
+    """Serialise a payload to indented JSON **without** redacting it.
+
+    Not for tool responses. The one legitimate caller is
+    :func:`~mcp_unifi.modules.network._pending.format_preview_envelope`, which
+    has already run :func:`redact` over everything except the preview
+    ``token`` the caller must hand back to ``confirm_destructive_action``.
+    Every tool response goes through :func:`format_json`.
+    """
     result: str = json.dumps(data, indent=2, default=str)
     return result
+
+
+def format_json(data: object) -> str:
+    """Serialise a tool response with sensitive keys redacted.
+
+    This is the single serialiser every module's tools return through, so
+    redaction is enforced here rather than left to each tool. Before this,
+    ``redact`` ran only where a module remembered to call it, and the
+    invariant "if it returns a controller record, it calls redact" was
+    violated by 24 of the 84 Network tools a stub-mode sweep could call
+    (``list_firewall_rules``, ``list_port_forwards``, ``list_routes``,
+    ``audit_open_ports`` and the rest): none of those records carries a
+    secret on today's firmware, which is exactly how the gap survived, and
+    issue #124 showed a newer firmware adding secret-shaped fields to a
+    record type that had none. Redacting at the serialiser means a record
+    that grows a secret field is covered the day it appears, and a new tool
+    is covered before its author thinks about it.
+
+    The per-tool ``redact`` calls that already exist are harmless (the walk
+    is idempotent) and stay as documentation of which records are known to
+    carry secrets.
+    """
+    return dump_json(redact(data))
 
 
 def make_err(settings: Settings) -> Callable[[str], str]:

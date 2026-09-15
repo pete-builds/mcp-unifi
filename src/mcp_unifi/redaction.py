@@ -20,23 +20,31 @@ up in transcripts, logs, and context windows that outlive the request. A WPA
 pre-shared key that reaches any of those is disclosed. There is no read path
 that legitimately needs a cleartext secret.
 
-Coverage, stated honestly
--------------------------
-This module supplies the rule. It cannot enforce it: nothing here intercepts a
-tool response, so a read path is covered only when its module calls
-:func:`redact` on the way out. The first pass wired exactly two modules
-(``wlans`` and ``dynamic_dns``) while this docstring already spoke as though
-reads were redacted by default, so ``list_networks``, ``get_network_details``,
-``backup_config``, and the Access credential reads kept handing back raw
-controller records — WireGuard ``x_private_key``, site-to-site
-``x_ipsec_pre_shared_key``, and RADIUS ``x_secret`` among them. Credit to
-Adrian Birzu (@adibirzu) for finding that gap.
+Coverage, and where it is enforced
+----------------------------------
+This module supplies the rule. For a long time it could not enforce it:
+nothing intercepted a tool response, so a read path was covered only when its
+module called :func:`redact` on the way out. The first pass wired exactly two
+modules (``wlans`` and ``dynamic_dns``) while this docstring already spoke as
+though reads were redacted by default, so ``list_networks``,
+``get_network_details``, ``backup_config``, and the Access credential reads
+kept handing back raw controller records — WireGuard ``x_private_key``,
+site-to-site ``x_ipsec_pre_shared_key``, and RADIUS ``x_secret`` among them.
+Credit to Adrian Birzu (@adibirzu) for finding that gap. Two more rounds of
+per-tool wiring followed, and a stub-mode sweep still found 24 Network tools
+returning records unredacted.
 
-Callers are now wired module by module and each one is pinned by a test in
-``tests/test_redaction.py``. The invariant to preserve when adding a read tool:
-**if it returns a controller record, it calls** :func:`redact`. Projections
-(fixed key allowlists) are not an excuse to skip it — an allowlist that grows
-later is a leak that ships quietly.
+The rule is now applied in one place: ``modules.network._common.format_json``,
+the serialiser every module's tools return through, calls :func:`redact` on
+every response. A new tool is covered before its author thinks about it, and a
+record type that grows a secret field on a newer firmware (issue #124's
+OpenVPN keys) is covered the day it appears. The single deliberate exception
+is the preview-then-confirm ``token``, restored after redaction by
+``_pending.format_preview_envelope`` because the caller must hand it back.
+``tests/test_output_redaction.py`` sweeps every callable tool and fails on the
+first leak. The per-tool :func:`redact` calls that already exist stay: the
+walk is idempotent and they document which records are known to carry
+secrets.
 
 Two failure modes, not one
 --------------------------
@@ -144,6 +152,18 @@ SENSITIVE_KEY_PATTERNS: frozenset[str] = frozenset(
     }
 )
 
+#: Keys that contain a pattern above but name a flag or a reference, never a
+#: value. Checked before the patterns, by exact lowercased match, so the list
+#: cannot widen by accident the way a pattern can. Each entry is a real
+#: collision the serialiser-level sweep hit, and each is pinned in
+#: ``tests/test_redaction.py``:
+#:
+#: * ``secrets_stripped`` → the ``backup_config`` envelope's boolean saying
+#:   whether any secret was stripped. ``secret`` matched it, so the flag
+#:   itself came out as ``[REDACTED]`` and ``restore_config`` could not read
+#:   it back as a bool.
+NON_SECRET_KEYS: frozenset[str] = frozenset({"secrets_stripped"})
+
 #: Sentinel written in place of a redacted value on **output** paths.
 #: Deliberately human-readable: a caller seeing this should understand the
 #: value was withheld on purpose, not that the field is empty or unset.
@@ -157,6 +177,8 @@ REDACTED = "***"
 def is_sensitive(key: str) -> bool:
     """True when ``key`` names a field whose value must never be emitted."""
     lowered = key.lower()
+    if lowered in NON_SECRET_KEYS:
+        return False
     return any(pattern in lowered for pattern in SENSITIVE_KEY_PATTERNS)
 
 
@@ -197,6 +219,7 @@ def scrub(value: Any) -> Any:
 
 
 __all__ = [
+    "NON_SECRET_KEYS",
     "REDACTED",
     "REDACTED_OUTPUT",
     "SENSITIVE_KEY_PATTERNS",

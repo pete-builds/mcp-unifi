@@ -14,7 +14,7 @@ from mcp_unifi.modules._params import (
     BoundedName,
 )
 from mcp_unifi.modules.network._common import format_json, make_err
-from mcp_unifi.modules.network._pending import build_preview_envelope, get_pending_actions
+from mcp_unifi.modules.network._pending import format_preview_envelope, get_pending_actions
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -268,4 +268,4 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             resource=resource,
             executor=_execute,
         )
-        return format_json(build_preview_envelope(pending))
+        return format_preview_envelope(pending)

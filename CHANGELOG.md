@@ -26,6 +26,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   forwards a caller-supplied event type would have reintroduced the
   parameter-smuggling class that #125 closed. The values now go through the
   same validator as `AccessClient.list_events`' filters.
+- **Every tool response is redacted at the serialiser.** Redaction used to
+  run only where a module called `redact` on the way out, and after three
+  rounds of per-tool wiring (0.20.0, #125, #130) a stub-mode sweep still
+  found 24 Network tools returning records with a secret-shaped key
+  unredacted (`list_firewall_rules`, `list_port_forwards`, `list_routes`,
+  `audit_open_ports`, `backup_config`'s nested values and the rest). None of
+  those records carries a secret on today's firmware, which is how the gap
+  survived review; #124 then reported a newer firmware adding OpenVPN key
+  fields to a record type that had none. `format_json`, the serialiser
+  every module's tools return through, now runs `redact` on every response
+  at every depth, so a new tool or a newly secret-bearing record is covered
+  without anyone remembering. The preview-then-confirm `token` is the one
+  key restored after redaction, since the caller must hand it back; the
+  `resource` snapshot beside it is redacted too. `backup_config` output
+  now shows `[REDACTED]` where it showed `<redacted-on-backup>`, and
+  `restore_config` recognises both spellings, at any depth, when deciding
+  to force a restored WLAN or network to `enabled=false`. A sweep test
+  calls every tool the seeded stub can satisfy and fails on the first leak.
+  Suggested in #124.
 
 ### Fixed
 

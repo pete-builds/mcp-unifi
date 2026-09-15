@@ -99,8 +99,8 @@ from mcp_unifi.modules._params import (
     BoundedJson,
 )
 from mcp_unifi.modules.network._common import format_json, make_err
-from mcp_unifi.modules.network._pending import build_preview_envelope, get_pending_actions
-from mcp_unifi.redaction import is_sensitive
+from mcp_unifi.modules.network._pending import format_preview_envelope, get_pending_actions
+from mcp_unifi.redaction import REDACTED, REDACTED_OUTPUT, is_sensitive
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -211,9 +211,11 @@ def _redact_secrets(records: list[dict[str, Any]]) -> tuple[list[dict[str, Any]]
     :func:`~mcp_unifi.redaction.is_sensitive` instead ties this path to the one
     canonical pattern list, so a pattern added there covers backups too.
 
-    Note the sentinel: this path writes ``<redacted-on-backup>`` rather than
-    ``redact``'s ``[REDACTED]``, because ``restore_config`` recognises it and
-    force-disables any resource still carrying it.
+    Note the sentinel: this path writes ``<redacted-on-backup>``, and the
+    response serialiser then rewrites every sensitive key to ``[REDACTED]``
+    on the way out (at any depth, where this pass is top-level only). Both
+    spellings are recognised by ``restore_config``, which force-disables any
+    resource still carrying either.
     """
     out: list[dict[str, Any]] = []
     seen_secret = False
@@ -360,6 +362,26 @@ async def _create_by_type(backend: Backend, rtype: str, payload: dict[str, Any])
     raise ValueError(f"unknown resource type for create: {rtype}")
 
 
+#: Every string a redacted secret can arrive as. ``<redacted-on-backup>`` is
+#: what :func:`_redact_secrets` writes; ``[REDACTED]`` is what the response
+#: serialiser writes over it (and over any nested secret the shallow backup
+#: pass did not reach), so it is the spelling a caller actually sees in a
+#: ``backup_config`` result and pastes back; ``***`` is the audit-log sentinel,
+#: for a backup recovered from ``audit.jsonl``.
+_REDACTION_SENTINELS: frozenset[str] = frozenset({REDACTED_PASSPHRASE, REDACTED_OUTPUT, REDACTED})
+
+
+def _carries_sentinel(value: Any) -> bool:
+    """True if any string at any depth of ``value`` is a redaction sentinel."""
+    if isinstance(value, str):
+        return value in _REDACTION_SENTINELS
+    if isinstance(value, dict):
+        return any(_carries_sentinel(v) for v in value.values())
+    if isinstance(value, list | tuple):
+        return any(_carries_sentinel(v) for v in value)
+    return False
+
+
 def _force_disable_if_redacted(payload: dict[str, Any], secrets_stripped: bool) -> dict[str, Any]:
     """If the payload still carries a redaction sentinel, force disable.
 
@@ -368,13 +390,16 @@ def _force_disable_if_redacted(payload: dict[str, Any], secrets_stripped: bool) 
     string. The operator must reset the secret and re-enable manually.
 
     Scoped to WLANs and networks by the caller — those are the two resource
-    types that hold secrets. Any value equal to the sentinel triggers it, not
+    types that hold secrets. Any value equal to a sentinel triggers it, not
     just ``x_passphrase``, so a newly-covered secret field disables its
     resource on restore instead of restoring a broken credential silently.
+    All three sentinel spellings count (see :data:`_REDACTION_SENTINELS`),
+    and nested values are walked: the response serialiser redacts at every
+    depth, so a peer list inside a network record can carry one too.
     """
     if not secrets_stripped:
         return payload
-    if not any(v == REDACTED_PASSPHRASE for v in payload.values()):
+    if not _carries_sentinel(payload):
         return payload
     out = dict(payload)
     out["enabled"] = False
@@ -777,7 +802,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             },
             executor=_execute,
         )
-        return format_json(build_preview_envelope(pending))
+        return format_preview_envelope(pending)
 
 
 __all__ = ["BACKUP_SCHEMA", "REDACTED_PASSPHRASE", "register"]

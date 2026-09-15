@@ -34,6 +34,7 @@ from mcp_unifi.modules.network.backup import (
     BACKUP_SCHEMA,
     REDACTED_PASSPHRASE,
 )
+from mcp_unifi.redaction import REDACTED_OUTPUT
 from mcp_unifi.server import build_server
 from tests.network.conftest import _call
 
@@ -149,7 +150,10 @@ async def test_backup_strips_wlan_passphrases(stub_server: FastMCP) -> None:
     envelope = await _call(stub_server, "backup_config", {})
     assert envelope["secrets_stripped"] is True
     for wlan in envelope["resources"]["wlans"]:
-        assert wlan.get("x_passphrase") == REDACTED_PASSPHRASE
+        # The backup pass writes ``<redacted-on-backup>``; the response
+        # serialiser rewrites it to ``[REDACTED]`` on the way out, so this
+        # is what a caller sees and pastes back into ``restore_config``.
+        assert wlan.get("x_passphrase") == REDACTED_OUTPUT
 
 
 async def test_backup_drops_internal_ids(stub_server: FastMCP) -> None:
@@ -674,7 +678,7 @@ async def test_backup_strips_network_vpn_secrets(
 
     vpn = next(n for n in envelope["resources"]["networks"] if n["name"] == "Site-to-Site")
     for key in NETWORK_SECRETS:
-        assert vpn[key] == REDACTED_PASSPHRASE, f"{key} leaked into the backup envelope"
+        assert vpn[key] == REDACTED_OUTPUT, f"{key} leaked into the backup envelope"
     assert "do-not-leak" not in json.dumps(envelope)
     assert envelope["secrets_stripped"] is True
     # The RADIUS profile reference is not a secret; restore needs it.
@@ -715,6 +719,79 @@ async def test_restore_disables_networks_carrying_the_sentinel(
     assert restored["enabled"] is False, (
         "restored a VPN network on a sentinel pre-shared key with the tunnel enabled"
     )
+
+
+def _vpn_envelope(secret_value: object) -> dict[str, Any]:
+    return {
+        "schema": "1",
+        "controller": "default",
+        "ts": "2026-08-12T00:00:00+00:00",
+        "secrets_stripped": True,
+        "resources": {
+            "networks": [
+                {
+                    "_id": "6501aaaabbbbccccdddd9999",
+                    "name": "Restored-VPN",
+                    "purpose": "site-vpn",
+                    "vpn_type": "ipsec-vpn",
+                    "x_ipsec_pre_shared_key": secret_value,
+                    "enabled": True,
+                }
+            ],
+            "wlans": [],
+            "firewall_rules": [],
+            "port_profiles": [],
+            "dhcp_leases": [],
+            "port_forwards": [],
+        },
+    }
+
+
+async def test_restore_disables_networks_carrying_the_output_sentinel(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """``[REDACTED]`` is the spelling a caller actually sees in a
+    ``backup_config`` result, now that the response serialiser redacts every
+    tool response. Restore must treat it exactly like the backup sentinel, or
+    a VPN tunnel would come up with the literal string as its key.
+    """
+    await _restore_applying(stub_server, json.dumps(_vpn_envelope(REDACTED_OUTPUT)))
+
+    restored = next(n for n in stub_state.list_networks() if n["name"] == "Restored-VPN")
+    assert restored["enabled"] is False
+
+
+async def test_restore_disables_networks_with_a_nested_sentinel(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """The serialiser redacts at every depth while the backup pass is
+    top-level only, so a sentinel can sit inside a nested structure."""
+    envelope = _vpn_envelope("not-a-sentinel")
+    envelope["resources"]["networks"][0]["wireguard_peers"] = [
+        {"public_key": "pub", "x_preshared_key": REDACTED_OUTPUT}
+    ]
+
+    await _restore_applying(stub_server, json.dumps(envelope))
+
+    restored = next(n for n in stub_state.list_networks() if n["name"] == "Restored-VPN")
+    assert restored["enabled"] is False
+
+
+async def test_backup_output_restores_with_secret_bearing_wlans_disabled(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """End to end through the real tool output: take a backup, lose a WLAN,
+    paste the backup back. The recreated WLAN carries a redacted passphrase
+    and must come back disabled rather than broadcasting ``[REDACTED]``."""
+    envelope = await _call(stub_server, "backup_config", {})
+    victim = stub_state.list_wlans()[0]
+    stub_state.delete_wlan(victim["_id"])
+    assert all(w["name"] != victim["name"] for w in stub_state.list_wlans())
+
+    await _restore_applying(stub_server, json.dumps(envelope))
+
+    recreated = next(w for w in stub_state.list_wlans() if w["name"] == victim["name"])
+    assert recreated["enabled"] is False
 
 
 @pytest.mark.asyncio
