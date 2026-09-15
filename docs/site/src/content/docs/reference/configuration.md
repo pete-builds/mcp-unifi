@@ -23,6 +23,7 @@ These env vars cover the single-controller case. When set without `MCP_UNIFI_CON
 | `UNIFI_PORT` | int (1-65535) | `443` | no | HTTPS port for the gateway. |
 | `UNIFI_SITE` | string | `default` | no | Controller site identifier. Most setups have one site. |
 | `UNIFI_VERIFY_SSL` | bool | `false` | no | Set `true` once the gateway has a real TLS certificate. |
+| `UNIFI_PROTECT_API` | enum (`internal`, `integration`) | `internal` | no | Protect API surface for legacy single-controller config. `integration` uses `/proxy/protect/integration/v1` for UniFi OS 5.x API keys; events and recordings are unavailable there. |
 
 ## Multi-controller
 
@@ -30,6 +31,10 @@ These env vars cover the single-controller case. When set without `MCP_UNIFI_CON
 |---|---|---|---|---|
 | `MCP_UNIFI_CONTROLLERS_FILE` | path | (unset) | no | YAML file listing named controllers. When set, the legacy `UNIFI_*` vars are ignored. See the [Multi-Site Setup guide](/mcp-unifi/guides/multi-site/) for the schema. |
 | `MCP_UNIFI_DEFAULT_CONTROLLER` | string | (unset) | no | Which controller a tool call targets when it omits `controller` and none is literally named `default`. With exactly one controller configured it is chosen automatically; with several, set this or pass `controller=` on every call. There is deliberately no "first in the list" fallback. Must name a controller in the file or startup fails. |
+
+In the YAML, each controller may set `protect_api: integration` independently.
+The default `internal` preserves existing behavior. The mode is validated at
+startup; it does not probe/fallback between APIs automatically.
 
 ## Module dispatcher
 

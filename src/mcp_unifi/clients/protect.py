@@ -18,7 +18,7 @@ on ``ConnectError``).
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
@@ -41,6 +41,8 @@ class ProtectClient:
             with a self-signed cert, so this is False by default.
         timeout: Per-request timeout in seconds. Protect snapshots can take
             a moment, so the default is bumped to 30s.
+        api_mode: ``internal`` preserves the existing Protect API. ``integration``
+            selects the API-key-compatible surface on UniFi OS 5.x.
     """
 
     def __init__(
@@ -50,10 +52,15 @@ class ProtectClient:
         port: int = 443,
         verify_ssl: bool = False,
         timeout: float = 30.0,
+        api_mode: Literal["internal", "integration"] = "internal",
     ) -> None:
         self.host = host
         self.port = port
-        self._base = f"https://{host}:{port}/proxy/protect/api"
+        if api_mode not in ("internal", "integration"):
+            raise ValueError("api_mode must be 'internal' or 'integration'")
+        self.api_mode = api_mode
+        suffix = "/proxy/protect/api" if api_mode == "internal" else "/proxy/protect/integration/v1"
+        self._base = f"https://{host}:{port}{suffix}"
         self._client = httpx.AsyncClient(
             timeout=timeout,
             verify=verify_ssl,
@@ -138,6 +145,13 @@ class ProtectClient:
             return [item for item in result if isinstance(item, dict)]
         return []
 
+    def _require_internal(self, operation: str) -> None:
+        if self.api_mode == "integration":
+            raise UniFiError(
+                f"Protect {operation} is unavailable on the Integration API v1. "
+                "Use protect_api='internal' only if the console accepts that API."
+            )
+
     # ------------------------------------------------------------------
     # Cameras
     # ------------------------------------------------------------------
@@ -170,6 +184,7 @@ class ProtectClient:
         params (e.g. ``types[]=motion&types[]=smartDetectZone``) plus
         ``start`` / ``end`` (epoch milliseconds) and ``limit``.
         """
+        self._require_internal("list_events")
         # Each type is a query value, and ``&`` or ``#`` inside one would
         # add or truncate parameters. Both callers pass literals today, but
         # ``ids.py`` promises that every query-building client method
@@ -195,6 +210,7 @@ class ProtectClient:
         )
 
     async def get_event_thumbnail(self, event_id: str) -> bytes:
+        self._require_internal("get_event_thumbnail")
         return await self._request_bytes(
             "GET", f"/events/{path_segment(event_id, 'event_id')}/thumbnail"
         )
@@ -206,6 +222,7 @@ class ProtectClient:
     async def list_recordings(
         self, camera_id: str, start_ms: int, end_ms: int
     ) -> list[UniFiRecord]:
+        self._require_internal("list_recordings")
         query = f"camera={path_segment(camera_id, 'camera_id')}&start={start_ms}&end={end_ms}"
         return self._ensure_list(await self._request("GET", f"/recordings?{query}"))
 

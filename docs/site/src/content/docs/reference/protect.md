@@ -70,4 +70,8 @@ In stub mode, the Protect backend exposes two fake cameras (one of which is a do
 
 ## Real-mode prerequisites
 
-The Protect tools require a UniFi Protect application running on the same gateway addressed by `UNIFI_HOST`. The Protect API uses cookie-based auth handled internally by the Protect client; you do not need a separate API key beyond the one configured for Network access.
+The Protect tools require a UniFi Protect application running on the same gateway addressed by `UNIFI_HOST`. The client sends `X-API-Key` using the configured controller key; it does not use cookie authentication.
+
+The default `protect_api: internal` uses `/proxy/protect/api`, preserving existing behavior. On UniFi OS 5.x, a valid API key may receive 401 from that internal endpoint while Network works. Set `UNIFI_PROTECT_API=integration` for a legacy single-controller deployment, or `protect_api: integration` on the controller in multi-site YAML, to use `/proxy/protect/integration/v1` instead. This was verified by a field reporter on two UniFi OS 5.1.31 consoles (Network 10.6.101): camera list/details and snapshots worked with the same API key.
+
+The Integration API v1 does **not** expose the event, recording or event-thumbnail endpoints used by this module. Those tools return a clear error in integration mode. Camera update endpoints on that surface have not been verified on live hardware; use read-only mode if only camera reads are needed. There is no automatic fallback to the internal API because that could change the authentication surface without the operator's choice.
