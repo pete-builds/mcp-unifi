@@ -85,6 +85,7 @@ def stub_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[Settings]:
         "MCP_PORT",
         "LOG_LEVEL",
         "LOG_FORMAT",
+        "MCP_UNIFI_CONTROLLERS_FILE",
         "MCP_UNIFI_AUTH_TOKENS",
         "MCP_UNIFI_AUTH_REQUIRED",
     ):

@@ -18,6 +18,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   spellings are now in `SENSITIVE_KEY_PATTERNS`; the certificate fields
   beside them (`x_ca_crt`, `x_server_crt`) are public and stay visible.
   Reported from a live two-controller deployment in #124.
+### Fixed
+
+- **`MCP_UNIFI_CONTROLLERS_FILE` is read.** The README, the configuration
+  reference, the multi-site guide and `server.json` all name that variable,
+  but the setting bound only the bare `CONTROLLERS_FILE`, and `extra="ignore"`
+  dropped the documented spelling without a word. A multi-site deployment
+  configured as documented fell through to the legacy single-controller
+  variables, or failed with "real mode + no config". The field now accepts
+  both spellings, like `MCP_UNIFI_READONLY` and `MCP_UNIFI_AUTH_TOKENS`
+  already did. Reported from a live two-controller deployment in #124.
 
 ## [0.22.0] - 2026-09-13
 

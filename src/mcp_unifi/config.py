@@ -145,9 +145,17 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     controllers_file: Path | None = Field(
         default=None,
+        # The documented env var is MCP_UNIFI_CONTROLLERS_FILE (README, the
+        # configuration reference, the multi-site guide, server.json). The
+        # field name alone bound only the bare CONTROLLERS_FILE, so the
+        # documented spelling was silently dropped by ``extra="ignore"`` and a
+        # multi-site deployment fell through to the legacy single-controller
+        # vars, or to "real mode + no config". Reported live in #124.
+        validation_alias=AliasChoices("MCP_UNIFI_CONTROLLERS_FILE", "controllers_file"),
         description=(
             "Optional YAML file describing one or more controllers. Used "
-            "when running against >1 site. See ControllerConfig for fields."
+            "when running against >1 site. See ControllerConfig for fields. "
+            "Env var: MCP_UNIFI_CONTROLLERS_FILE."
         ),
     )
     #: Populated by ``_assemble_controllers`` after model construction. Not
