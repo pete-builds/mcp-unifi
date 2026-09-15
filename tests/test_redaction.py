@@ -44,6 +44,11 @@ SECRET_KEYS = [
     "x_ssh_sha512passwd",  # device: stored SSH password hash
     "pass_code",  # access visitor: the code that opens the door
     "passcode",  # access visitor (alternate spelling)
+    "x_ca_key",  # networkconf: OpenVPN CA private key (issue #124)
+    "x_server_key",  # networkconf: OpenVPN server private key
+    "x_dh_key",  # networkconf: OpenVPN Diffie-Hellman parameters
+    "x_shared_client_key",  # networkconf: OpenVPN shared client key
+    "x_auth_key",  # networkconf: OpenVPN TLS auth key (not the device x_authkey)
     "api_key",
     "X-API-Key",  # the header spelling; api_key does not contain it
     "auth_token",
@@ -72,6 +77,9 @@ NON_SECRET_KEYS = [
     # ruled out a bare ``code`` pattern (hence the exact pass-code spellings)
     "status_code",
     "country_code",
+    # OpenVPN certificates are public material; only the keys are secret
+    "x_ca_crt",
+    "x_server_crt",
     # identity and shape
     "x_ipsec_esp_dh_group",
     "wpa_mode",
@@ -135,6 +143,34 @@ def test_redact_covers_a_full_vpn_network_record() -> None:
 
     # And no secret value survives anywhere in the structure.
     assert "do-not-leak" not in repr(out)
+
+
+def test_redact_covers_a_full_openvpn_network_record() -> None:
+    """A ``remote-user-vpn`` network on UniFi OS 5.1 carries the whole OpenVPN
+    PKI. Reported from a live deployment (issue #124): every one of the five
+    key fields went out in cleartext because none of them contains a listed
+    substring. The certificates beside them are public and must stay.
+    """
+    record = {
+        "_id": "n-ovpn",
+        "name": "Remote Users",
+        "purpose": "remote-user-vpn",
+        "vpn_type": "openvpn-server",
+        "x_ca_crt": "-----BEGIN CERTIFICATE-----ca",
+        "x_ca_key": "-----BEGIN PRIVATE KEY-----ca",
+        "x_server_crt": "-----BEGIN CERTIFICATE-----srv",
+        "x_server_key": "-----BEGIN PRIVATE KEY-----srv",
+        "x_dh_key": "-----BEGIN DH PARAMETERS-----",
+        "x_shared_client_key": "-----BEGIN PRIVATE KEY-----client",
+        "x_auth_key": "-----BEGIN OpenVPN Static key V1-----",
+    }
+    out = redact(record)
+    for key in ("x_ca_key", "x_server_key", "x_dh_key", "x_shared_client_key", "x_auth_key"):
+        assert out[key] == REDACTED_OUTPUT, f"{key} leaked"
+    assert out["x_ca_crt"] == record["x_ca_crt"]
+    assert out["x_server_crt"] == record["x_server_crt"]
+    assert out["name"] == "Remote Users"
+    assert "PRIVATE KEY" not in str({k: v for k, v in out.items() if k.endswith("_key")})
 
 
 def test_redact_walks_nested_and_listed_records() -> None:

@@ -76,8 +76,19 @@ from typing import Any
 #: site-to-site IPsec key (``x_ipsec_pre_shared_key``) and the WireGuard peer
 #: key (``x_preshared_key``) alongside ``x_private_key``, the device
 #: management and mesh keys (``x_authkey``, ``x_inform_authkey``,
-#: ``x_vwirekey``), the ``passwd`` spelling of a stored password, and the
-#: Access visitor pass code in both its spellings.
+#: ``x_vwirekey``), the ``passwd`` spelling of a stored password, the
+#: Access visitor pass code in both its spellings, and the five OpenVPN key
+#: fields a ``remote-user-vpn`` network record carries (``x_ca_key``,
+#: ``x_server_key``, ``x_dh_key``, ``x_shared_client_key``, ``x_auth_key``).
+#:
+#: The OpenVPN spellings were reported from a live two-controller UniFi OS
+#: 5.1 deployment (issue #124): ``list_networks`` handed back the complete
+#: OpenVPN PKI, CA private key included, because none of the five contains
+#: ``private_key``, ``privkey``, ``psk`` or any other listed substring. Note
+#: ``x_auth_key`` with an underscore is a different spelling from the device
+#: ``x_authkey`` and matches neither ``authkey`` nor the rejected ``auth``.
+#: The certificate fields beside them (``x_ca_crt``, ``x_server_crt``) are
+#: public material and stay visible.
 #:
 #: Substring matching is the whole mechanism, and it cuts both ways. ``psk``
 #: catches ``wpa_psk`` but does **not** catch ``x_ipsec_pre_shared_key`` or
@@ -125,6 +136,11 @@ SENSITIVE_KEY_PATTERNS: frozenset[str] = frozenset(
         "vwirekey",
         "pass_code",
         "passcode",
+        "x_ca_key",
+        "x_server_key",
+        "x_dh_key",
+        "x_shared_client_key",
+        "x_auth_key",
     }
 )
 
