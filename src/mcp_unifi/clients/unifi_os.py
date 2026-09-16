@@ -69,9 +69,12 @@ that honestly rather than inventing a metric.
 from __future__ import annotations
 
 import logging
+import ssl
 from typing import Any
 
 import httpx
+
+from mcp_unifi import tls
 
 logger = logging.getLogger("mcp_unifi.client.unifi_os")
 
@@ -172,7 +175,7 @@ class UniFiOSClient:
         port: int = 443,
         username: str = "",
         password: str = "",
-        verify_ssl: bool = False,
+        verify_ssl: bool | ssl.SSLContext = False,
         timeout: float = 10.0,
     ) -> None:
         self.host = host
@@ -224,6 +227,8 @@ class UniFiOSClient:
         try:
             resp = await self._client.get(f"{self._base}{path}", headers=headers)
         except httpx.HTTPError as exc:
+            if tls.is_verification_failure(exc):
+                return ProbeResult(path, error=tls.SHORT_VERIFY_HINT)
             # Class name, not str(exc) — httpx embeds the full URL in some
             # messages and the API key never belongs in a log line.
             return ProbeResult(path, error=f"{type(exc).__name__}: {exc!s}"[:200])
@@ -299,6 +304,10 @@ class UniFiOSClient:
                 json={"username": self._username, "password": self._password},
             )
         except httpx.HTTPError as exc:
+            if tls.is_verification_failure(exc):
+                raise UniFiOSError(
+                    tls.verification_failure_message("UniFi OS", f"{self._base}{LOGIN_PATH}")
+                ) from exc
             raise UniFiOSError(f"UniFi OS login transport failure: {type(exc).__name__}") from exc
         if resp.status_code in (401, 403):
             raise UniFiOSAuthError(

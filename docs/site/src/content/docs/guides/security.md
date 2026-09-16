@@ -10,7 +10,7 @@ mcp-unifi is designed to run on a trusted home or homelab LAN, behind your exist
 
 - **Trusted boundary**: starting in v0.9.0, the HTTP transport requires a bearer token on every request (see the [Authentication guide](/mcp-unifi/guides/auth/)). The server refuses to start without tokens by default. Stdio transport remains unauthenticated by design — the parent process owns the security boundary. Even with auth on, run the server inside a trusted LAN segment or behind a Tailscale ACL: defence in depth.
 - **Local-network only**: the server talks to your UniFi gateway over the **local API** (X-API-Key header to `https://<gateway>/proxy/network/...`). It does not call out to any Ubiquiti cloud endpoint, does not require a UI account, and does not require Site Manager / Cloud Console enrollment.
-- **Self-signed gateway certs**: most home gateways present a self-signed certificate. `UNIFI_VERIFY_SSL` defaults to `false` for that reason. Set it to `true` once you've installed a real certificate.
+- **Self-signed gateway certs**: most home gateways present a self-signed certificate whose name list does not include the address you dial, so `UNIFI_VERIFY_SSL` defaults to `false`. The fix that needs no CA is to pin the console's own certificate: `mcp-unifi-pin-cert <host> --out <path>` records it, and `pinned_cert` (or `UNIFI_PINNED_CERT`) makes it the only certificate the server accepts from that controller, failing closed on anything else. Set `UNIFI_VERIFY_SSL=true` instead once you've installed a real certificate.
 
 ## Read-only mode
 

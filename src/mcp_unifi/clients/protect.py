@@ -18,6 +18,7 @@ on ``ConnectError``).
 from __future__ import annotations
 
 import logging
+import ssl
 from typing import Any, Literal
 
 import httpx
@@ -50,7 +51,7 @@ class ProtectClient:
         host: str,
         api_key: str,
         port: int = 443,
-        verify_ssl: bool = False,
+        verify_ssl: bool | ssl.SSLContext = False,
         timeout: float = 30.0,
         api_mode: Literal["internal", "integration"] = "internal",
     ) -> None:

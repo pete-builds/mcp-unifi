@@ -59,6 +59,7 @@ dev = [
 mcp-unifi = "mcp_unifi.server:main"
 mcp-unifi-healthcheck = "mcp_unifi.healthcheck:main"
 mcp-unifi-replay = "mcp_unifi.cli.replay:main"
+mcp-unifi-pin-cert = "mcp_unifi.cli.pin_cert:main"
 
 [project.urls]
 Homepage = "https://github.com/pete-builds/mcp-unifi"

@@ -22,7 +22,8 @@ These env vars cover the single-controller case. When set without `MCP_UNIFI_CON
 | `UNIFI_API_KEY` | string | `""` | real mode | Local API key from **Settings → Control Plane → Integrations**. Or use `UNIFI_API_KEY_FILE` (below). |
 | `UNIFI_PORT` | int (1-65535) | `443` | no | HTTPS port for the gateway. |
 | `UNIFI_SITE` | string | `default` | no | Controller site identifier. Most setups have one site. |
-| `UNIFI_VERIFY_SSL` | bool | `false` (`true` with `UNIFI_API_KEY_FILE`) | no | Set `true` once the gateway has a real TLS certificate. Left unset, it is `false` for an inline key and `true` for a file-backed one; an explicit value always wins. |
+| `UNIFI_VERIFY_SSL` | bool | `false` (`true` with `UNIFI_API_KEY_FILE` or `UNIFI_PINNED_CERT`) | no | Set `true` once the gateway has a real TLS certificate. Left unset, it is `false` for an inline key and `true` for a file-backed or pinned one; an explicit value always wins. |
+| `UNIFI_PINNED_CERT` | path | (unset) | no | PEM certificate recorded by `mcp-unifi-pin-cert`. When set it is the only trust anchor for the controller; hostname matching is off because the pin is the identity; a mismatch fails every request. `UNIFI_VERIFY_SSL=false` alongside it is rejected at startup. See [Certificate pinning](#certificate-pinning). |
 | `UNIFI_PROTECT_API` | enum (`internal`, `integration`) | `internal` | no | Protect API surface for legacy single-controller config. `integration` uses `/proxy/protect/integration/v1` for UniFi OS 5.x API keys; events and recordings are unavailable there. |
 
 ## Multi-controller
@@ -82,6 +83,16 @@ Every secret has a `_FILE` twin for Docker and Kubernetes secret mounts. The val
 | `MCP_UNIFI_CLIENT_ID` | string | `""` | no | Client name for a bare token in `MCP_UNIFI_AUTH_TOKEN_FILE`, as `name:token` names one inline. Requires the file; rejected when the file already carries names. |
 
 On every boot the server logs one warning per controller still on the value-supplied shape or running with TLS verification off, and one when HTTP bearer tokens come from `MCP_UNIFI_AUTH_TOKENS`. Nothing is refused. The warning is step one of the dated path in [ADR 0007](https://github.com/pete-builds/mcp-unifi/blob/main/docs/decisions/0007-hardening-is-opt-in-unless-the-hole-has-no-legitimate-configuration.md): opt-in, then warn for a release, then flip at a major.
+
+## Certificate pinning
+
+A UniFi console's self-signed certificate names `unifi.local`, `localhost` and the loopback addresses, never the LAN address the server dials, so standard verification cannot succeed against it. Pinning records that certificate and makes it the controller's only trust anchor: chain verification is required, the system trust store is not consulted, and hostname matching is off because the certificate itself is the identity.
+
+1. `mcp-unifi-pin-cert <host> --out <path>` connects without verification, prints the certificate's SHA-256 fingerprint, and writes it as PEM. It refuses to overwrite an existing file without `--force`, and with `--expect-fingerprint <sha256>` it writes only if the presented certificate matches what you read off the console. Exit `1` means refused, `2` means the console could not be reached; nothing is written on either.
+2. Set `pinned_cert: <path>` on the controller (YAML) or `UNIFI_PINNED_CERT` (env). `verify_ssl` turns on; setting it to `false` alongside a pin is rejected at startup as a contradiction. A pin that is missing, empty or not a certificate fails startup naming the controller.
+3. Rotation: a firmware update can regenerate the console certificate. Every request then fails with a message naming the re-pin command. Check the new fingerprint on the console and re-run step 1 with `--force`. Do not lower `verify_ssl` to get past it: the same failure is what an interception looks like.
+
+The pin covers the Network, Protect and console-session clients on that host. The Access hub is a separate host and keeps the `verify_ssl` flag. The server never fetches and trusts a certificate on its own; the startup line reports each controller's `pinned_cert` path and fingerprint so you can confirm which one loaded.
 
 ## Read-only mode
 

@@ -19,6 +19,7 @@ single record. Retries one ``ConnectError`` and surfaces transport faults as
 from __future__ import annotations
 
 import logging
+import ssl
 from typing import Any
 
 import httpx
@@ -50,7 +51,7 @@ class AccessClient:
         host: str,
         api_key: str,
         port: int = 12445,
-        verify_ssl: bool = False,
+        verify_ssl: bool | ssl.SSLContext = False,
         timeout: float = 15.0,
     ) -> None:
         self.host = host

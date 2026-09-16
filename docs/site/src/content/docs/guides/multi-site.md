@@ -61,7 +61,8 @@ controllers:
 | `api_key_file` | no | — | Path to a file containing the API key (a secret mount). Wins over `api_key` when both are set, and turns `verify_ssl` on by default. `access_api_key_file` and `os_password_file` work the same way for those secrets. |
 | `port` | no | `443` | HTTPS port for the gateway. |
 | `site` | no | `default` | UniFi controller site name. Most setups have one site called `default`. |
-| `verify_ssl` | no | `false` (`true` with `api_key_file`) | Set `true` if the gateway has a real TLS certificate. An explicit value always wins over the default. |
+| `verify_ssl` | no | `false` (`true` with `api_key_file` or `pinned_cert`) | Set `true` if the gateway has a real TLS certificate. An explicit value always wins over the default. |
+| `pinned_cert` | no | — | Path to this console's own certificate, recorded with `mcp-unifi-pin-cert`. Makes it the only certificate the server accepts from this controller; a mismatch fails closed. See the [configuration reference](/mcp-unifi/reference/configuration/#certificate-pinning). |
 
 ## Use it from a tool call
 

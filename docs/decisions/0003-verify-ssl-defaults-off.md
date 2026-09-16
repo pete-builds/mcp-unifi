@@ -1,6 +1,9 @@
 # 0003. `verify_ssl` defaults to `false`
 
-**Status:** Accepted
+**Status:** Accepted. Certificate pinning, named below as the alternative most
+likely to make this decision obsolete, shipped 2026-09-16 (#157) as an opt-in
+per-controller `pinned_cert`. The default recorded here has not moved; flipping
+it follows the path in [ADR 0007](0007-hardening-is-opt-in-unless-the-hole-has-no-legitimate-configuration.md).
 
 ## Context
 

@@ -11,6 +11,7 @@ tools are wrapped. It is not a port of any reference implementation.
 from __future__ import annotations
 
 import logging
+import ssl
 from typing import Any
 
 import httpx
@@ -82,7 +83,7 @@ class UniFiClient:
         api_key: str,
         port: int = 443,
         site: str = "default",
-        verify_ssl: bool = False,
+        verify_ssl: bool | ssl.SSLContext = False,
         timeout: float = 15.0,
     ) -> None:
         self.host = host
