@@ -57,10 +57,11 @@ controllers:
 |---|---|---|---|
 | `name` | yes | — | Stable identifier used by tools. No duplicates allowed. |
 | `host` | yes | — | UniFi gateway IP or hostname (no scheme). |
-| `api_key` | yes | — | Local API key from the gateway. Wrapped in `SecretStr` internally; never logged. |
+| `api_key` | yes, or `api_key_file` | — | Local API key from the gateway. Wrapped in `SecretStr` internally; never logged. |
+| `api_key_file` | no | — | Path to a file containing the API key (a secret mount). Wins over `api_key` when both are set, and turns `verify_ssl` on by default. `access_api_key_file` and `os_password_file` work the same way for those secrets. |
 | `port` | no | `443` | HTTPS port for the gateway. |
 | `site` | no | `default` | UniFi controller site name. Most setups have one site called `default`. |
-| `verify_ssl` | no | `false` | Set `true` if the gateway has a real TLS certificate. |
+| `verify_ssl` | no | `false` (`true` with `api_key_file`) | Set `true` if the gateway has a real TLS certificate. An explicit value always wins over the default. |
 
 ## Use it from a tool call
 

@@ -162,7 +162,22 @@ SENSITIVE_KEY_PATTERNS: frozenset[str] = frozenset(
 #:   whether any secret was stripped. ``secret`` matched it, so the flag
 #:   itself came out as ``[REDACTED]`` and ``restore_config`` could not read
 #:   it back as a bool.
-NON_SECRET_KEYS: frozenset[str] = frozenset({"secrets_stripped"})
+#: * ``api_key_file``, ``access_api_key_file``, ``os_password_file``,
+#:   ``auth_token_file`` → the *path* a file-backed secret is read from,
+#:   reported by ``Settings.safe_repr()`` at startup so an operator can see
+#:   which mount was loaded. ``api_key``, ``password`` and ``token`` matched
+#:   them, so the startup line showed ``[REDACTED]`` where the path belonged.
+#:   The contents never enter any record; ``tests/test_secret_files.py``
+#:   proves that from a captured boot.
+NON_SECRET_KEYS: frozenset[str] = frozenset(
+    {
+        "secrets_stripped",
+        "api_key_file",
+        "access_api_key_file",
+        "os_password_file",
+        "auth_token_file",
+    }
+)
 
 #: Sentinel written in place of a redacted value on **output** paths.
 #: Deliberately human-readable: a caller seeing this should understand the

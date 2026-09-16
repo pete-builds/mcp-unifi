@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **File-backed secrets, opt-in.** Every secret gains a `_FILE` twin for
+  Docker and Kubernetes secret mounts: `UNIFI_API_KEY_FILE`,
+  `UNIFI_ACCESS_API_KEY_FILE`, `UNIFI_OS_PASSWORD_FILE` and
+  `MCP_UNIFI_AUTH_TOKEN_FILE` with `MCP_UNIFI_CLIENT_ID`, plus `api_key_file`,
+  `access_api_key_file` and `os_password_file` per controller in the YAML.
+  The file wins when both forms are set. A missing, empty or unreadable
+  file fails startup naming the controller and the field, never the
+  contents. The environment-variable form keeps working unchanged; no
+  documented install breaks. The design is the `_default_tls_policy`
+  validator from #154 by Istvan at Taltos GmbH (@Taltos-ch), adopted as
+  the opt-in shape in [ADR 0007](docs/decisions/0007-hardening-is-opt-in-unless-the-hole-has-no-legitimate-configuration.md).
+- **A controller configured by `api_key_file` verifies TLS by default.**
+  Opting into the hardened path should not require opting into each of
+  its parts. An inline key keeps the ADR 0003 default of `false`, and an
+  explicit `verify_ssl` always wins over either default.
+- **A startup warning names each controller still on the legacy shape.**
+  One line per controller running with a value-supplied API key or TLS
+  verification off, and one when HTTP bearer tokens come from
+  `MCP_UNIFI_AUTH_TOKENS`, once per boot, silent in stub mode. This is the
+  interim step ADR 0003 recorded as unbuilt and step one of ADR 0007's
+  reversal path: opt-in, then warn for a release, then flip at a major.
+  Nothing is refused.
+- The startup `safe_repr` line now reports the path of each loaded secret
+  file; those four path keys are allowlisted in the redactor as references,
+  and a captured-boot test asserts no file's contents reach any log record.
+
 ### Fixed
 
 - **`audit_open_ports` counts a port forward once, not twice.** A controller
