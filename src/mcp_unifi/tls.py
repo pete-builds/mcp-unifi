@@ -16,8 +16,12 @@ fetches the console's certificate once, out of band, with
 ``mcp-unifi-pin-cert`` and records it beside the controllers YAML. From then
 on that certificate is the **only** trust anchor for that controller and the
 pin is the identity: chain verification is required, hostname matching is
-off because the pin already answers the question a hostname would. A
-console presenting any other certificate fails the handshake, closed.
+off because the pin already answers the question a hostname would, and
+after every handshake the certificate the console presented is compared
+byte for byte against the pin. A console presenting any other certificate,
+including one signed by the pinned certificate's own key, fails the
+handshake, closed. A pin file must hold exactly one certificate, so what
+the startup line reports as the fingerprint is the whole of what is trusted.
 
 What this deliberately does not do
 ----------------------------------
@@ -38,6 +42,8 @@ from pathlib import Path
 
 #: Marker OpenSSL puts in every verification failure message.
 _VERIFY_FAILED = "CERTIFICATE_VERIFY_FAILED"
+
+_PEM_BEGIN = "-----BEGIN CERTIFICATE-----"
 
 #: The operator command that records a console certificate. Named in error
 #: messages so a rotated certificate is a one-line fix, not a search.
@@ -76,29 +82,85 @@ def load_pinned_cert(path: Path, label: str) -> bytes:
         raise ValueError(f"{label}: {path} cannot be read ({type(exc).__name__})") from exc
     if not pem.strip():
         raise ValueError(f"{label}: {path} is empty")
+    blocks = pem.count(_PEM_BEGIN)
+    if blocks != 1:
+        # load_verify_locations would trust every certificate in a bundle
+        # while the startup line reported only the first. One file, one
+        # certificate, one fingerprint.
+        raise ValueError(
+            f"{label}: {path} must contain exactly one certificate (found {blocks}); "
+            f"a pin is a single console certificate, not a bundle"
+        )
     try:
         return ssl.PEM_cert_to_DER_cert(pem)
     except ValueError as exc:
         raise ValueError(f"{label}: {path} is not a PEM certificate") from exc
 
 
-def build_pinned_context(path: Path, label: str = "pinned_cert") -> ssl.SSLContext:
-    """Build a client TLS context whose only trust anchor is the pinned certificate.
+class _PinnedSSLObject(ssl.SSLObject):
+    """``SSLObject`` that compares the peer's certificate to the pin after the handshake.
 
-    ``verify_mode`` is ``CERT_REQUIRED`` and the system trust store is not
-    loaded, so the console must present the pinned certificate, or one it
-    signs. ``VERIFY_X509_PARTIAL_CHAIN`` lets the pinned leaf act as the
-    anchor even when it is not marked as a CA, which a self-signed console
-    certificate is not. ``check_hostname`` is off: the certificate's SAN does
-    not carry the LAN address (see the module docstring) and the pin is a
-    stronger identity claim than a name match against a self-issued name.
+    The chain check in :class:`PinnedContext` already restricts trust to the
+    pin, but a CA-capable pinned certificate could still vouch for a leaf it
+    signed. This closes that: what the peer presented must equal the pin,
+    byte for byte. Runs only once the handshake actually completes; the
+    ``SSLWantRead``/``SSLWantWrite`` retries of a non-blocking handshake pass
+    through untouched.
     """
-    load_pinned_cert(path, label)  # fail early, with the same message shape
-    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+
+    def do_handshake(self) -> None:
+        super().do_handshake()
+        _check_exact_pin(self.context, self.getpeercert(binary_form=True))
+
+
+class _PinnedSSLSocket(ssl.SSLSocket):
+    """Blocking-socket twin of :class:`_PinnedSSLObject`."""
+
+    def do_handshake(self, block: bool = False) -> None:
+        super().do_handshake(block)
+        _check_exact_pin(self.context, self.getpeercert(binary_form=True))
+
+
+def _check_exact_pin(context: ssl.SSLContext, presented: bytes | None) -> None:
+    expected = getattr(context, "pinned_der", None)
+    if expected is None:
+        return
+    if presented != expected:
+        got = fingerprint_sha256(presented) if presented else "none"
+        raise ssl.SSLCertVerificationError(
+            f"{_VERIFY_FAILED}: the console presented certificate sha256 {got}, "
+            f"which is not the pinned certificate sha256 {fingerprint_sha256(expected)}"
+        )
+
+
+class PinnedContext(ssl.SSLContext):
+    """A client context that trusts one certificate and checks for exactly it."""
+
+    sslobject_class = _PinnedSSLObject
+    sslsocket_class = _PinnedSSLSocket
+    pinned_der: bytes | None = None
+
+
+def build_pinned_context(path: Path, label: str = "pinned_cert") -> ssl.SSLContext:
+    """Build a client TLS context that accepts exactly the pinned certificate.
+
+    Two checks, both required. ``verify_mode`` is ``CERT_REQUIRED`` with the
+    system trust store not loaded, so the chain must end at the pin;
+    ``VERIFY_X509_PARTIAL_CHAIN`` lets the pinned leaf act as that anchor
+    even though a self-signed console certificate carries no CA flag. Then
+    the presented certificate is compared byte for byte against the pin
+    after the handshake, so a CA-capable pin cannot vouch for anything else.
+    ``check_hostname`` is off: the certificate's SAN does not carry the LAN
+    address (see the module docstring) and the pin is a stronger identity
+    claim than a name match against a self-issued name.
+    """
+    der = load_pinned_cert(path, label)  # fail early, with the same message shape
+    ctx = PinnedContext(ssl.PROTOCOL_TLS_CLIENT)
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_REQUIRED
     ctx.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
     ctx.load_verify_locations(cafile=str(path))
+    ctx.pinned_der = der
     return ctx
 
 
@@ -162,6 +224,7 @@ def verification_failure_message(service: str, url: str) -> str:
 __all__ = [
     "PIN_COMMAND",
     "SHORT_VERIFY_HINT",
+    "PinnedContext",
     "build_pinned_context",
     "fetch_server_certificate",
     "fingerprint_sha256",

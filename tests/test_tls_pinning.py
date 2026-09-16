@@ -88,11 +88,66 @@ def _self_signed(cn: str = "unifi.local") -> tuple[bytes, bytes]:
     )
 
 
-def _signed_by(parent_cert_pem: bytes, parent_key_pem: bytes) -> tuple[bytes, bytes]:
-    """A certificate with the console's subject, signed by the console's key.
+def _self_signed_ca(cn: str = "UniFi Root CA") -> tuple[bytes, bytes]:
+    """Like :func:`_self_signed` but marked CA:TRUE with keyCertSign.
+
+    A pin an operator might plausibly record from a console that fronts its
+    own internal CA. Against a trust-anchor-only design this pin would vouch
+    for every leaf it signed; the exact-match check is what stops that.
+    """
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
+    now = datetime.now(UTC)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(days=1))
+        .not_valid_after(now + timedelta(days=365))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=True,
+                content_commitment=False,
+                key_encipherment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=True,
+                crl_sign=True,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
+        .sign(key, hashes.SHA256())
+    )
+    return (
+        cert.public_bytes(serialization.Encoding.PEM),
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        ),
+    )
+
+
+def _signed_by(
+    parent_cert_pem: bytes, parent_key_pem: bytes, cn: str = "impostor.local"
+) -> tuple[bytes, bytes]:
+    """A certificate issued by the pinned certificate's key.
 
     The attack "hostname checking off, partial chain on" invites: if the
-    pinned leaf were accepted as an issuer, anything it signed would pass.
+    pinned certificate were accepted as an issuer, anything it signed would
+    pass. The child carries its own subject name; with the parent's name
+    OpenSSL would treat it as self-signed and refuse it before ever walking
+    the chain, which would leave the check under test unexercised.
     """
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
@@ -102,9 +157,11 @@ def _signed_by(parent_cert_pem: bytes, parent_key_pem: bytes) -> tuple[bytes, by
     parent_key = serialization.load_pem_private_key(parent_key_pem, password=None)
     key = ec.generate_private_key(ec.SECP256R1())
     now = datetime.now(UTC)
+    from cryptography.x509.oid import NameOID
+
     child = (
         x509.CertificateBuilder()
-        .subject_name(parent.subject)
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)]))
         .issuer_name(parent.subject)
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
@@ -232,10 +289,10 @@ async def test_certificate_signed_by_the_pin_is_rejected(tmp_path: Path) -> None
 
     ``VERIFY_X509_PARTIAL_CHAIN`` lets the pinned leaf be the anchor; it must
     not let it be an issuer. The console's certificate carries no CA flag,
-    and OpenSSL refuses a non-CA anchor as the issuer of anything else, so a
-    certificate signed by the console's key still fails. Pinned here by test
-    rather than trusted from memory, because this is exactly the case the
-    "hostname off" design is asked about first.
+    so a certificate signed by its key fails twice over: OpenSSL refuses a
+    non-CA issuer, and the exact-match check refuses anything that is not
+    the pin. Pinned by test rather than trusted from memory, because this is
+    the case the "hostname off" design is asked about first.
     """
     parent_cert, parent_key = _self_signed()
     pin = tmp_path / "parent.pem"
@@ -249,6 +306,53 @@ async def test_certificate_signed_by_the_pin_is_rejected(tmp_path: Path) -> None
         assert tls.is_verification_failure(exc.value)
     finally:
         impostor.close()
+
+
+async def test_ca_capable_pin_cannot_vouch_for_a_leaf_it_signed(tmp_path: Path) -> None:
+    """The exact-match check, isolated from OpenSSL's non-CA issuer rule.
+
+    Here the pin IS a CA, so chain validation alone would accept the leaf it
+    signed. Only the byte-for-byte comparison after the handshake refuses
+    it. This is the test that goes red if that comparison is removed.
+    """
+    parent_cert, parent_key = _self_signed_ca()
+    pin = tmp_path / "ca-pin.pem"
+    pin.write_bytes(parent_cert)
+    impostor = Console(tmp_path, name="ca-child", material=_signed_by(parent_cert, parent_key))
+    try:
+        ctx = tls.build_pinned_context(pin)
+        async with httpx.AsyncClient(verify=ctx) as client:
+            with pytest.raises(httpx.ConnectError) as exc:
+                await client.get(_url(impostor))
+        assert tls.is_verification_failure(exc.value)
+        assert "not the pinned certificate" in str(exc.value)
+    finally:
+        impostor.close()
+
+
+async def test_ca_capable_pin_still_accepts_itself(tmp_path: Path) -> None:
+    """Control for the test above: the same CA pin, presented directly, passes."""
+    material = _self_signed_ca()
+    pin = tmp_path / "ca-self.pem"
+    pin.write_bytes(material[0])
+    server = Console(tmp_path, name="ca-self", material=material)
+    try:
+        async with httpx.AsyncClient(verify=tls.build_pinned_context(pin)) as client:
+            resp = await client.get(_url(server))
+        assert resp.status_code == 200
+    finally:
+        server.close()
+
+
+def test_multi_certificate_bundle_is_rejected(tmp_path: Path, console: Console) -> None:
+    """A bundle would trust every certificate in it while reporting one fingerprint."""
+    other_cert, _ = _self_signed()
+    bundle = tmp_path / "bundle.pem"
+    bundle.write_bytes(console.cert_path.read_bytes() + other_cert)
+    with pytest.raises(ValueError, match=r"exactly one certificate \(found 2\)"):
+        tls.load_pinned_cert(bundle, "pin")
+    with pytest.raises(ValidationError, match="exactly one certificate"):
+        ControllerConfig(name="home", host="h", api_key=SecretStr("k"), pinned_cert=bundle)
 
 
 def test_pinned_context_shape(console: Console) -> None:
@@ -280,6 +384,13 @@ def test_load_empty_pin(tmp_path: Path) -> None:
 def test_load_garbage_pin(tmp_path: Path) -> None:
     p = tmp_path / "garbage.pem"
     p.write_text("not a certificate")
+    with pytest.raises(ValueError, match=r"exactly one certificate \(found 0\)"):
+        tls.load_pinned_cert(p, "pin")
+
+
+def test_load_malformed_pem_body(tmp_path: Path) -> None:
+    p = tmp_path / "malformed.pem"
+    p.write_text("-----BEGIN CERTIFICATE-----\nnot base64 at all\n-----END CERTIFICATE-----\n")
     with pytest.raises(ValueError, match="not a PEM certificate"):
         tls.load_pinned_cert(p, "pin")
 
@@ -538,6 +649,46 @@ def test_pin_cert_unreachable_console_writes_nothing(tmp_path: Path) -> None:
     rc = pin_cert.main(["127.0.0.1", "--port", "9", "--out", str(out), "--timeout", "1"])
     assert rc == 2
     assert not out.exists()
+
+
+# ---------------------------------------------------------------------------
+# The shipped env template must boot with the pin line uncommented
+# ---------------------------------------------------------------------------
+
+
+def _env_example_active_lines() -> dict[str, str]:
+    out: dict[str, str] = {}
+    for raw in (REPO_ROOT / ".env.example").read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        out[key.strip()] = value.strip()
+    return out
+
+
+def test_env_example_boots_with_the_pin_uncommented(
+    monkeypatch: pytest.MonkeyPatch, console: Console
+) -> None:
+    """Copy the template, fill the two blanks, uncomment the pin: it must start.
+
+    The template shipped ``UNIFI_VERIFY_SSL=false`` as an active line while
+    telling the reader to uncomment ``UNIFI_PINNED_CERT``, which the
+    contradiction check refuses. Found by an outside review of #158.
+    """
+    active = _env_example_active_lines()
+    assert "UNIFI_VERIFY_SSL" not in active, "template sets verify_ssl explicitly"
+    for key in set(active) | {"UNIFI_PINNED_CERT", "UNIFI_VERIFY_SSL", "UNIFI_API_KEY_FILE"}:
+        monkeypatch.delenv(key, raising=False)
+    for key, value in active.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("STUB_MODE", "false")
+    monkeypatch.setenv("UNIFI_API_KEY", "template-key")
+    monkeypatch.setenv("UNIFI_PINNED_CERT", str(console.cert_path))
+    monkeypatch.setenv("MCP_UNIFI_AUTH_TOKENS", "t:template-token")
+    s = Settings()
+    assert s.controllers[0].pinned_cert == console.cert_path
+    assert s.controllers[0].verify_ssl is True
 
 
 # ---------------------------------------------------------------------------
