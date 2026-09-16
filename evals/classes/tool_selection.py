@@ -10,9 +10,9 @@ registration: ``focused`` (8 tools, stacked with the confusable ones),
 client receives). Accuracy is reported per tier.
 
 A single aggregate would hide the finding. A server can be perfectly
-documented and still be hard to aim once it ships 134 tools, and the shape of
-that curve is the actionable output: a model that scores well focused and
-poorly full has a discovery problem, which is fixed by splitting modules or
+documented and still be hard to aim once its tool surface gets large, and the
+shape of that curve is the actionable output: a model that scores well focused
+and poorly full has a discovery problem, which is fixed by splitting modules or
 sharpening summaries. A model that scores poorly at every tier has a
 comprehension problem, which is fixed by rewriting the tool's description.
 
