@@ -162,9 +162,11 @@ UniFi consoles present a self-signed certificate whose name list does not includ
 ```bash
 mcp-unifi-pin-cert 192.168.1.1 --out /etc/mcp-unifi/pins/home.pem
 # prints the SHA-256 fingerprint; compare it against the console before trusting it
+ssh root@192.168.1.1 'openssl x509 -in /data/unifi-core/config/unifi-core.crt -noout -fingerprint -sha256'
+# the same fingerprint read on the console itself, over a channel the pin does not depend on
 ```
 
-Then set `pinned_cert: /etc/mcp-unifi/pins/home.pem` on the controller in the YAML, or `UNIFI_PINNED_CERT` for the single-controller env form. A pinned controller verifies every connection against that certificate and fails closed if the console presents anything else; there is no fallback. If a firmware update regenerates the console certificate, requests fail with a message that names the re-pin command, and you re-run it with `--force` after checking the new fingerprint. The server never fetches and trusts a certificate on its own: the bootstrap is always this explicit command. Pass `--expect-fingerprint` to have it refuse a certificate that does not match what you read off the console.
+Then set `pinned_cert: /etc/mcp-unifi/pins/home.pem` on the controller in the YAML, or `UNIFI_PINNED_CERT` for the single-controller env form. A pinned controller verifies every connection against that certificate and fails closed if the console presents anything else; there is no fallback. If a firmware update regenerates the console certificate, requests fail with a message that names the re-pin command, and you re-run it with `--force` after checking the new fingerprint. The server never fetches and trusts a certificate on its own: the bootstrap is always this explicit command. Pass `--expect-fingerprint` to have it refuse a certificate that does not match what you read off the console. In the container, mount the pin read-only (the compose file shows where).
 
 ## How this is built
 

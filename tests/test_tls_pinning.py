@@ -88,6 +88,40 @@ def _self_signed(cn: str = "unifi.local") -> tuple[bytes, bytes]:
     )
 
 
+def _signed_by(parent_cert_pem: bytes, parent_key_pem: bytes) -> tuple[bytes, bytes]:
+    """A certificate with the console's subject, signed by the console's key.
+
+    The attack "hostname checking off, partial chain on" invites: if the
+    pinned leaf were accepted as an issuer, anything it signed would pass.
+    """
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    parent = x509.load_pem_x509_certificate(parent_cert_pem)
+    parent_key = serialization.load_pem_private_key(parent_key_pem, password=None)
+    key = ec.generate_private_key(ec.SECP256R1())
+    now = datetime.now(UTC)
+    child = (
+        x509.CertificateBuilder()
+        .subject_name(parent.subject)
+        .issuer_name(parent.subject)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(days=1))
+        .not_valid_after(now + timedelta(days=365))
+        .sign(parent_key, hashes.SHA256())  # type: ignore[arg-type]
+    )
+    return (
+        child.public_bytes(serialization.Encoding.PEM),
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        ),
+    )
+
+
 class _Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         body = json.dumps({"meta": {"rc": "ok"}, "data": []}).encode()
@@ -111,8 +145,13 @@ class _QuietServer(http.server.ThreadingHTTPServer):
 class Console:
     """A loopback TLS server presenting one self-signed certificate."""
 
-    def __init__(self, tmp_path: Path, name: str = "console") -> None:
-        cert_pem, key_pem = _self_signed()
+    def __init__(
+        self,
+        tmp_path: Path,
+        name: str = "console",
+        material: tuple[bytes, bytes] | None = None,
+    ) -> None:
+        cert_pem, key_pem = material or _self_signed()
         self.cert_path = tmp_path / f"{name}.pem"
         self.cert_path.write_bytes(cert_pem)
         key_path = tmp_path / f"{name}.key"
@@ -186,6 +225,30 @@ async def test_wrong_pin_is_rejected(console: Console, other_pin: Path) -> None:
         with pytest.raises(httpx.ConnectError) as exc:
             await client.get(_url(console))
     assert tls.is_verification_failure(exc.value)
+
+
+async def test_certificate_signed_by_the_pin_is_rejected(tmp_path: Path) -> None:
+    """The pin is an identity, not a CA.
+
+    ``VERIFY_X509_PARTIAL_CHAIN`` lets the pinned leaf be the anchor; it must
+    not let it be an issuer. The console's certificate carries no CA flag,
+    and OpenSSL refuses a non-CA anchor as the issuer of anything else, so a
+    certificate signed by the console's key still fails. Pinned here by test
+    rather than trusted from memory, because this is exactly the case the
+    "hostname off" design is asked about first.
+    """
+    parent_cert, parent_key = _self_signed()
+    pin = tmp_path / "parent.pem"
+    pin.write_bytes(parent_cert)
+    impostor = Console(tmp_path, name="child", material=_signed_by(parent_cert, parent_key))
+    try:
+        ctx = tls.build_pinned_context(pin)
+        async with httpx.AsyncClient(verify=ctx) as client:
+            with pytest.raises(httpx.ConnectError) as exc:
+                await client.get(_url(impostor))
+        assert tls.is_verification_failure(exc.value)
+    finally:
+        impostor.close()
 
 
 def test_pinned_context_shape(console: Console) -> None:
