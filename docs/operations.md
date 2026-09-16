@@ -591,3 +591,32 @@ backend uses:
    SLI for SLO 2.
 4. **Errors by tool**, grouped by `mcp.tool.error_type`, which is the signal
    that a firmware change moved an endpoint.
+
+## 9. Audit persistence, bounds, and rotation
+
+Every dispatched, failed, and policy-refused tool call emits one structured
+JSONL event. Arguments, results, and free-form errors pass through the shared
+redaction and bounding layer before they reach the sink; exception messages
+are capped and credential-looking assignments are replaced. Traces never
+receive arguments or results. The `/health` route is liveness-only and returns
+only `status` and package `version`; it does not contact a controller or echo
+configuration, credentials, or bearer tokens.
+
+The default sink is `./audit.jsonl`. In a container, set
+`MCP_UNIFI_AUDIT_PATH` to a file on the named persistent audit volume. The
+following are explicit size-rotation controls:
+
+```bash
+export MCP_UNIFI_AUDIT_SINK=file
+export MCP_UNIFI_AUDIT_PATH=/var/lib/mcp-unifi/audit.jsonl
+export MCP_UNIFI_AUDIT_MAX_BYTES=10485760
+export MCP_UNIFI_AUDIT_BACKUP_COUNT=7
+```
+
+`MCP_UNIFI_AUDIT_MAX_BYTES=0` (the default) disables rotation. A positive max
+size requires a positive backup count; the sink retains that exact number of
+numbered files (`audit.jsonl.1` through `.7` in the example). No history is
+deleted unless the operator explicitly enables rotation and chooses the
+retention count. The active file and backups must be included in the
+persistent-volume backup/restore procedure. Rotation is size-based and
+serialized with event writes, so each completed `emit` is one durable line.

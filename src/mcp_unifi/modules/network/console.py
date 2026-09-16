@@ -355,6 +355,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         rebooted.
         """
         ctrl = _controller_config(name)
+        if ctrl.api_key is None:
+            raise ValueError("Controller API key was not loaded by runtime validation")
+        assert ctrl.verify_ssl is not None
         return UniFiOSClient(
             host=ctrl.host,
             api_key=ctrl.api_key.get_secret_value(),

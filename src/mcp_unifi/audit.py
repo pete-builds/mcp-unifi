@@ -54,6 +54,8 @@ logger = logging.getLogger("mcp_unifi.audit")
 from mcp_unifi.redaction import (  # noqa: E402
     REDACTED,
     SENSITIVE_KEY_PATTERNS,
+    bounded,
+    sanitize_text,
     scrub,
 )
 
@@ -124,10 +126,27 @@ class Sink(Protocol):
 
 
 class FileSink:
-    """Append-only JSONL sink. Creates parent directories as needed."""
+    """Append-only JSONL sink with explicit, optional size rotation.
 
-    def __init__(self, path: str | os.PathLike[str]) -> None:
+    ``max_bytes=0`` disables rotation. When rotation is enabled,
+    ``backup_count`` is also required to be positive; old files are retained
+    only according to that explicit operator setting, never silently purged.
+    """
+
+    def __init__(
+        self,
+        path: str | os.PathLike[str],
+        *,
+        max_bytes: int = 0,
+        backup_count: int = 0,
+    ) -> None:
+        if max_bytes < 0 or backup_count < 0:
+            raise ValueError("audit rotation limits must be non-negative")
+        if max_bytes and not backup_count:
+            raise ValueError("audit rotation requires a positive backup_count")
         self._path = Path(path)
+        self.max_bytes = max_bytes
+        self.backup_count = backup_count
         self._path.parent.mkdir(parents=True, exist_ok=True)
 
     @property
@@ -143,10 +162,26 @@ class FileSink:
         await asyncio.to_thread(self._append, line)
 
     def _append(self, line: str) -> None:
+        if self.max_bytes and self._path.exists() and self._path.stat().st_size + len(
+            line.encode("utf-8")
+        ) > self.max_bytes:
+            self._rotate()
         with self._path.open("a", encoding="utf-8") as fh:
             fh.write(line)
             fh.flush()
             os.fsync(fh.fileno())
+
+    def _rotate(self) -> None:
+        """Shift numbered backups, retaining exactly the configured count."""
+        oldest = self._path.with_name(f"{self._path.name}.{self.backup_count}")
+        if oldest.exists():
+            oldest.unlink()
+        for index in range(self.backup_count - 1, 0, -1):
+            source = self._path.with_name(f"{self._path.name}.{index}")
+            if source.exists():
+                source.replace(self._path.with_name(f"{self._path.name}.{index + 1}"))
+        if self._path.exists():
+            self._path.replace(self._path.with_name(f"{self._path.name}.1"))
 
     async def aclose(self) -> None:
         return None
@@ -205,6 +240,8 @@ class SyslogSink:
 ENV_SINK = "MCP_UNIFI_AUDIT_SINK"
 ENV_PATH = "MCP_UNIFI_AUDIT_PATH"
 ENV_SYSLOG_ADDRESS = "MCP_UNIFI_AUDIT_SYSLOG_ADDRESS"
+ENV_MAX_BYTES = "MCP_UNIFI_AUDIT_MAX_BYTES"
+ENV_BACKUP_COUNT = "MCP_UNIFI_AUDIT_BACKUP_COUNT"
 
 DEFAULT_PATH = "./audit.jsonl"
 VALID_SINKS: frozenset[str] = frozenset({"file", "stdout", "syslog"})
@@ -250,15 +287,15 @@ class AuditLog:
         """
         event = AuditEvent(
             ts=_utc_now_iso(),
-            controller=controller,
-            tool=tool,
-            args=scrub(args),
-            result=scrub(result),
+            controller=sanitize_text(controller, max_chars=128),
+            tool=sanitize_text(tool, max_chars=256),
+            args=bounded(scrub(args)),
+            result=bounded(scrub(result)),
             success=success,
             latency_ms=round(latency_ms, 3),
-            error=error,
-            client_id=client_id,
-            denied_by=denied_by,
+            error=sanitize_text(error) if error is not None else None,
+            client_id=sanitize_text(client_id, max_chars=128) if client_id is not None else None,
+            denied_by=sanitize_text(denied_by, max_chars=64) if denied_by is not None else None,
         )
         async with self._lock:
             try:
@@ -291,7 +328,16 @@ def _build_sink_from_env(env: dict[str, str] | None = None) -> Sink:
     if sink_name == "syslog":
         address = e.get(ENV_SYSLOG_ADDRESS, "/dev/log")
         return SyslogSink(address=address)
-    return FileSink(path=e.get(ENV_PATH) or DEFAULT_PATH)
+    try:
+        max_bytes = int(e.get(ENV_MAX_BYTES, "0"))
+        backup_count = int(e.get(ENV_BACKUP_COUNT, "0"))
+    except ValueError as exc:
+        raise ValueError(f"{ENV_MAX_BYTES} and {ENV_BACKUP_COUNT} must be integers") from exc
+    return FileSink(
+        path=e.get(ENV_PATH) or DEFAULT_PATH,
+        max_bytes=max_bytes,
+        backup_count=backup_count,
+    )
 
 
 def get_audit_log() -> AuditLog:
@@ -375,6 +421,8 @@ def parse_jsonl(lines: Iterable[str]) -> list[AuditEvent]:
 
 __all__ = [
     "DEFAULT_PATH",
+    "ENV_BACKUP_COUNT",
+    "ENV_MAX_BYTES",
     "ENV_PATH",
     "ENV_SINK",
     "ENV_SYSLOG_ADDRESS",

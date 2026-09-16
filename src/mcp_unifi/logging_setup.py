@@ -18,7 +18,7 @@ import sys
 from datetime import UTC, datetime
 from typing import Any
 
-from mcp_unifi.redaction import redact
+from mcp_unifi.redaction import redact, sanitize_text
 
 # The canonical list lives in redaction.py, which SECURITY.md describes as
 # covering "three emitters: the structured logger, the audit log, and tool
@@ -83,10 +83,10 @@ class JsonFormatter(logging.Formatter):
             "ts": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
-            "msg": record.getMessage(),
+            "msg": sanitize_text(record.getMessage()),
         }
         if record.exc_info:
-            payload["exc_info"] = self.formatException(record.exc_info)
+            payload["exc_info"] = sanitize_text(self.formatException(record.exc_info))
         # Surface any structured extras the caller passed through.
         extras = {
             key: _scrub(value)
@@ -96,6 +96,13 @@ class JsonFormatter(logging.Formatter):
         if extras:
             payload["extra"] = extras
         return json.dumps(payload, default=str)
+
+
+class RedactingTextFormatter(logging.Formatter):
+    """Text formatter that applies the same free-form safety rule as JSON."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        return sanitize_text(super().format(record))
 
 
 def configure_logging(level: str = "INFO", fmt: str = "json") -> None:
@@ -114,7 +121,7 @@ def configure_logging(level: str = "INFO", fmt: str = "json") -> None:
         handler.setFormatter(JsonFormatter())
     else:
         handler.setFormatter(
-            logging.Formatter(
+            RedactingTextFormatter(
                 fmt="%(asctime)s %(levelname)s %(name)s: %(message)s",
                 datefmt="%Y-%m-%dT%H:%M:%S%z",
             )

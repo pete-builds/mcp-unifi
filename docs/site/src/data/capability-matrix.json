@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "capabilities": [
+    {
+      "requirement": "FR-001",
+      "name": "controller_site_device_monitoring",
+      "status": "supported",
+      "tools": [
+        "get_controller_info",
+        "list_sites",
+        "get_site_health_bounded",
+        "list_devices_bounded",
+        "get_device_details"
+      ]
+    },
+    {
+      "requirement": "FR-002",
+      "name": "client_network_wlan_switch_monitoring",
+      "status": "supported",
+      "tools": [
+        "list_clients_bounded",
+        "list_networks_bounded",
+        "list_wlans_bounded",
+        "list_switch_ports_bounded"
+      ]
+    },
+    {
+      "requirement": "FR-003",
+      "name": "wan_events_alarms_threat_firewall_firmware_monitoring",
+      "status": "supported",
+      "tools": [
+        "get_wan_status_bounded",
+        "get_wan_traffic_bounded",
+        "list_events_bounded",
+        "list_alarms_bounded",
+        "list_threat_signals_bounded",
+        "inspect_firewall_bounded",
+        "get_firmware_info"
+      ],
+      "runtime_note": "Event and alarm endpoints return an explicit unsupported error on controller firmware that does not expose them."
+    },
+    {
+      "requirement": "FR-004",
+      "name": "configuration_mutations",
+      "status": "unsupported",
+      "tools": [],
+      "runtime_note": "No configuration mutation is part of the monitor-mode contract; registered legacy mutations are denied by policy."
+    },
+    {
+      "requirement": "FR-005",
+      "name": "device_control_mutations",
+      "status": "unsupported",
+      "tools": [],
+      "runtime_note": "No device-control mutation is part of the monitor-mode contract; registered legacy mutations are denied by policy."
+    },
+    {
+      "requirement": "FR-006",
+      "name": "bounded_secret_free_outputs",
+      "status": "supported",
+      "tools": [
+        "get_controller_info",
+        "list_devices_bounded",
+        "get_device_details",
+        "list_clients_bounded",
+        "list_networks_bounded",
+        "list_wlans_bounded",
+        "list_switch_ports_bounded",
+        "get_wan_status_bounded",
+        "get_wan_traffic_bounded",
+        "list_events_bounded",
+        "list_alarms_bounded",
+        "list_threat_signals_bounded",
+        "inspect_firewall_bounded",
+        "get_firmware_info"
+      ]
+    }
+  ]
+}

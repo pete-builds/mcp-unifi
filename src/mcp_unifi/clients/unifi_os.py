@@ -172,7 +172,7 @@ class UniFiOSClient:
         port: int = 443,
         username: str = "",
         password: str = "",
-        verify_ssl: bool = False,
+        verify_ssl: bool = True,
         timeout: float = 10.0,
     ) -> None:
         self.host = host

@@ -71,8 +71,8 @@ class UniFiClient:
         api_key: Local API key from Settings → Control Plane → Integrations.
         port: HTTPS port (default 443 for UniFi OS).
         site: Controller site identifier (default ``"default"``).
-        verify_ssl: Verify the gateway's TLS cert. Self-hosted gateways ship
-            with a self-signed cert, so this is False by default.
+        verify_ssl: Verify the gateway's TLS cert. Verification is enabled by
+            default; disabling it is an explicit non-production test override.
         timeout: Per-request timeout in seconds.
     """
 
@@ -82,7 +82,7 @@ class UniFiClient:
         api_key: str,
         port: int = 443,
         site: str = "default",
-        verify_ssl: bool = False,
+        verify_ssl: bool = True,
         timeout: float = 15.0,
     ) -> None:
         self.host = host

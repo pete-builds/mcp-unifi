@@ -73,6 +73,7 @@ including the ``partial`` record surfaced when a composite rolls back.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 #: Substrings (case-insensitive) that mark a dict key as sensitive. A key
@@ -173,6 +174,27 @@ REDACTED_OUTPUT = "[REDACTED]"
 #: compatibility with existing audit records and their tests.
 REDACTED = "***"
 
+# Free-form exception/log messages are not dictionaries, so key-based
+# redaction cannot protect them. These deliberately conservative patterns
+# catch the credential forms most likely to be echoed by HTTP clients while
+# preserving ordinary diagnostic text (including stable controller error
+# codes). Text is bounded separately by ``sanitize_text``.
+_TEXT_SECRET_PATTERNS = (
+    re.compile(r"(?i)(bearer\s+)[^\s,;]+"),
+    re.compile(
+        r"(?i)([\"'](?:api[-_ ]?key|password|passwd|passphrase|secret|token|cookie|"
+        r"session[_ -]?id|private[_ -]?key|psk)[\"']\s*[:=]\s*)([\"'])(.*?)(\2)"
+    ),
+    re.compile(
+        r"(?i)((?:api[-_ ]?key|password|passwd|passphrase|secret|token|cookie|"
+        r"session[_ -]?id|private[_ -]?key|psk)\s*[:=]\s*)[^\s,;]+"
+    ),
+)
+MAX_TEXT_CHARS = 512
+MAX_NESTING = 8
+MAX_ITEMS = 100
+MAX_STRING_CHARS = 1024
+
 
 def is_sensitive(key: str) -> bool:
     """True when ``key`` names a field whose value must never be emitted."""
@@ -218,12 +240,65 @@ def scrub(value: Any) -> Any:
     return _walk(value, REDACTED)
 
 
+def sanitize_text(value: object, *, max_chars: int = MAX_TEXT_CHARS) -> str:
+    """Scrub credentials from free-form text and impose a hard size bound.
+
+    This is for exception messages and diagnostic text, not structured tool
+    responses. Unknown text is retained (bounded) because controller error
+    codes are useful; credential-looking assignments are replaced first.
+    """
+    text = str(value)
+    text = _TEXT_SECRET_PATTERNS[0].sub(r"\1[REDACTED]", text)
+    text = _TEXT_SECRET_PATTERNS[1].sub(r"\1\2[REDACTED]\4", text)
+    text = _TEXT_SECRET_PATTERNS[2].sub(r"\1[REDACTED]", text)
+    if len(text) > max_chars:
+        return text[:max_chars] + "…"
+    return text
+
+
+def bounded(value: Any, *, sentinel: str = REDACTED) -> Any:
+    """Redact and bound arbitrary audit/diagnostic payloads recursively.
+
+    Audit records must remain useful but cannot permit a controller response
+    or caller-supplied argument to grow without limit. Containers are capped,
+    strings are truncated, and excessive nesting is replaced by a marker.
+    """
+
+    def walk(item: Any, depth: int) -> Any:
+        if depth > MAX_NESTING:
+            return "[TRUNCATED]"
+        if isinstance(item, dict):
+            output: dict[str, Any] = {}
+            for index, (key, child) in enumerate(item.items()):
+                if index >= MAX_ITEMS:
+                    output["[TRUNCATED_ITEMS]"] = f"{len(item) - MAX_ITEMS} item(s) omitted"
+                    break
+                text_key = sanitize_text(key, max_chars=128)
+                output[text_key] = sentinel if is_sensitive(text_key) else walk(child, depth + 1)
+            return output
+        if isinstance(item, list):
+            return [walk(child, depth + 1) for child in item[:MAX_ITEMS]] + (
+                [f"[TRUNCATED_ITEMS: {len(item) - MAX_ITEMS} omitted]"]
+                if len(item) > MAX_ITEMS
+                else []
+            )
+        if isinstance(item, tuple):
+            return tuple(walk(child, depth + 1) for child in item[:MAX_ITEMS])
+        if isinstance(item, str):
+            return sanitize_text(item, max_chars=MAX_STRING_CHARS)
+        return item
+
+    return walk(value, 0)
+
+
 __all__ = [
     "NON_SECRET_KEYS",
     "REDACTED",
     "REDACTED_OUTPUT",
     "SENSITIVE_KEY_PATTERNS",
+    "bounded",
     "is_sensitive",
     "redact",
+    "sanitize_text",
     "scrub",
 ]

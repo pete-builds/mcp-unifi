@@ -40,7 +40,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 # Stub mode = deterministic registration. All modules enabled = full surface.
 os.environ.setdefault("STUB_MODE", "true")
@@ -50,6 +50,7 @@ os.environ.setdefault("MCP_UNIFI_MODULES_ENABLED", "network,protect,access")
 # at registration time.
 # (ruff E402 silenced via noqa; this is intentional.)
 from mcp_unifi.config import Settings
+from mcp_unifi.modules._audit import classified_tools
 from mcp_unifi.server import build_server
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -93,11 +94,29 @@ def _serialise_schema(raw_schema: Any) -> dict[str, Any] | None:
 
 def _serialise_tool(tool: Any) -> dict[str, Any]:
     raw_schema = getattr(tool, "parameters", None) or getattr(tool, "input_schema", None)
-    name: str = getattr(tool, "name", None) or getattr(tool, "key", "<unknown>")
+    name = cast(str, getattr(tool, "name", None) or getattr(tool, "key", "<unknown>"))
     description: str = (getattr(tool, "description", "") or "").strip()
     schema = _serialise_schema(raw_schema)
+    tags = set(getattr(tool, "tags", None) or ())
+    mutates = classified_tools().get(name)
+    if mutates is None:
+        raise RuntimeError(f"registered tool {name!r} has no mutates classification")
+    module = next(
+        (candidate for candidate in ("network", "protect", "access") if candidate in tags),
+        None,
+    )
+    if module is None:
+        raise RuntimeError(f"registered tool {name!r} has no module tag")
+    runtime_support = (
+        "controller_dependent" if "unsupported" in description.lower() else "supported"
+    )
     return {
         "name": name,
+        "module": module,
+        "mutates": mutates,
+        "availability": "registered",
+        "runtime_support": runtime_support,
+        "sensitive_fields": "allowlisted_projection" if not mutates else "audit_redacted",
         "description": description,
         "input_schema": schema,
     }

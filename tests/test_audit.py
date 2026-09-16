@@ -62,7 +62,13 @@ def _reset_singleton() -> Any:
 
 @pytest.fixture
 def env_clean(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
-    for var in (audit.ENV_SINK, audit.ENV_PATH, audit.ENV_SYSLOG_ADDRESS):
+    for var in (
+        audit.ENV_SINK,
+        audit.ENV_PATH,
+        audit.ENV_SYSLOG_ADDRESS,
+        audit.ENV_MAX_BYTES,
+        audit.ENV_BACKUP_COUNT,
+    ):
         monkeypatch.delenv(var, raising=False)
     return monkeypatch
 
@@ -207,6 +213,41 @@ async def test_emit_failure_carries_error_string(tmp_path: Path) -> None:
     assert event.error == "UniFiError: 404 not found"
     record = json.loads(sink.path.read_text(encoding="utf-8").splitlines()[0])
     assert record["error"] == "UniFiError: 404 not found"
+
+
+async def test_emit_scrubs_and_bounds_free_form_failure_text(tmp_path: Path) -> None:
+    sink = FileSink(tmp_path / "audit.jsonl")
+    log = AuditLog(sink=sink)
+    event = await log.emit(
+        controller="home",
+        tool="list_devices",
+        args={},
+        result=None,
+        success=False,
+        latency_ms=1.0,
+        error="request failed api_key=plant-secret Bearer bearer-secret " + "x" * 1000,
+    )
+    error = event.error or ""
+    assert "plant-secret" not in error
+    assert "bearer-secret" not in error
+    assert len(error) <= 513
+
+
+async def test_filesink_rotates_only_when_explicitly_configured(tmp_path: Path) -> None:
+    target = tmp_path / "audit.jsonl"
+    sink = FileSink(target, max_bytes=180, backup_count=2)
+    log = AuditLog(sink=sink)
+    for index in range(8):
+        await log.emit("default", "list_devices", {"index": index}, {"ok": True}, True, 1.0)
+    assert target.exists()
+    assert target.with_name("audit.jsonl.1").exists()
+    assert target.with_name("audit.jsonl.2").exists()
+    assert not target.with_name("audit.jsonl.3").exists()
+
+
+def test_filesink_rejects_implicit_unbounded_rotation(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="positive backup_count"):
+        FileSink(tmp_path / "audit.jsonl", max_bytes=10)
 
 
 async def test_emit_creates_parent_directories(tmp_path: Path) -> None:

@@ -171,6 +171,37 @@ def test_manifest_json_round_trips() -> None:
     assert "confirm_destructive_action" in names
 
 
+def test_manifest_carries_policy_and_module_metadata() -> None:
+    """The manifest must describe the live policy boundary, not only schemas."""
+    tools = asyncio.run(generate_tool_manifest._collect_tools())
+    assert all(tool["availability"] == "registered" for tool in tools)
+    assert {tool["module"] for tool in tools} == {"network", "protect", "access"}
+    assert all(isinstance(tool["mutates"], bool) for tool in tools)
+    assert all(
+        tool["sensitive_fields"] in {"allowlisted_projection", "audit_redacted"} for tool in tools
+    )
+
+
+def test_capability_matrix_references_only_registered_read_tools() -> None:
+    """FR capability claims cannot drift into undocumented or mutating tools."""
+    manifest_path = REPO_ROOT / "docs" / "site" / "src" / "data" / "tool-manifest.json"
+    matrix_path = REPO_ROOT / "docs" / "site" / "src" / "data" / "capability-matrix.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    matrix = json.loads(matrix_path.read_text(encoding="utf-8"))
+    by_name = {tool["name"]: tool for tool in manifest["tools"]}
+    referenced = {name for capability in matrix["capabilities"] for name in capability["tools"]}
+    assert referenced <= by_name.keys()
+    assert all(not by_name[name]["mutates"] for name in referenced)
+    assert {capability["requirement"] for capability in matrix["capabilities"]} >= {
+        "FR-001",
+        "FR-002",
+        "FR-003",
+        "FR-004",
+        "FR-005",
+        "FR-006",
+    }
+
+
 # ---------------------------------------------------------------------------
 # A targeted negative test: --check fails if something's stale
 # ---------------------------------------------------------------------------
@@ -196,3 +227,14 @@ def test_check_mode_reports_drift(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     generate_tool_manifest.generate(tools, dry_run=False)
     result2 = generate_tool_manifest.generate(tools, dry_run=True)
     assert result2["changed"] == []
+
+    # Existing but stale content must also fail the drift check; an empty
+    # output directory alone does not exercise the checked-in-file path.
+    manifest_path = tmp_path / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["tools"][0]["description"] += " stale"
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    result3 = generate_tool_manifest.generate(tools, dry_run=True)
+    assert str(manifest_path) in result3["changed"]

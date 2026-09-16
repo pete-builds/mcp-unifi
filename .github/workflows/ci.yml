@@ -59,6 +59,32 @@ jobs:
           sys.exit(1 if fail else 0)
           PYEOF
 
+  supply-chain:
+    name: Supply-chain integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install the locked development environment
+        run: |
+          python -m pip install --upgrade pip
+          pip install --require-hashes -r requirements-dev.lock
+          pip install -e . --no-deps
+
+      - name: Verify hash-pinned lockfiles and direct pins
+        run: python scripts/ci_checks.py locks
+
+      - name: Scan tracked inputs for high-confidence credential material
+        run: python scripts/ci_checks.py secrets
+
+      - name: Verify generated tool and capability manifests
+        run: python scripts/generate_tool_manifest.py --check
+
   lint-and-type:
     name: Lint + Type Check
     runs-on: ubuntu-latest
@@ -183,68 +209,66 @@ jobs:
           exit-code: "1"
 
   build-and-scan-coolify:
-      name: Build and scan on Coolify
-      if: >-
-        github.event_name == 'workflow_dispatch' &&
-        github.ref == 'refs/heads/main'
-      runs-on: [self-hosted, linux, x64, Coolify]
-      timeout-minutes: 30
-  
-      permissions:
-        contents: read
-  
-      steps:
-        - name: Check runner environment
-          run: |
-            set -eu
-            uname -a
-            docker version
-            trivy --version
-  
-        - name: Check out repository
-          uses: actions/checkout@v7
-  
-        - name: Set up Docker Buildx
-          uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
-  
-        - name: Build image without pushing
-          uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
-          with:
-            context: .
-            push: false
-            load: true
-            tags: mcp-unifi:coolify-ci
-            cache-from: type=gha
-            cache-to: type=gha,mode=max
-  
-        - name: Verify image Python version
-          run: |
-            set -eu
-            docker run --rm --entrypoint python mcp-unifi:coolify-ci -c '
-            import sys
-            expected = (3, 13)
-            actual = sys.version_info[:2]
-            assert actual == expected, (
-                f"Image uses Python {actual[0]}.{actual[1]}, "
-                f"expected {expected[0]}.{expected[1]}"
-            )
-            print(f"Image Python {sys.version.split()[0]} verified")
-            '
-  
-        - name: Trivy filesystem scan
-          uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-          with:
-            scan-type: fs
-            scan-ref: .
-            severity: HIGH,CRITICAL
-            ignore-unfixed: true
-            exit-code: "1"
-  
-        - name: Trivy image scan
-          uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-          with:
-            scan-type: image
-            image-ref: mcp-unifi:coolify-ci
-            severity: HIGH,CRITICAL
-            ignore-unfixed: true
-            exit-code: "1"          
+    name: Build and scan on Coolify
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, linux, x64, Coolify]
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Check runner environment
+        run: |
+          set -eu
+          uname -a
+          docker version
+          trivy --version
+
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+
+      - name: Build image without pushing
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          push: false
+          load: true
+          tags: mcp-unifi:coolify-ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Verify image Python version
+        run: |
+          set -eu
+          docker run --rm --entrypoint python mcp-unifi:coolify-ci -c '
+          import sys
+          expected = (3, 13)
+          actual = sys.version_info[:2]
+          assert actual == expected, (
+              f"Image uses Python {actual[0]}.{actual[1]}, "
+              f"expected {expected[0]}.{expected[1]}"
+          )
+          print(f"Image Python {sys.version.split()[0]} verified")
+          '
+
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: mcp-unifi:coolify-ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"

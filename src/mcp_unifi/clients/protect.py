@@ -50,7 +50,7 @@ class ProtectClient:
         host: str,
         api_key: str,
         port: int = 443,
-        verify_ssl: bool = False,
+        verify_ssl: bool = True,
         timeout: float = 30.0,
         api_mode: Literal["internal", "integration"] = "internal",
     ) -> None:

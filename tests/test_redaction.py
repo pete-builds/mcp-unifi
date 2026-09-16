@@ -23,6 +23,7 @@ from mcp_unifi.redaction import (
     REDACTED_OUTPUT,
     is_sensitive,
     redact,
+    sanitize_text,
     scrub,
 )
 
@@ -104,6 +105,19 @@ def test_is_sensitive_matches_secret_keys(key: str) -> None:
 @pytest.mark.parametrize("key", NON_SECRET_KEYS)
 def test_is_sensitive_leaves_references_alone(key: str) -> None:
     assert is_sensitive(key) is False
+
+
+@pytest.mark.parametrize(
+    ("text", "secret"),
+    [
+        ('response: {"api_key": "json-plant-secret"}', "json-plant-secret"),
+        ("{'password': 'repr-plant-secret'}", "repr-plant-secret"),
+    ],
+)
+def test_sanitize_text_redacts_quoted_credential_assignments(text: str, secret: str) -> None:
+    cleaned = sanitize_text(text)
+    assert secret not in cleaned
+    assert "[REDACTED]" in cleaned
 
 
 def test_redact_covers_a_full_vpn_network_record() -> None:

@@ -1,0 +1,19 @@
+# Third-party and upstream notices
+
+The repository baseline is derived from `pete-builds/mcp-unifi` at commit
+`97f057c42d02b127739e33689c1700dcf853e810`.
+
+The upstream project is distributed under the MIT License. Its copyright and
+permission notice are preserved in `LICENSE` and apply to the copied upstream
+material. The upstream notice is:
+
+Copyright (c) 2026 Pete Stergion
+
+No code from `sirkirby` or another separately reviewed upstream project is
+included in this baseline. Dependencies retain their own licenses; consult
+the declared dependency manifests and lock files when producing a distribution
+or image.
+
+Taltos-specific documentation and future changes are not represented as
+upstream material. See `UPSTREAM.md` for the pinned source and the required
+difference-review process.

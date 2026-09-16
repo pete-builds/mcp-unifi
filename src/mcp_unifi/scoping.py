@@ -182,7 +182,12 @@ def _tool_modules(tool: Tool) -> set[str]:
 
 
 def _tool_is_mutating(tool: Tool) -> bool:
-    return MUTATING_TAG in (getattr(tool, "tags", None) or set())
+    tags = getattr(tool, "tags", None)
+    # Registration is required to attach at least a module tag and the
+    # mutating tag where applicable.  An existing Tool object with no tags is
+    # therefore an unclassified tool, not an implicit read.  This is the
+    # middleware-side defense in depth for a registry/API drift bug.
+    return not tags or MUTATING_TAG in tags
 
 
 async def _lookup_tool(

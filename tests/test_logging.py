@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import sys
 
 from mcp_unifi.logging_setup import JsonFormatter, _scrub, configure_logging
 
@@ -48,6 +49,41 @@ def test_json_formatter_emits_valid_json() -> None:
     assert parsed["logger"] == "test"
     assert parsed["extra"]["extra_field"]["passphrase"] == "[REDACTED]"
     assert parsed["extra"]["extra_field"]["ok"] == 1
+
+
+def test_json_formatter_scrubs_free_form_message() -> None:
+    formatter = JsonFormatter()
+    record = logging.LogRecord(
+        name="test",
+        level=logging.ERROR,
+        pathname="x",
+        lineno=1,
+        msg="request failed api_key=plant-secret Bearer bearer-secret",
+        args=(),
+        exc_info=None,
+    )
+    line = formatter.format(record)
+    assert "plant-secret" not in line
+    assert "bearer-secret" not in line
+
+
+def test_json_formatter_scrubs_quoted_exception_text() -> None:
+    formatter = JsonFormatter()
+    try:
+        raise ValueError('controller response: {"password": "exception-plant-secret"}')
+    except ValueError:
+        record = logging.LogRecord(
+            name="test",
+            level=logging.ERROR,
+            pathname="x",
+            lineno=1,
+            msg="request failed",
+            args=(),
+            exc_info=sys.exc_info(),
+        )
+    line = formatter.format(record)
+    assert "exception-plant-secret" not in line
+    assert "[REDACTED]" in line
 
 
 def test_configure_logging_replaces_handlers() -> None:

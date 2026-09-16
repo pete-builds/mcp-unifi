@@ -105,6 +105,9 @@ def build_server(
             controller's Access backend. Mirrors ``protect`` for the Access
             module.
     """
+    if settings.operation_mode == "control":
+        raise ValueError("MCP_UNIFI_MODE=control is reserved and not deployable in policy v1")
+
     stub_overrides: dict[str, Backend] | None = (
         {"default": StubBackend(stub)} if stub is not None else None
     )
@@ -212,7 +215,7 @@ def _install_write_gate_middleware(mcp: FastMCP, settings: Settings) -> None:
     keeps ``tools/list`` and ``tools/call`` on the same path they were on
     before this shipped.
     """
-    if not settings.readonly:
+    if not settings.readonly and settings.operation_mode != "monitor":
         return
     mcp.add_middleware(WriteGateMiddleware(stub_mode=settings.stub_mode))
     logger.warning(

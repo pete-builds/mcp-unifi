@@ -30,6 +30,7 @@ from mcp_unifi.modules.network import (
     guest_portal,
     honeypot,
     ipv6,
+    monitoring,
     observability,
     port_forwards,
     port_profiles,
@@ -61,6 +62,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     # broken" tool, and it is the only one that still answers when the UniFi
     # Network application itself is down.
     console.register(mcp, settings, registry)
+    monitoring.register(mcp, settings, registry)
     vlans.register(mcp, settings, registry)
     ipv6.register(mcp, settings, registry)
     wlans.register(mcp, settings, registry)

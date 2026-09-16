@@ -289,6 +289,9 @@ def build_registry(
         elif settings.stub_mode:
             backends[ctrl.name] = StubBackend(make_stub_state())
         else:
+            if ctrl.api_key is None:
+                raise ValueError("Controller API key was not loaded by runtime validation")
+            assert ctrl.verify_ssl is not None
             client = UniFiClient(
                 host=ctrl.host,
                 api_key=ctrl.api_key.get_secret_value(),
@@ -303,6 +306,9 @@ def build_registry(
         elif settings.stub_mode:
             protect_backends[ctrl.name] = ProtectStubBackend(make_protect_stub_state())
         else:
+            if ctrl.api_key is None:
+                raise ValueError("Controller API key was not loaded by runtime validation")
+            assert ctrl.verify_ssl is not None
             protect_client = ProtectClient(
                 host=ctrl.host,
                 api_key=ctrl.api_key.get_secret_value(),
@@ -321,6 +327,7 @@ def build_registry(
         elif settings.stub_mode:
             access_backends[ctrl.name] = AccessStubBackend(make_access_stub_state())
         elif ctrl.access_host and ctrl.access_api_key:
+            assert ctrl.verify_ssl is not None
             access_client = AccessClient(
                 host=ctrl.access_host,
                 api_key=ctrl.access_api_key.get_secret_value(),

@@ -39,6 +39,19 @@ _KNOWN_MODULE_SCOPES: frozenset[str] = frozenset({"network", "protect", "access"
 logger = logging.getLogger(__name__)
 
 
+def _read_secret_file(path: Path, label: str) -> str:
+    """Read one explicitly referenced secret without exposing its value."""
+    if not path.is_file():
+        raise ValueError(f"{label} file does not exist or is not a regular file")
+    try:
+        value = path.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError) as exc:
+        raise ValueError(f"{label} file cannot be read") from exc
+    if not value:
+        raise ValueError(f"{label} file is empty")
+    return value
+
+
 class ControllerConfig(BaseModel):
     """One UniFi controller endpoint.
 
@@ -54,10 +67,17 @@ class ControllerConfig(BaseModel):
 
     name: str = Field(description="Stable identifier used by tools (e.g. 'default', 'home').")
     host: str = Field(description="UniFi gateway IP or hostname.")
-    api_key: SecretStr = Field(description="API key. Wrapped in SecretStr; never logged.")
+    api_key: SecretStr | None = Field(
+        default=None,
+        description="Deprecated inline key, accepted only for stub/programmatic compatibility.",
+    )
+    api_key_file: Path | None = Field(
+        default=None,
+        description="Required real-mode reference to a local file containing the API key.",
+    )
     port: int = Field(default=443, ge=1, le=65535)
     site: str = Field(default="default")
-    verify_ssl: bool = Field(default=False)
+    verify_ssl: bool | None = Field(default=None)
     protect_api: Literal["internal", "integration"] = Field(
         default="internal",
         description=(
@@ -77,6 +97,17 @@ class ControllerConfig(BaseModel):
         description="UniFi Access API key (separate from the Network API key).",
     )
     access_port: int = Field(default=12445, ge=1, le=65535)
+
+    @model_validator(mode="after")
+    def _default_tls_policy(self) -> ControllerConfig:
+        """Verify TLS for explicit secret-file controllers by default.
+
+        The false legacy default is retained only for old inline test fixtures;
+        runtime validation rejects those fixtures before real startup.
+        """
+        if self.verify_ssl is None:
+            self.verify_ssl = self.api_key_file is not None
+        return self
 
     # UniFi OS console-session credentials. Separate from ``api_key`` on
     # purpose: the Network API key authenticates the Network application
@@ -102,7 +133,9 @@ class Settings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # Configuration must come from the process environment or explicit
+        # references. Never discover a project/CWD .env implicitly.
+        env_file=None,
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
@@ -132,6 +165,17 @@ class Settings(BaseSettings):
             "UniFi API key: the key is the authority, this makes the server "
             "unable to try. Default False so existing deployments are "
             "unaffected. Env var: MCP_UNIFI_READONLY."
+        ),
+    )
+
+    operation_mode: Literal["legacy", "monitor", "control"] = Field(
+        default="legacy",
+        validation_alias=AliasChoices("MCP_UNIFI_MODE", "operation_mode"),
+        description=(
+            "Explicit policy posture. 'monitor' enables the structural read-only "
+            "gate; 'control' is reserved and rejected in policy v1. 'legacy' "
+            "preserves the pre-policy readonly compatibility switch. Env var: "
+            "MCP_UNIFI_MODE."
         ),
     )
 
@@ -200,7 +244,7 @@ class Settings(BaseSettings):
     unifi_port: int = Field(default=443, ge=1, le=65535)
     unifi_site: str = Field(default="default")
     unifi_api_key: str = Field(default="")
-    unifi_verify_ssl: bool = Field(default=False)
+    unifi_verify_ssl: bool = Field(default=True)
     unifi_protect_api: Literal["internal", "integration"] = Field(default="internal")
 
     # ------------------------------------------------------------------
@@ -282,6 +326,16 @@ class Settings(BaseSettings):
             "stdio. Env var: MCP_UNIFI_AUTH_TOKENS."
         ),
     )
+    auth_token_file: Path | None = Field(
+        default=None,
+        validation_alias=AliasChoices("MCP_UNIFI_AUTH_TOKEN_FILE", "auth_token_file"),
+        description="Local file reference containing the HTTP bearer token.",
+    )
+    client_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("MCP_UNIFI_CLIENT_ID", "client_id"),
+        description="Explicit authenticated client identity for the bearer token.",
+    )
     auth_required: bool = Field(
         default=True,
         validation_alias=AliasChoices("MCP_UNIFI_AUTH_REQUIRED", "auth_required"),
@@ -309,9 +363,13 @@ class Settings(BaseSettings):
         Used by ``build_server`` to wire the auth provider. Per-client
         module allowlists live on :meth:`auth_client_scopes` alongside.
         """
+        raw_tokens = self.auth_tokens
+        if self.auth_token_file is not None:
+            bearer = _read_secret_file(self.auth_token_file, "bearer token")
+            raw_tokens = f"{self.client_id}:{bearer}"
         return {
             token: {"client_id": meta["client_id"], "scopes": []}
-            for token, meta in self._auth_entries().items()
+            for token, meta in self._auth_entries(raw_tokens).items()
         }
 
     @property
@@ -325,13 +383,18 @@ class Settings(BaseSettings):
         auth error. The scope map is consumed by
         :class:`mcp_unifi.scoping.ScopeMiddleware`.
         """
+        raw_tokens = self.auth_tokens
+        if self.auth_token_file is not None:
+            bearer = _read_secret_file(self.auth_token_file, "bearer token")
+            raw_tokens = f"{self.client_id}:{bearer}"
         return {
-            meta["client_id"]: meta["allowed_modules"] for meta in self._auth_entries().values()
+            meta["client_id"]: meta["allowed_modules"]
+            for meta in self._auth_entries(raw_tokens).values()
         }
 
-    def _auth_entries(self) -> dict[str, dict[str, Any]]:
+    def _auth_entries(self, raw_value: str | None = None) -> dict[str, dict[str, Any]]:
         """Parse ``auth_tokens`` once. Internal helper for the two properties above."""
-        raw = self.auth_tokens.strip()
+        raw = (self.auth_tokens if raw_value is None else raw_value).strip()
         if not raw:
             return {}
         out: dict[str, dict[str, Any]] = {}
@@ -440,6 +503,7 @@ class Settings(BaseSettings):
                         name="default",
                         host=self.unifi_host,
                         api_key=SecretStr(self.unifi_api_key),
+                        api_key_file=None,
                         port=self.unifi_port,
                         site=self.unifi_site,
                         verify_ssl=self.unifi_verify_ssl,
@@ -464,6 +528,7 @@ class Settings(BaseSettings):
                         name="default",
                         host="stub",
                         api_key=SecretStr("stub"),
+                        api_key_file=None,
                         port=self.unifi_port,
                         site=self.unifi_site,
                         verify_ssl=self.unifi_verify_ssl,
@@ -501,6 +566,28 @@ class Settings(BaseSettings):
 
         return self
 
+    def validate_runtime(self) -> None:
+        """Enforce the production configuration boundary for CLI startup."""
+        if self.stub_mode:
+            return
+        for controller in self.controllers:
+            if controller.api_key_file is None:
+                raise ValueError("Real mode requires an explicit api_key_file for every controller")
+            if controller.verify_ssl is not True:
+                raise ValueError("Real mode requires TLS certificate verification")
+            key = _read_secret_file(controller.api_key_file, "controller API key")
+            controller.api_key = SecretStr(key)
+            if controller.os_username or controller.os_password:
+                raise ValueError("Username/password authentication is not supported")
+        if self.mcp_transport != "stdio":
+            if self.auth_token_file is None:
+                raise ValueError(
+                    "Real mode requires MCP_UNIFI_AUTH_TOKEN_FILE and MCP_UNIFI_CLIENT_ID"
+                )
+            if not self.client_id.strip():
+                raise ValueError("Real mode requires MCP_UNIFI_CLIENT_ID for bearer authentication")
+            _read_secret_file(self.auth_token_file, "bearer token")
+
     def safe_repr(self) -> dict[str, object]:
         """Return a redacted dict suitable for logging at startup.
 
@@ -510,6 +597,7 @@ class Settings(BaseSettings):
         return {
             "stub_mode": self.stub_mode,
             "readonly": self.readonly,
+            "operation_mode": self.operation_mode,
             "controllers_file": str(self.controllers_file) if self.controllers_file else None,
             "default_controller": self.default_controller or None,
             "controllers": [
@@ -520,7 +608,8 @@ class Settings(BaseSettings):
                     "site": c.site,
                     "verify_ssl": c.verify_ssl,
                     "protect_api": c.protect_api,
-                    "api_key_set": bool(c.api_key.get_secret_value()),
+                    "api_key_set": bool(c.api_key and c.api_key.get_secret_value()),
+                    "api_key_file": str(c.api_key_file) if c.api_key_file else None,
                     "os_username_set": bool(c.os_username),
                     "os_password_set": bool(c.os_password and c.os_password.get_secret_value()),
                     "access_host": c.access_host,
@@ -578,9 +667,16 @@ def _load_controllers_from_yaml(path: Path) -> list[ControllerConfig]:
             f"controllers_file must contain a list (or a dict with 'controllers:' key): {path}"
         )
 
-    return [ControllerConfig(**item) for item in items]
+    controllers: list[ControllerConfig] = []
+    for item in items:
+        if not isinstance(item, dict):
+            raise ValueError(f"controllers_file entries must be mappings: {path}")
+        controllers.append(ControllerConfig(**item))
+    return controllers
 
 
 def load_settings() -> Settings:
     """Build a Settings instance from the environment. Raises on invalid config."""
-    return Settings()
+    settings = Settings()
+    settings.validate_runtime()
+    return settings
