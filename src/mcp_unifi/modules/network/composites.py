@@ -776,9 +776,20 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
           audit exists to surface, so each record carries ``predefined`` and
           the caller can tell matrix defaults from hand-written policies.
 
+        A controller mirrors each port forward into its own predefined WAN
+        policy, so the same exposure can appear in both halves of this audit.
+        Those carry ``duplicates_port_forward: true`` and are counted in
+        ``port_forward_mirror_policies``; they are tagged rather than dropped,
+        and a ``port_forward`` policy whose origin matches no listed forward
+        stays untagged, because it admits traffic the port-forward half does
+        not show.
+
         Returns ``{"port_forwards", "wan_accept_rules", "wan_accept_policies",
         "firewall_model", "wan_zone_resolved",
-        "return_traffic_policies_excluded", "summary"}``. ``firewall_model``
+        "return_traffic_policies_excluded", "port_forward_mirror_policies",
+        "summary"}``. Each entry in ``wan_accept_policies`` carries
+        ``source_zone``, ``destination_zone`` and ``duplicates_port_forward``
+        alongside the controller's own fields. ``firewall_model``
         is ``legacy``, ``zone-based``, ``mixed`` or ``none`` from what the
         controller actually returned. If the zone-based read fails the audit
         still answers from the legacy side and carries the failure in
@@ -828,8 +839,15 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
 
             wan_ids = wan_zone_ids(zones)
             zone_names = zone_names_by_id(zones)
+            # A port forward the controller already gave us above reappears
+            # here as its own mirror policy. Match on the forward's own id so
+            # a policy whose origin is NOT in that set stays a finding.
+            active_pf_ids = {
+                str(pf.get("_id")) for pf in active_pfs if isinstance(pf, dict) and pf.get("_id")
+            }
             wan_accept_policies: list[dict[str, Any]] = []
             return_traffic_excluded = 0
+            port_forward_mirrors = 0
             for policy in policies:
                 if not isinstance(policy, dict):
                     continue
@@ -851,11 +869,24 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                     continue
                 destination = policy.get("destination")
                 destination = destination if isinstance(destination, dict) else {}
+                # The controller mirrors every port forward into a predefined
+                # WAN policy, so without this the same exposure is counted in
+                # both halves of one audit (issue #112 field report). Tag it,
+                # do NOT drop it: an origin id matching no listed forward is a
+                # policy admitting traffic the port-forward half never shows,
+                # which is a finding and not a duplicate.
+                mirrors_pf = (
+                    str(policy.get("origin_type", "")) == "port_forward"
+                    and str(policy.get("origin_id", "")) in active_pf_ids
+                )
+                if mirrors_pf:
+                    port_forward_mirrors += 1
                 wan_accept_policies.append(
                     {
                         **policy,
                         "source_zone": zone_names.get(str(source.get("zone_id")), ""),
                         "destination_zone": zone_names.get(str(destination.get("zone_id")), ""),
+                        "duplicates_port_forward": mirrors_pf,
                     }
                 )
 
@@ -871,7 +902,10 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             summary_parts: list[str] = []
             summary_parts.append(f"{len(active_pfs)} active port forward(s)")
             summary_parts.append(f"{len(wan_accept_rules)} WAN accept rule(s)")
-            summary_parts.append(f"{len(wan_accept_policies)} WAN allow policy(ies)")
+            policy_part = f"{len(wan_accept_policies)} WAN allow policy(ies)"
+            if port_forward_mirrors:
+                policy_part += f" ({port_forward_mirrors} mirroring a listed port forward)"
+            summary_parts.append(policy_part)
             if return_traffic_excluded:
                 summary_parts.append(
                     f"{return_traffic_excluded} return-traffic WAN policy(ies) excluded"
@@ -889,6 +923,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 "firewall_model": firewall_model,
                 "wan_zone_resolved": bool(wan_ids),
                 "return_traffic_policies_excluded": return_traffic_excluded,
+                "port_forward_mirror_policies": port_forward_mirrors,
                 "summary": summary,
             }
             if policies_error:

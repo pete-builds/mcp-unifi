@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`audit_open_ports` counts a port forward once, not twice.** A controller
+  mirrors every port forward into its own `predefined`
+  External-to-Internal policy (`origin_type: port_forward`, `origin_id` =
+  the forward's `_id`), so since 0.22.0 the same hole was reported in both
+  halves of one audit: once under `port_forwards` and again under
+  `wan_accept_policies`. Those entries now carry
+  `duplicates_port_forward: true`, the count is in
+  `port_forward_mirror_policies`, and the summary says how many of the WAN
+  allow policies are mirrors. They are tagged rather than dropped, and the
+  tag is only applied when `origin_id` matches a forward the same audit
+  listed: a `port_forward` policy whose origin is absent from that list
+  admits traffic the port-forward half never shows, which is a finding and
+  not a duplicate. Field-reported by @MarkusNiGit against a UDM-SE on
+  UniFi OS 5.1.31 / Network 10.6.97 (77 policies, 6 zones), and verified by
+  replaying the redacted readback they attached to #112.
+
 ## [0.24.0] - 2026-09-15
 
 The rest of the field report @simonsorcerer23 filed in #124 after a day
