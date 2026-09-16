@@ -10,12 +10,12 @@ THE TEST THAT MATTERS IS ``test_annotations_agree_with_the_write_gate``.
 
 This server already classifies every tool once, via ``@audited(..., mutates=)``,
 and that classification drives the read-only gate. The annotations are a second,
-independently authored classification of the same 134 tools. Two independent
-classifications that disagree mean one of them is wrong, and the disagreement is
-mechanically findable. So rather than assert my own list back to myself, the
-test asserts the two agree -- which is a claim I could not have made true by
-copying, because the gate's answer lives in a decorator argument and the
-annotation's lives in a dict.
+independently authored classification of the same registered surface. Two
+independent classifications that disagree mean one of them is wrong, and the
+disagreement is mechanically findable. So rather than assert my own list back
+to myself, the test asserts the two agree -- which is a claim I could not have
+made true by copying, because the gate's answer lives in a decorator argument
+and the annotation's lives in a dict.
 
 ``test_prefix_classifier_would_have_missed_these`` in test_write_gate.py already
 records that a name-prefix classifier leaves 13 mutating tools callable. The
@@ -59,7 +59,7 @@ async def test_every_tool_is_annotated() -> None:
 
 @pytest.mark.asyncio
 async def test_annotations_agree_with_the_write_gate() -> None:
-    """Two independent classifications of the same 134 tools must not disagree.
+    """Two independent classifications of the registered tools must not disagree.
 
     ``readOnlyHint`` must be True exactly when the gate does NOT consider the
     tool mutating. Either side being wrong shows up here, and neither could
@@ -172,7 +172,7 @@ async def test_trigger_speedtest_is_neither_read_only_nor_destructive() -> None:
 
 @pytest.mark.asyncio
 async def test_every_tool_declares_an_open_world() -> None:
-    """All 134 talk to a UniFi controller; none operates on a closed set."""
+    """Every registered tool talks to a UniFi controller; none operates on a closed set."""
     tools = await _tools()
     closed = sorted(n for n, t in tools.items() if t.annotations.openWorldHint is not True)
     assert closed == []
