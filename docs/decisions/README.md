@@ -19,6 +19,7 @@ accepted costs**. A decision with no downside listed has not been examined.
 | [0004](0004-confirm-token-is-ceremony-not-consent.md) | The confirm-token handshake is ceremony, not consent | Interim control, known inadequate |
 | [0005](0005-writes-stay-on-the-private-network-api.md) | Writes stay on the private UniFi Network API | Accepted, with an outstanding documentation task |
 | [0006](0006-denied-by-is-a-separate-audit-field.md) | `denied_by` is a separate audit field, not a convention on `error` | Accepted |
+| [0007](0007-hardening-is-opt-in-unless-the-hole-has-no-legitimate-configuration.md) | Hardening that narrows a working install is opt-in; hardening that closes a hole with no legitimate configuration is mandatory | Accepted |
 
 ## Template
 
