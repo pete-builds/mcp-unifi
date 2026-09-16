@@ -25,9 +25,20 @@ clean just because its legacy rulesets are empty (issue #112):
   audit exists to surface, so each record carries ``predefined`` and
   the caller can tell matrix defaults from hand-written policies.
 
+A controller mirrors each port forward into its own predefined WAN
+policy, so the same exposure can appear in both halves of this audit.
+Those carry ``duplicates_port_forward: true`` and are counted in
+``port_forward_mirror_policies``; they are tagged rather than dropped,
+and a ``port_forward`` policy whose origin matches no listed forward
+stays untagged, because it admits traffic the port-forward half does
+not show.
+
 Returns ``{"port_forwards", "wan_accept_rules", "wan_accept_policies",
 "firewall_model", "wan_zone_resolved",
-"return_traffic_policies_excluded", "summary"}``. ``firewall_model``
+"return_traffic_policies_excluded", "port_forward_mirror_policies",
+"summary"}``. Each entry in ``wan_accept_policies`` carries
+``source_zone``, ``destination_zone`` and ``duplicates_port_forward``
+alongside the controller's own fields. ``firewall_model``
 is ``legacy``, ``zone-based``, ``mixed`` or ``none`` from what the
 controller actually returned. If the zone-based read fails the audit
 still answers from the legacy side and carries the failure in

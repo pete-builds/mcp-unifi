@@ -123,13 +123,15 @@ def _policy(
     enabled: bool = True,
     predefined: bool = False,
     connection_state_type: str = "ALL",
+    origin_type: str | None = None,
+    origin_id: str | None = None,
 ) -> dict[str, object]:
     endpoint = {
         "matching_target": "ANY",
         "port_matching_type": "ANY",
         "match_opposite_ports": False,
     }
-    return {
+    record: dict[str, object] = {
         "_id": name.lower().replace(" ", "-"),
         "name": name,
         "action": action,
@@ -141,6 +143,11 @@ def _policy(
         "source": {"zone_id": src, **endpoint},
         "destination": {"zone_id": dst, **endpoint},
     }
+    if origin_type is not None:
+        record["origin_type"] = origin_type
+    if origin_id is not None:
+        record["origin_id"] = origin_id
+    return record
 
 
 def _zone_ids(stub_state: StubState) -> dict[str, str]:
@@ -538,6 +545,98 @@ async def test_real_audit_open_ports_resolves_external_zone_by_name(real_server:
     assert result["wan_zone_resolved"] is True
     assert [p["name"] for p in result["wan_accept_policies"]] == ["Allow All Traffic"]
     assert result["wan_accept_policies"][0]["source_zone"] == "External"
+
+
+@respx.mock
+async def test_real_audit_open_ports_tags_port_forward_mirror_policies(
+    real_server: FastMCP,
+) -> None:
+    """Issue #112 field report, item 3: a port forward is one exposure, not two.
+
+    Shapes come from a redacted UDM-SE readback attached to #112 (UniFi OS
+    5.1.31 / Network 10.6.97): the controller mirrors each port forward into a
+    ``predefined`` External-to-Internal policy carrying
+    ``origin_type: port_forward`` and ``origin_id`` = the forward's ``_id``.
+    Those are the same hole the ``port_forwards`` half already reports.
+    """
+    respx.get(f"{BASE}/rest/firewallrule").mock(return_value=httpx.Response(200, json={"data": []}))
+    respx.get(f"{BASE}/rest/portforward").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [{"_id": "pf-xbox", "name": "Xbox", "enabled": True, "dst_port": "3074"}]
+            },
+        )
+    )
+    respx.get(f"{V2}/firewall/zone").mock(return_value=httpx.Response(200, json=_ZONES))
+    respx.get(f"{V2}/firewall-policies").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                _policy(
+                    "Allow Port Forward Xbox TCP",
+                    src="z-wan",
+                    dst="z-lan",
+                    predefined=True,
+                    origin_type="port_forward",
+                    origin_id="pf-xbox",
+                ),
+                _policy("Open SSH", src="z-wan", dst="z-lan"),
+            ],
+        )
+    )
+    result = await _call(real_server, "audit_open_ports")
+    flagged = {p["name"]: p for p in result["wan_accept_policies"]}
+    # Tagged, not dropped: the operator can still see the policy exists.
+    assert set(flagged) == {"Allow Port Forward Xbox TCP", "Open SSH"}
+    assert flagged["Allow Port Forward Xbox TCP"]["duplicates_port_forward"] is True
+    assert flagged["Open SSH"]["duplicates_port_forward"] is False
+    assert result["port_forward_mirror_policies"] == 1
+    assert "1 active port forward(s)" in result["summary"]
+    assert "2 WAN allow policy(ies) (1 mirroring a listed port forward)" in result["summary"]
+
+
+@respx.mock
+async def test_real_audit_open_ports_keeps_orphan_port_forward_policy(
+    real_server: FastMCP,
+) -> None:
+    """A ``port_forward`` policy matching no listed forward is NOT a duplicate.
+
+    This is the fail-safe on the dedupe. The forward here is disabled, so it
+    never reaches the ``port_forwards`` half, but its policy is still enabled
+    and still admits WAN traffic. Tagging it as a duplicate of something the
+    report does not contain would hide the one case worth surfacing, which is
+    the mistake #140 already had to undo for ``predefined``.
+    """
+    respx.get(f"{BASE}/rest/firewallrule").mock(return_value=httpx.Response(200, json={"data": []}))
+    respx.get(f"{BASE}/rest/portforward").mock(
+        return_value=httpx.Response(
+            200,
+            json={"data": [{"_id": "pf-old", "name": "Old", "enabled": False}]},
+        )
+    )
+    respx.get(f"{V2}/firewall/zone").mock(return_value=httpx.Response(200, json=_ZONES))
+    respx.get(f"{V2}/firewall-policies").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                _policy(
+                    "Allow Port Forward Old",
+                    src="z-wan",
+                    dst="z-lan",
+                    predefined=True,
+                    origin_type="port_forward",
+                    origin_id="pf-old",
+                ),
+            ],
+        )
+    )
+    result = await _call(real_server, "audit_open_ports")
+    assert result["port_forwards"] == []
+    assert [p["name"] for p in result["wan_accept_policies"]] == ["Allow Port Forward Old"]
+    assert result["wan_accept_policies"][0]["duplicates_port_forward"] is False
+    assert result["port_forward_mirror_policies"] == 0
+    assert "mirroring a listed port forward" not in result["summary"]
 
 
 @respx.mock
