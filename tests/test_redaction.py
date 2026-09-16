@@ -83,6 +83,12 @@ NON_SECRET_KEYS = [
     # a flag that contains ``secret``: the backup envelope's boolean. Pinned
     # by NON_SECRET_KEYS, since no narrower pattern than ``secret`` exists.
     "secrets_stripped",
+    # the paths file-backed secrets are read from, reported at startup. The
+    # path is a reference; the contents never reach a record.
+    "api_key_file",
+    "access_api_key_file",
+    "os_password_file",
+    "auth_token_file",
     # identity and shape
     "x_ipsec_esp_dh_group",
     "wpa_mode",

@@ -21,6 +21,17 @@ services:
       MCP_HOST: "0.0.0.0"
       MCP_PORT: "${MCP_PORT:-3714}"
       TZ: "${TZ:-UTC}"
+      # File-backed secrets (opt-in). Uncomment these two lines and the
+      # `secrets:` blocks below, then leave UNIFI_API_KEY and
+      # MCP_UNIFI_AUTH_TOKENS out of .env. A controller configured by
+      # UNIFI_API_KEY_FILE verifies TLS by default; set UNIFI_VERIFY_SSL=false
+      # in .env if the console still has its self-signed certificate.
+      # UNIFI_API_KEY_FILE: /run/secrets/unifi_api_key
+      # MCP_UNIFI_AUTH_TOKEN_FILE: /run/secrets/mcp_unifi_token
+      # MCP_UNIFI_CLIENT_ID: admin
+    # secrets:
+    #   - unifi_api_key
+    #   - mcp_unifi_token
     logging: *default-logging
     healthcheck:
       test: ["CMD", "python", "-m", "mcp_unifi.healthcheck"]
@@ -30,3 +41,11 @@ services:
       start_period: 10s
     security_opt:
       - no-new-privileges:true
+
+# One file per secret, mode 0400, outside the repo. Docker mounts each at
+# /run/secrets/<name> inside the container.
+# secrets:
+#   unifi_api_key:
+#     file: ./secrets/unifi_api_key
+#   mcp_unifi_token:
+#     file: ./secrets/mcp_unifi_token

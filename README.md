@@ -131,8 +131,28 @@ All config is read from environment variables (and `.env` when present). The six
 | `MCP_UNIFI_MODULES_ENABLED` | `network` | Set to `network,protect,access` to enable all three modules. |
 | `MCP_UNIFI_CONTROLLERS_FILE` | (unset) | YAML file with named controllers for multi-site. |
 | `MCP_UNIFI_OTEL_ENABLED` | `false` | Optional OpenTelemetry tracing, one span per tool call. Off by default and the SDK is not a dependency. See [Operations](docs/operations.md). |
+| `UNIFI_API_KEY_FILE` | (unset) | Read the API key from a file (a Docker or Kubernetes secret mount) instead of `UNIFI_API_KEY`. Wins if both are set, and turns TLS verification on by default. |
+| `UNIFI_ACCESS_API_KEY_FILE` | (unset) | File-backed form of `UNIFI_ACCESS_API_KEY`. |
+| `UNIFI_OS_PASSWORD_FILE` | (unset) | File-backed form of `UNIFI_OS_PASSWORD`. |
+| `MCP_UNIFI_AUTH_TOKEN_FILE` | (unset) | File holding one bearer token (or the full `MCP_UNIFI_AUTH_TOKENS` grammar). Adds to whatever `MCP_UNIFI_AUTH_TOKENS` defines. |
+| `MCP_UNIFI_CLIENT_ID` | (unset) | Client name for the bare token in `MCP_UNIFI_AUTH_TOKEN_FILE`. |
 
 Full env var reference and the multi-site YAML schema are in the [Configuration docs](https://pete-builds.github.io/mcp-unifi/reference/configuration/).
+
+### File-backed secrets
+
+Every secret has a `_FILE` twin for Docker and Kubernetes secret mounts. The environment-variable form keeps working and is not deprecated by this release; the file form is opt-in and carries the hardened defaults inside it, so a controller configured by `api_key_file` verifies the gateway's TLS certificate unless you set `verify_ssl: false`. In a controllers YAML:
+
+```yaml
+- name: lan
+  host: 192.168.1.1
+  api_key: <inline key>            # verify_ssl stays false: self-signed console on a LAN
+- name: datacenter
+  host: unifi.example.com
+  api_key_file: /run/secrets/unifi_api_key   # verify_ssl defaults to true here
+```
+
+A missing, empty or unreadable secret file fails startup with a message naming the controller and the field, never the contents. On every boot the server logs one line per controller still on the environment-variable shape or running with TLS verification off. That warning is the first step of a dated path (opt-in, then warn, then flip at a major release) recorded in [ADR 0007](docs/decisions/0007-hardening-is-opt-in-unless-the-hole-has-no-legitimate-configuration.md); nothing is refused. `docker-compose.yml` shows the secret mount.
 
 ## How this is built
 

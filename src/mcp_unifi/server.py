@@ -48,7 +48,7 @@ from mcp_unifi.clients.protect import ProtectClient
 from mcp_unifi.clients.protect_stubs import ProtectStubState
 from mcp_unifi.clients.stubs import StubState
 from mcp_unifi.clients.unifi import UniFiClient
-from mcp_unifi.config import Settings, load_settings
+from mcp_unifi.config import Settings, load_settings, log_legacy_shape_warnings
 from mcp_unifi.dispatcher import build_registry, register_modules
 from mcp_unifi.logging_setup import configure_logging
 from mcp_unifi.responses import AdaptiveResponseMiddleware
@@ -127,6 +127,11 @@ def build_server(
     # Record server-level facts that every span carries. Cheap and total when
     # tracing is off: it just stores a bool.
     telemetry.configure(stub_mode=settings.stub_mode)
+
+    # One line per controller still on the legacy shape (value-supplied API
+    # key, or TLS verification off), once per boot. ADR 0003's interim step
+    # and step 1 of ADR 0007's reversal path. Nothing is refused.
+    log_legacy_shape_warnings(settings)
 
     registry = build_registry(
         settings,

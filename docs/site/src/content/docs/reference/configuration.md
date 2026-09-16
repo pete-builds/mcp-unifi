@@ -19,10 +19,10 @@ These env vars cover the single-controller case. When set without `MCP_UNIFI_CON
 | Variable | Type | Default | Required | Notes |
 |---|---|---|---|---|
 | `UNIFI_HOST` | string | `""` | real mode | Gateway IP or hostname (no scheme). |
-| `UNIFI_API_KEY` | string | `""` | real mode | Local API key from **Settings → Control Plane → Integrations**. |
+| `UNIFI_API_KEY` | string | `""` | real mode | Local API key from **Settings → Control Plane → Integrations**. Or use `UNIFI_API_KEY_FILE` (below). |
 | `UNIFI_PORT` | int (1-65535) | `443` | no | HTTPS port for the gateway. |
 | `UNIFI_SITE` | string | `default` | no | Controller site identifier. Most setups have one site. |
-| `UNIFI_VERIFY_SSL` | bool | `false` | no | Set `true` once the gateway has a real TLS certificate. |
+| `UNIFI_VERIFY_SSL` | bool | `false` (`true` with `UNIFI_API_KEY_FILE`) | no | Set `true` once the gateway has a real TLS certificate. Left unset, it is `false` for an inline key and `true` for a file-backed one; an explicit value always wins. |
 | `UNIFI_PROTECT_API` | enum (`internal`, `integration`) | `internal` | no | Protect API surface for legacy single-controller config. `integration` uses `/proxy/protect/integration/v1` for UniFi OS 5.x API keys; events and recordings are unavailable there. |
 
 ## Multi-controller
@@ -68,6 +68,20 @@ The Streamable HTTP transport is secure by default. See the [Authentication guid
 |---|---|---|---|---|
 | `MCP_UNIFI_AUTH_REQUIRED` | bool | `true` | no | When `true`, the HTTP transport refuses to start without tokens. Set to `false` only on a loopback-bound single-host deployment. Stdio transport ignores this. |
 | `MCP_UNIFI_AUTH_TOKENS` | CSV string | `""` | HTTP + auth on | Comma-separated bearer tokens. Each entry is one of: a bare token (auto-assigned `client-N`), a `name:token` pair (recommended — name shows up in the audit log), or a `name:token:module1\|module2` triple to scope a client to specific modules. Pipe-separated because comma is the entry delimiter. Known modules: `network`, `protect`, `access`; `*` means all. |
+
+## File-backed secrets (opt-in)
+
+Every secret has a `_FILE` twin for Docker and Kubernetes secret mounts. The value form keeps working; the file form wins when both are set. A missing, empty or unreadable file fails startup with a message naming the field and the path, never the contents. In the controllers YAML the same fields are `api_key_file`, `access_api_key_file` and `os_password_file` per controller.
+
+| Variable | Type | Default | Required | Notes |
+|---|---|---|---|---|
+| `UNIFI_API_KEY_FILE` | path | (unset) | no | File containing the local API key. Wins over `UNIFI_API_KEY`. Also turns `UNIFI_VERIFY_SSL` on by default. |
+| `UNIFI_ACCESS_API_KEY_FILE` | path | (unset) | no | File containing the Access API key. Wins over `UNIFI_ACCESS_API_KEY`. |
+| `UNIFI_OS_PASSWORD_FILE` | path | (unset) | no | File containing the UniFi OS console password. Wins over `UNIFI_OS_PASSWORD`. The username is not a secret and has no file form. |
+| `MCP_UNIFI_AUTH_TOKEN_FILE` | path | (unset) | no | File holding either one bare bearer token, named by `MCP_UNIFI_CLIENT_ID`, or the same comma-separated grammar as `MCP_UNIFI_AUTH_TOKENS`. Its entries are added alongside `MCP_UNIFI_AUTH_TOKENS`; the two combine. Ignored on stdio. |
+| `MCP_UNIFI_CLIENT_ID` | string | `""` | no | Client name for a bare token in `MCP_UNIFI_AUTH_TOKEN_FILE`, as `name:token` names one inline. Requires the file; rejected when the file already carries names. |
+
+On every boot the server logs one warning per controller still on the value-supplied shape or running with TLS verification off, and one when HTTP bearer tokens come from `MCP_UNIFI_AUTH_TOKENS`. Nothing is refused. The warning is step one of the dated path in [ADR 0007](https://github.com/pete-builds/mcp-unifi/blob/main/docs/decisions/0007-hardening-is-opt-in-unless-the-hole-has-no-legitimate-configuration.md): opt-in, then warn for a release, then flip at a major.
 
 ## Read-only mode
 
@@ -129,4 +143,4 @@ The server reads `.env` from the process CWD if present. Values in the actual en
 
 ## Inspecting the resolved config
 
-On startup, the server logs a `safe_repr()` of its resolved config. Per-controller `api_key` values are never included; each controller gets an `api_key_set: true/false` boolean instead. Grep startup logs for `safe_repr` to confirm what the server actually loaded.
+On startup, the server logs a `safe_repr()` of its resolved config. Per-controller `api_key` values are never included; each controller gets an `api_key_set: true/false` boolean instead, plus the path of any `*_file` secret it loaded (the path, never the contents). Grep startup logs for `safe_repr` to confirm what the server actually loaded.
