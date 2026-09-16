@@ -180,3 +180,70 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
+
+  build-and-scan-coolify:
+      name: Build and scan on Coolify
+      if: >-
+        github.event_name == 'workflow_dispatch' &&
+        github.ref == 'refs/heads/main'
+      runs-on: [self-hosted, linux, x64, Coolify]
+      timeout-minutes: 30
+  
+      permissions:
+        contents: read
+  
+      steps:
+        - name: Check runner environment
+          run: |
+            set -eu
+            uname -a
+            docker version
+            trivy --version
+  
+        - name: Check out repository
+          uses: actions/checkout@v7
+  
+        - name: Set up Docker Buildx
+          uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+  
+        - name: Build image without pushing
+          uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+          with:
+            context: .
+            push: false
+            load: true
+            tags: mcp-unifi:coolify-ci
+            cache-from: type=gha
+            cache-to: type=gha,mode=max
+  
+        - name: Verify image Python version
+          run: |
+            set -eu
+            docker run --rm --entrypoint python mcp-unifi:coolify-ci -c '
+            import sys
+            expected = (3, 13)
+            actual = sys.version_info[:2]
+            assert actual == expected, (
+                f"Image uses Python {actual[0]}.{actual[1]}, "
+                f"expected {expected[0]}.{expected[1]}"
+            )
+            print(f"Image Python {sys.version.split()[0]} verified")
+            '
+  
+        - name: Trivy filesystem scan
+          uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+          with:
+            scan-type: fs
+            scan-ref: .
+            severity: HIGH,CRITICAL
+            ignore-unfixed: true
+            exit-code: "1"
+  
+        - name: Trivy image scan
+          uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+          with:
+            scan-type: image
+            image-ref: mcp-unifi:coolify-ci
+            severity: HIGH,CRITICAL
+            ignore-unfixed: true
+            exit-code: "1"          
