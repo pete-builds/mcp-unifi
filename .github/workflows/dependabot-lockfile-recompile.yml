@@ -1,0 +1,116 @@
+name: Dependabot lockfile recompile
+
+# Dependabot edits requirements*.in but cannot regenerate the hash-pinned uv locks the
+# image installs from, so every pip PR it opens arrives red on the required
+# "Lockfile drift (full recompile)" check and waits for a human to recompile by hand.
+# This job does that recompile on the PR branch, with the fleet's own script at the
+# same pinned uv, and pushes the result back.
+#
+# WHY IT DISPATCHES CI AFTERWARDS
+#   A push made with GITHUB_TOKEN fires no workflows, so the recompiled commit would sit
+#   with zero checks and the PR would never become mergeable. workflow_dispatch is the
+#   documented exception, and branch protection matches check runs by name on the head
+#   commit regardless of what triggered them. So ci.yml and lockfile-drift.yml carry a
+#   workflow_dispatch trigger and are dispatched here on the PR branch. No new
+#   credential; blast radius is unchanged: one repo, the built-in token.
+#
+# WHAT IT DOES NOT DECIDE
+#   Whether the PR merges. dependabot-auto-merge.yml arms native auto-merge for minor and
+#   patch bumps only, at PR-open time, and this job cannot arm anything. A major bump
+#   (fastmcp, mcp) goes green here and still waits for a human.
+#
+# WHY THE SCRIPT IS CHECKED OUT BY SHA RATHER THAN COPIED
+#   The recompile logic (fresh temp path, double compile, header restore, package-level
+#   delta) lives once in fleet-workflows. Copying it here would recreate the drift
+#   problem that repo exists to end. The SHA below is the same pin ci.yml and
+#   lockfile-recompile.yml use; Dependabot moves all three together.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'requirements.in'
+      - 'requirements-dev.in'
+      - 'pyproject.toml'
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: dependabot-recompile-${{ github.head_ref }}
+  cancel-in-progress: false
+
+jobs:
+  recompile:
+    name: Recompile locks on the Dependabot branch
+    # Same-repo Dependabot branches only. A fork cannot reach this job, and the actor
+    # check means a push made by this job (github-actions) can never re-trigger it.
+    if: >-
+      github.actor == 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.head_ref }}
+
+      - uses: actions/checkout@v7
+        with:
+          repository: pete-builds/fleet-workflows
+          ref: 97a2c0eb7bcc3801a7b9e61513629b0df2f7fd49 # v1.2.0
+          path: .fleet-workflows
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
+      - name: Install uv (pinned; must equal the pin in ci.yml and lockfile-recompile.yml)
+        run: pip install "uv==0.12.5"
+
+      - name: Recompile every lock from the command in its own header
+        id: recompile
+        run: |
+          set -euo pipefail
+          bash .fleet-workflows/lockfile-recompile/recompile-locks.sh | tee -a "$GITHUB_OUTPUT"
+          echo "uv_version=$(uv --version 2>&1 | head -1)" >> "$GITHUB_OUTPUT"
+
+      - name: Commit and push to the PR branch
+        if: steps.recompile.outputs.changed != ''
+        env:
+          CHANGED: ${{ steps.recompile.outputs.changed }}
+          DELTAS: ${{ steps.recompile.outputs.deltas }}
+          UV_VERSION: ${{ steps.recompile.outputs.uv_version }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Explicit paths, never `git add -A`: this step must be incapable of committing
+          # anything the recompile step did not itself produce.
+          git add -- $CHANGED
+          delta_txt="$(printf '%s' "$DELTAS" | sed 's/%0A/\n/g')"
+          git commit -m "deps: recompile lockfiles for this Dependabot bump" \
+                     -m "Dependabot edits requirements.in but cannot regenerate the
+          hash-pinned lock, so the drift check refuses the PR as opened. Regenerated
+          on this branch with the command recorded in each lock's own header.
+
+          ${delta_txt}
+
+          uv: ${UV_VERSION}"
+          git push origin "HEAD:${HEAD_REF}"
+
+      - name: Dispatch CI on the new head (a GITHUB_TOKEN push fires nothing by itself)
+        if: steps.recompile.outputs.changed != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          gh workflow run ci.yml --ref "$HEAD_REF"
+          gh workflow run lockfile-drift.yml --ref "$HEAD_REF"
+          echo "dispatched ci.yml and lockfile-drift.yml on $HEAD_REF"
+
+      - name: Nothing to recompile
+        if: steps.recompile.outputs.changed == ''
+        run: echo "locks already match requirements*.in; no push, no dispatch"
