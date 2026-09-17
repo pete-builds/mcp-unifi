@@ -2,7 +2,7 @@
 #
 # Each case is a request phrased the way a person actually asks it, plus the
 # tool that answers it. Every case runs three times, against a focused catalog,
-# a mid-sized one, and the full 134-tool surface, so the scoreboard shows how
+# a mid-sized one, and the full registered surface, so the scoreboard shows how
 # accuracy moves as the surface grows instead of averaging that away.
 #
 # `also_correct` lists tools that are a defensible answer to the same request.

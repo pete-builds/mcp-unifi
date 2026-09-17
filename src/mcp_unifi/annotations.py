@@ -1,4 +1,4 @@
-"""MCP tool annotations, shared by all 134 tools across the three modules.
+"""MCP tool annotations, shared by every registered tool across the three modules.
 
 WHY THIS FILE EXISTS
 --------------------

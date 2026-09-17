@@ -4,9 +4,9 @@ THE COST THIS EXISTS TO CUT
 ---------------------------
 Every tool in this server returns an indented JSON string. That string is the
 *entire* payload the model sees, and for a list tool it can run to thousands
-of tokens of ``{`` and whitespace before a single fact appears. With 134 tools
-registered, the responses dominate context long before the tool definitions
-do.
+of tokens of ``{`` and whitespace before a single fact appears. With a large
+tool surface registered, the responses dominate context long before the tool
+definitions do.
 
 MCP revision ``2025-06-18`` added ``structuredContent`` to
 ``CallToolResult``: a place to put machine-readable data that is *not* the
@@ -25,7 +25,7 @@ feature flag — an unknown client is treated as an old client.
 
 WHY MIDDLEWARE AND NOT A RETURN-TYPE CHANGE
 -------------------------------------------
-Changing 134 tool signatures from ``-> str`` to a result type would rewrite
+Changing every tool signature from ``-> str`` to a result type would rewrite
 every module, every test that reads a tool's return value, and the generated
 tool manifest, to express one transport concern. The same reasoning that put
 per-client scoping in :mod:`mcp_unifi.scoping` applies here: the tools keep

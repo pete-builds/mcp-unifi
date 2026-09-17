@@ -9,7 +9,7 @@ is driving this server, and do the server's safety controls hold when something
 is actively trying to talk its way past them.**
 
 That question does not have a published answer for MCP servers generally. A
-server can be entirely correct and still be a bad tool surface: 134 tools that
+server can be entirely correct and still be a bad tool surface: a large catalog
 a model cannot aim, a write gate that refuses correctly but keeps no evidence,
 an audit log that records something other than what happened. None of those are
 bugs a unit test is shaped to find, because none of them are wrong answers.
@@ -48,7 +48,7 @@ registration:
 |---|---|---|
 | `focused` | 8 | the correct tool plus its nearest neighbours by name and summary overlap |
 | `module` | 32 | the same neighbours, padded to a mid-sized surface |
-| `full` | all of them (134 at v0.21.1) | every registered tool, which is what a real client receives |
+| `full` | all of them | every registered tool, which is what a real client receives |
 
 The distractors in `focused` are chosen to be the *most* confusable tools on the
 surface, so that tier is not an easy warm-up. It isolates comprehension: if a

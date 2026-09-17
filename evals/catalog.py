@@ -2,8 +2,8 @@
 
 The point of this module is the **surface tier**. Asking "can the model pick
 the right tool" against one fixed catalog produces a single number that hides
-the thing worth knowing: a 134-tool server is harder to aim than an 8-tool
-server, and how much harder is the finding.
+the thing worth knowing: a full production surface is harder to aim than an
+8-tool server, and how much harder is the finding.
 
 So every tool-selection case runs three times against three surfaces built
 from the same registration:
