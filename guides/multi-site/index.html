@@ -138,8 +138,14 @@
 <tr>
 <td><code dir="auto">verify_ssl</code></td>
 <td>no</td>
-<td><code dir="auto">false</code> (<code dir="auto">true</code> with <code dir="auto">api_key_file</code>)</td>
+<td><code dir="auto">false</code> (<code dir="auto">true</code> with <code dir="auto">api_key_file</code> or <code dir="auto">pinned_cert</code>)</td>
 <td>Set <code dir="auto">true</code> if the gateway has a real TLS certificate. An explicit value always wins over the default.</td>
+</tr>
+<tr>
+<td><code dir="auto">pinned_cert</code></td>
+<td>no</td>
+<td>—</td>
+<td>Path to this console’s own certificate, recorded with <code dir="auto">mcp-unifi-pin-cert</code>. Makes it the only certificate the server accepts from this controller; a mismatch fails closed. See the <a href="/mcp-unifi/reference/configuration/#certificate-pinning">configuration reference</a>.</td>
 </tr>
 </tbody>
 </table>
