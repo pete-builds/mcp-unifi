@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Certificate pinning for self-signed consoles.** `mcp-unifi-pin-cert <host>
+  --out <path>` records a console's certificate and prints its SHA-256
+  fingerprint; `pinned_cert` on a controller (or `UNIFI_PINNED_CERT`) then
+  makes that certificate the only trust anchor for it. Hostname matching is
+  off because the pin is the identity, chain verification is required, and
+  a console presenting any other certificate fails every request closed,
+  with a message naming the re-pin command rather than suggesting
+  `verify_ssl: false`. A pin that is missing, empty or not a certificate
+  fails startup naming the controller; `verify_ssl: false` alongside a pin
+  is rejected as a contradiction. The server never fetches and trusts a
+  certificate itself. Probed live against a UCG-Fiber: the console's
+  self-signed certificate names `unifi.local` and loopback only, which is
+  why verification could never pass without a pin. This is the alternative
+  [ADR 0003](docs/decisions/0003-verify-ssl-defaults-off.md) named as the
+  one most likely to make the `verify_ssl` default obsolete; the default
+  itself has not moved (#157).
 - **File-backed secrets, opt-in.** Every secret gains a `_FILE` twin for
   Docker and Kubernetes secret mounts: `UNIFI_API_KEY_FILE`,
   `UNIFI_ACCESS_API_KEY_FILE`, `UNIFI_OS_PASSWORD_FILE` and

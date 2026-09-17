@@ -32,6 +32,12 @@ services:
     # secrets:
     #   - unifi_api_key
     #   - mcp_unifi_token
+    # Certificate pinning: mount the PEM from mcp-unifi-pin-cert read-only and
+    # point UNIFI_PINNED_CERT at it (the container filesystem is read-only).
+    # volumes:
+    #   - ./pins/home.pem:/etc/mcp-unifi/pins/home.pem:ro
+    # environment:
+    #   UNIFI_PINNED_CERT: /etc/mcp-unifi/pins/home.pem
     logging: *default-logging
     healthcheck:
       test: ["CMD", "python", "-m", "mcp_unifi.healthcheck"]

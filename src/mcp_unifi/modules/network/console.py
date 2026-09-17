@@ -361,7 +361,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             port=ctrl.port,
             username=(ctrl.os_username or ""),
             password=(ctrl.os_password.get_secret_value() if ctrl.os_password else ""),
-            verify_ssl=ctrl.verify_ssl,
+            verify_ssl=ctrl.tls_verify,
         )
 
     @mcp.tool(annotations=READ_ONLY)

@@ -136,6 +136,7 @@ All config is read from environment variables (and `.env` when present). The six
 | `UNIFI_OS_PASSWORD_FILE` | (unset) | File-backed form of `UNIFI_OS_PASSWORD`. |
 | `MCP_UNIFI_AUTH_TOKEN_FILE` | (unset) | File holding one bearer token (or the full `MCP_UNIFI_AUTH_TOKENS` grammar). Adds to whatever `MCP_UNIFI_AUTH_TOKENS` defines. |
 | `MCP_UNIFI_CLIENT_ID` | (unset) | Client name for the bare token in `MCP_UNIFI_AUTH_TOKEN_FILE`. |
+| `UNIFI_PINNED_CERT` | (unset) | Path to the console's own certificate (PEM) from `mcp-unifi-pin-cert`. When set, that certificate is the only one the server will accept from this controller. See below. |
 
 Full env var reference and the multi-site YAML schema are in the [Configuration docs](https://pete-builds.github.io/mcp-unifi/reference/configuration/).
 
@@ -153,6 +154,19 @@ Every secret has a `_FILE` twin for Docker and Kubernetes secret mounts. The env
 ```
 
 A missing, empty or unreadable secret file fails startup with a message naming the controller and the field, never the contents. On every boot the server logs one line per controller still on the environment-variable shape or running with TLS verification off. That warning is the first step of a dated path (opt-in, then warn, then flip at a major release) recorded in [ADR 0007](docs/decisions/0007-hardening-is-opt-in-unless-the-hole-has-no-legitimate-configuration.md); nothing is refused. `docker-compose.yml` shows the secret mount.
+
+### Certificate pinning
+
+UniFi consoles present a self-signed certificate whose name list does not include the address you connect to, so ordinary TLS verification can never pass against one and `verify_ssl` defaults to off. Pinning closes that gap without a CA: record the console's certificate once, and from then on the server accepts that certificate and nothing else.
+
+```bash
+mcp-unifi-pin-cert 192.168.1.1 --out /etc/mcp-unifi/pins/home.pem
+# prints the SHA-256 fingerprint; compare it against the console before trusting it
+ssh root@192.168.1.1 'openssl x509 -in /data/unifi-core/config/unifi-core.crt -noout -fingerprint -sha256'
+# the same fingerprint read on the console itself, over a channel the pin does not depend on
+```
+
+Then set `pinned_cert: /etc/mcp-unifi/pins/home.pem` on the controller in the YAML, or `UNIFI_PINNED_CERT` for the single-controller env form. A pinned controller verifies every connection against that certificate and fails closed if the console presents anything else; there is no fallback. If a firmware update regenerates the console certificate, requests fail with a message that names the re-pin command, and you re-run it with `--force` after checking the new fingerprint. The server never fetches and trusts a certificate on its own: the bootstrap is always this explicit command. Pass `--expect-fingerprint` to have it refuse a certificate that does not match what you read off the console. In the container, mount the pin read-only (the compose file shows where).
 
 ## How this is built
 

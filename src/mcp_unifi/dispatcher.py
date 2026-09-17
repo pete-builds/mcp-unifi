@@ -294,7 +294,7 @@ def build_registry(
                 api_key=ctrl.api_key.get_secret_value(),
                 port=ctrl.port,
                 site=ctrl.site,
-                verify_ssl=ctrl.verify_ssl,
+                verify_ssl=ctrl.tls_verify,
             )
             backends[ctrl.name] = RealBackend(client)
 
@@ -307,7 +307,7 @@ def build_registry(
                 host=ctrl.host,
                 api_key=ctrl.api_key.get_secret_value(),
                 port=ctrl.port,
-                verify_ssl=ctrl.verify_ssl,
+                verify_ssl=ctrl.tls_verify,
                 api_mode=ctrl.protect_api,
             )
             protect_backends[ctrl.name] = ProtectRealBackend(protect_client)

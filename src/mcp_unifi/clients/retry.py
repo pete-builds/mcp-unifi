@@ -23,6 +23,8 @@ from typing import Any
 
 import httpx
 
+from mcp_unifi import tls
+
 # The only HTTP method whose 5xx responses are safe to replay: an idempotent
 # read. Writes go through the dry-run/confirm/rollback path and are never
 # retried on 5xx.
@@ -94,6 +96,12 @@ async def request_with_retry(
         try:
             resp = await client.request(method, url, json=json)
         except httpx.ConnectError as exc:
+            if tls.is_verification_failure(exc):
+                # The console presented a certificate the client does not
+                # trust. Repeating the handshake cannot change that, and the
+                # generic "connection failed" would send an operator toward
+                # verify_ssl: false. Name the actual fix instead.
+                raise error_cls(tls.verification_failure_message(service, url)) from exc
             if not connect_retried:
                 connect_retried = True
                 logger.warning(

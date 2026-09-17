@@ -32,12 +32,15 @@ Design credit: the ``_default_tls_policy`` validator in PR #154 by
 from __future__ import annotations
 
 import logging
+import ssl
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
 from pydantic import AliasChoices, BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from mcp_unifi import tls
 
 # Duplicated (intentionally) from dispatcher.KNOWN_MODULES to keep config a
 # leaf module — importing dispatcher here would risk a circular via
@@ -121,7 +124,21 @@ class ControllerConfig(BaseModel):
             "Verify the gateway's TLS certificate. False by default (ADR 0003: "
             "consoles ship a self-signed certificate for an IP), except that a "
             "controller configured with api_key_file defaults to true (ADR "
-            "0007). An explicit value always wins over either default."
+            "0007). An explicit value always wins over either default. A "
+            "controller with pinned_cert verifies against that pin instead."
+        ),
+    )
+    pinned_cert: Path | None = Field(
+        default=None,
+        description=(
+            "Path to the console's own certificate in PEM, recorded with "
+            "mcp-unifi-pin-cert. When set it is the ONLY trust anchor for this "
+            "controller: the console must present exactly that certificate, "
+            "hostname matching is off because the pin is the identity, and a "
+            "mismatch fails every request closed. Turns verify_ssl on; setting "
+            "verify_ssl: false alongside it is a contradiction and fails startup. "
+            "Applies to the Network, Protect and console-session clients on this "
+            "host; the Access hub is a separate host and keeps verify_ssl."
         ),
     )
     protect_api: Literal["internal", "integration"] = Field(
@@ -199,8 +216,52 @@ class ControllerConfig(BaseModel):
             resolved[file_field] = path
             resolved[value_field] = _read_secret_file(path, f"controller '{name}' {file_field}")
         if resolved.get("verify_ssl") is None:
-            resolved["verify_ssl"] = resolved.get("api_key_file") is not None
+            resolved["verify_ssl"] = (
+                resolved.get("api_key_file") is not None or resolved.get("pinned_cert") is not None
+            )
         return resolved
+
+    @model_validator(mode="after")
+    def _check_pinned_cert(self) -> ControllerConfig:
+        """Fail startup on a pin that cannot be loaded or that contradicts verify_ssl.
+
+        The pin is read and parsed here rather than at first request so a
+        controller never boots configured for a pin it cannot honour. A
+        pinned controller with ``verify_ssl: false`` is refused outright: the
+        two settings name opposite intents and picking one silently is the
+        shape ADR 0003 rejects.
+        """
+        if self.pinned_cert is None:
+            return self
+        self.pinned_cert = self.pinned_cert.expanduser()
+        tls.load_pinned_cert(self.pinned_cert, f"controller '{self.name}' pinned_cert")
+        if not self.verify_ssl:
+            raise ValueError(
+                f"controller '{self.name}': pinned_cert is set but verify_ssl is false. "
+                f"A pin means verify against this certificate; remove one of the two."
+            )
+        return self
+
+    @property
+    def tls_verify(self) -> bool | ssl.SSLContext:
+        """What the HTTP clients pass as ``verify``.
+
+        A pinned controller gets a context whose only trust anchor is its
+        pin; anything else gets the plain ``verify_ssl`` flag. Built per call
+        because each client owns its own connection pool.
+        """
+        if self.pinned_cert is not None:
+            return tls.build_pinned_context(
+                self.pinned_cert, f"controller '{self.name}' pinned_cert"
+            )
+        return self.verify_ssl
+
+    @property
+    def pinned_cert_sha256(self) -> str | None:
+        """SHA-256 of the pinned certificate, or ``None``. Public material, safe to log."""
+        if self.pinned_cert is None:
+            return None
+        return tls.fingerprint_sha256(tls.load_pinned_cert(self.pinned_cert, "pinned_cert"))
 
 
 class Settings(BaseSettings):
@@ -325,6 +386,13 @@ class Settings(BaseSettings):
         ),
     )
     unifi_protect_api: Literal["internal", "integration"] = Field(default="internal")
+    unifi_pinned_cert: Path | None = Field(
+        default=None,
+        description=(
+            "Path to the console's certificate in PEM, from mcp-unifi-pin-cert "
+            "(legacy). Promoted onto pinned_cert. Env var: UNIFI_PINNED_CERT."
+        ),
+    )
 
     # ------------------------------------------------------------------
     # Legacy single-controller UniFi Access connection (v0.10+).
@@ -653,6 +721,7 @@ class Settings(BaseSettings):
                         host=self.unifi_host,
                         api_key=SecretStr(self.unifi_api_key),
                         api_key_file=self.unifi_api_key_file,
+                        pinned_cert=self.unifi_pinned_cert,
                         port=self.unifi_port,
                         site=self.unifi_site,
                         protect_api=self.unifi_protect_api,
@@ -734,6 +803,8 @@ class Settings(BaseSettings):
                     "port": c.port,
                     "site": c.site,
                     "verify_ssl": c.verify_ssl,
+                    "pinned_cert": str(c.pinned_cert) if c.pinned_cert else None,
+                    "pinned_cert_sha256": c.pinned_cert_sha256,
                     "protect_api": c.protect_api,
                     "api_key_set": bool(c.api_key.get_secret_value()),
                     "api_key_file": str(c.api_key_file) if c.api_key_file else None,
@@ -788,7 +859,10 @@ def log_legacy_shape_warnings(settings: Settings) -> int:
         if c.api_key_file is None:
             legacy.append("API key supplied as a value (file-backed form: api_key_file)")
         if not c.verify_ssl:
-            legacy.append("TLS verification off (verify_ssl: true)")
+            legacy.append(
+                "TLS verification off (pin the console certificate with "
+                f"{tls.PIN_COMMAND} and set pinned_cert, or set verify_ssl: true)"
+            )
         if legacy:
             logger.warning(
                 "controller '%s' runs the legacy configuration shape: %s. Supported "
@@ -826,6 +900,10 @@ def _load_controllers_from_yaml(path: Path) -> list[ControllerConfig]:
         - name: datacenter
           host: unifi.example.com
           api_key_file: /run/secrets/unifi_api_key   # verify_ssl defaults to true here
+        - name: home
+          host: 192.168.1.1
+          api_key: ghi789
+          pinned_cert: /etc/mcp-unifi/pins/home.pem  # from mcp-unifi-pin-cert
 
     Raises ValueError if the file can't be read or parsed.
     """
