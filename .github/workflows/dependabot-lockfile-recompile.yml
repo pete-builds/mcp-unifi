@@ -6,13 +6,17 @@ name: Dependabot lockfile recompile
 # This job does that recompile on the PR branch, with the fleet's own script at the
 # same pinned uv, and pushes the result back.
 #
-# WHY IT DISPATCHES CI AFTERWARDS
+# WHY THE PUSH USES AN APP TOKEN AND NOT GITHUB_TOKEN
 #   A push made with GITHUB_TOKEN fires no workflows, so the recompiled commit would sit
-#   with zero checks and the PR would never become mergeable. workflow_dispatch is the
-#   documented exception, and branch protection matches check runs by name on the head
-#   commit regardless of what triggered them. So ci.yml and lockfile-drift.yml carry a
-#   workflow_dispatch trigger and are dispatched here on the PR branch. No new
-#   credential; blast radius is unchanged: one repo, the built-in token.
+#   with zero checks and the PR would never become mergeable. The obvious escape,
+#   workflow_dispatch (the documented exception), was tried on this PR's own branch on
+#   2026-09-17 and DISPROVEN: both dispatched suites completed green on the commit, and
+#   the commit's statusCheckRollup stayed null, so branch protection and auto-merge never
+#   saw them. Only a real pull_request event counts, and only a non-GITHUB_TOKEN push
+#   produces one. Hence a GitHub App installed on this repo alone, contents:write only,
+#   minted per run and expiring in an hour. Its App ID and private key live as REPO
+#   secrets AND as DEPENDABOT secrets, because a workflow triggered by dependabot[bot]
+#   can read only the latter.
 #
 # WHAT IT DOES NOT DECIDE
 #   Whether the PR merges. dependabot-auto-merge.yml arms native auto-merge for minor and
@@ -34,8 +38,7 @@ on:
       - 'pyproject.toml'
 
 permissions:
-  contents: write
-  actions: write
+  contents: read
 
 concurrency:
   group: dependabot-recompile-${{ github.head_ref }}
@@ -51,9 +54,16 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ secrets.FLEET_RECOMPILE_APP_ID }}
+          private-key: ${{ secrets.FLEET_RECOMPILE_APP_PRIVATE_KEY }}
+
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.head_ref }}
+          token: ${{ steps.app-token.outputs.token }}
 
       - uses: actions/checkout@v7
         with:
@@ -98,18 +108,9 @@ jobs:
           ${delta_txt}
 
           uv: ${UV_VERSION}"
+          # The App token persisted by checkout makes this a real push event: ci.yml and
+          # lockfile-drift.yml run on the new head exactly as they would for a human push.
           git push origin "HEAD:${HEAD_REF}"
-
-      - name: Dispatch CI on the new head (a GITHUB_TOKEN push fires nothing by itself)
-        if: steps.recompile.outputs.changed != ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HEAD_REF: ${{ github.head_ref }}
-        run: |
-          set -euo pipefail
-          gh workflow run ci.yml --ref "$HEAD_REF"
-          gh workflow run lockfile-drift.yml --ref "$HEAD_REF"
-          echo "dispatched ci.yml and lockfile-drift.yml on $HEAD_REF"
 
       - name: Nothing to recompile
         if: steps.recompile.outputs.changed == ''

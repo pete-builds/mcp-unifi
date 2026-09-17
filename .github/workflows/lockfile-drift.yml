@@ -16,9 +16,6 @@ on:
   pull_request:
   push:
     branches: [main]
-  # Dispatched by dependabot-lockfile-recompile.yml after it pushes a recompiled
-  # lock with GITHUB_TOKEN, because that push fires no pull_request event.
-  workflow_dispatch:
 
 permissions:
   contents: read
