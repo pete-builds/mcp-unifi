@@ -839,9 +839,6 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
 
             wan_ids = wan_zone_ids(zones)
             zone_names = zone_names_by_id(zones)
-            # A port forward the controller already gave us above reappears
-            # here as its own mirror policy. Match on the forward's own id so
-            # a policy whose origin is NOT in that set stays a finding.
             active_pf_ids = {
                 str(pf.get("_id")) for pf in active_pfs if isinstance(pf, dict) and pf.get("_id")
             }
