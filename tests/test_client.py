@@ -246,6 +246,17 @@ async def test_connection_error_retries_then_raises(client: UniFiClient) -> None
 
 
 @respx.mock
+async def test_verification_failure_is_not_retried(client: UniFiClient) -> None:
+    """A rejected certificate cannot change between attempts; name the fix instead."""
+    route = respx.get(f"{BASE}/stat/device").mock(
+        side_effect=httpx.ConnectError("[SSL: CERTIFICATE_VERIFY_FAILED] self-signed")
+    )
+    with pytest.raises(UniFiError, match="TLS verification failed"):
+        await client.list_devices()
+    assert route.call_count == 1
+
+
+@respx.mock
 async def test_connection_error_succeeds_on_retry(client: UniFiClient) -> None:
     route = respx.get(f"{BASE}/stat/device").mock(
         side_effect=[httpx.ConnectError("nope"), httpx.Response(200, json={"data": []})]

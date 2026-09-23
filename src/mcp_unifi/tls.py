@@ -66,22 +66,30 @@ def normalise_fingerprint(value: str) -> str:
     return value.replace(":", "").strip().lower()
 
 
-def load_pinned_cert(path: Path, label: str) -> bytes:
-    """Read a PEM certificate and return its DER bytes.
+def read_text_file(path: Path, label: str) -> str:
+    """Read a file the configuration points at, or raise naming the file and never its contents.
 
-    Every failure is a ``ValueError`` naming ``label`` and the path: a pin
-    that cannot be read must fail startup, because a controller silently
-    running without the pin it was configured with is the outcome pinning
-    exists to prevent.
+    Shared by every file-backed setting (secret mounts and pins alike). Every
+    failure is a ``ValueError`` naming ``label`` and the path, and each is a
+    startup error on purpose: a missing Docker secret or an unreadable pin
+    must fail the boot, not fall through to an empty key the controller
+    rejects on the first tool call, or to a controller silently running
+    without the pin it was configured with.
     """
     if not path.is_file():
         raise ValueError(f"{label}: {path} does not exist or is not a regular file")
     try:
-        pem = path.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:
         raise ValueError(f"{label}: {path} cannot be read ({type(exc).__name__})") from exc
-    if not pem.strip():
+    if not text.strip():
         raise ValueError(f"{label}: {path} is empty")
+    return text
+
+
+def load_pinned_cert(path: Path, label: str) -> bytes:
+    """Read a PEM certificate and return its DER bytes; see :func:`read_text_file`."""
+    pem = read_text_file(path, label)
     blocks = pem.count(_PEM_BEGIN)
     if blocks != 1:
         # load_verify_locations would trust every certificate in a bundle
@@ -141,8 +149,13 @@ class PinnedContext(ssl.SSLContext):
     pinned_der: bytes | None = None
 
 
-def build_pinned_context(path: Path, label: str = "pinned_cert") -> ssl.SSLContext:
+def build_pinned_context(der: bytes) -> ssl.SSLContext:
     """Build a client TLS context that accepts exactly the pinned certificate.
+
+    Takes the DER bytes :func:`load_pinned_cert` returned so the trust anchor
+    OpenSSL loads and the bytes the exact-match check compares against are
+    one and the same object, read once. One context serves every client for
+    the controller: httpx never mutates a ``verify=`` context.
 
     Two checks, both required. ``verify_mode`` is ``CERT_REQUIRED`` with the
     system trust store not loaded, so the chain must end at the pin;
@@ -154,12 +167,11 @@ def build_pinned_context(path: Path, label: str = "pinned_cert") -> ssl.SSLConte
     address (see the module docstring) and the pin is a stronger identity
     claim than a name match against a self-issued name.
     """
-    der = load_pinned_cert(path, label)  # fail early, with the same message shape
     ctx = PinnedContext(ssl.PROTOCOL_TLS_CLIENT)
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_REQUIRED
     ctx.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
-    ctx.load_verify_locations(cafile=str(path))
+    ctx.load_verify_locations(cadata=der)
     ctx.pinned_der = der
     return ctx
 
@@ -232,5 +244,6 @@ __all__ = [
     "is_verification_failure",
     "load_pinned_cert",
     "normalise_fingerprint",
+    "read_text_file",
     "verification_failure_message",
 ]

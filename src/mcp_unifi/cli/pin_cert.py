@@ -76,7 +76,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         der = fetch_server_certificate(args.host, args.port, timeout=args.timeout)
-    except (OSError, ValueError, ssl.SSLError) as exc:
+    except (OSError, ValueError) as exc:  # ssl.SSLError is an OSError
         print(f"could not fetch a certificate from {args.host}:{args.port}: {exc}", file=sys.stderr)
         return 2
 

@@ -13,45 +13,25 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from pydantic import SecretStr, ValidationError
+from pydantic import AliasChoices, SecretStr, ValidationError
 
-from mcp_unifi.config import ADR_0007, ControllerConfig, Settings, log_legacy_shape_warnings
+from mcp_unifi.config import ADR_0007, ControllerConfig, Settings
 from mcp_unifi.logging_setup import JsonFormatter
+from mcp_unifi.redaction import redact
 from mcp_unifi.server import build_server
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+pytestmark = pytest.mark.usefixtures("clean_unifi_env")
 
 API_KEY = "file-api-key-9f3a7c"
 ACCESS_KEY = "file-access-key-b81d"
 OS_PASSWORD = "file-console-pass-4e2f"
 BEARER = "d4c3b2a1f0e9d8c7b6a5f4e3d2c1b0a9d4c3b2a1f0e9d8c7b6a5f4e3d2c1b0a9"
-
-_ENV_VARS = (
-    "STUB_MODE",
-    "UNIFI_HOST",
-    "UNIFI_API_KEY",
-    "UNIFI_API_KEY_FILE",
-    "UNIFI_VERIFY_SSL",
-    "UNIFI_ACCESS_API_KEY_FILE",
-    "UNIFI_OS_PASSWORD_FILE",
-    "MCP_TRANSPORT",
-    "MCP_UNIFI_CONTROLLERS_FILE",
-    "MCP_UNIFI_AUTH_TOKENS",
-    "MCP_UNIFI_AUTH_TOKEN_FILE",
-    "MCP_UNIFI_CLIENT_ID",
-    "MCP_UNIFI_AUTH_REQUIRED",
-)
-
-
-@pytest.fixture(autouse=True)
-def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Nothing from a developer's shell or ``.env`` may shape these tests."""
-    for var in _ENV_VARS:
-        monkeypatch.delenv(var, raising=False)
 
 
 def _write(tmp_path: Path, name: str, contents: str) -> Path:
@@ -65,10 +45,12 @@ def key_file(tmp_path: Path) -> Path:
     return _write(tmp_path, "unifi_api_key", f"{API_KEY}\n")
 
 
-def _config_warnings(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
-    return [
-        r for r in caplog.records if r.name == "mcp_unifi.config" and r.levelno == logging.WARNING
-    ]
+def _legacy_env(monkeypatch: pytest.MonkeyPatch, **env: str) -> None:
+    """Real mode against a host, plus whatever the test sets on top."""
+    monkeypatch.setenv("STUB_MODE", "false")
+    monkeypatch.setenv("UNIFI_HOST", env.pop("UNIFI_HOST", "h"))
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
 
 
 # ---------------------------------------------------------------------------
@@ -184,9 +166,7 @@ def test_access_and_console_password_files_resolve_and_win(tmp_path: Path) -> No
 
 
 def test_legacy_env_api_key_file_promotes(monkeypatch: pytest.MonkeyPatch, key_file: Path) -> None:
-    monkeypatch.setenv("STUB_MODE", "false")
-    monkeypatch.setenv("UNIFI_HOST", "unifi.example.com")
-    monkeypatch.setenv("UNIFI_API_KEY_FILE", str(key_file))
+    _legacy_env(monkeypatch, UNIFI_HOST="unifi.example.com", UNIFI_API_KEY_FILE=str(key_file))
     s = Settings()
     c = s.controllers[0]
     assert c.name == "default"
@@ -196,29 +176,21 @@ def test_legacy_env_api_key_file_promotes(monkeypatch: pytest.MonkeyPatch, key_f
 
 
 def test_legacy_env_value_keeps_the_adr_0003_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("STUB_MODE", "false")
-    monkeypatch.setenv("UNIFI_HOST", "192.168.1.1")
-    monkeypatch.setenv("UNIFI_API_KEY", "inline")
+    _legacy_env(monkeypatch, UNIFI_HOST="192.168.1.1", UNIFI_API_KEY="inline")
     c = Settings().controllers[0]
     assert c.api_key.get_secret_value() == "inline"
     assert c.verify_ssl is False
 
 
 def test_legacy_env_file_wins_over_value(monkeypatch: pytest.MonkeyPatch, key_file: Path) -> None:
-    monkeypatch.setenv("STUB_MODE", "false")
-    monkeypatch.setenv("UNIFI_HOST", "h")
-    monkeypatch.setenv("UNIFI_API_KEY", "inline")
-    monkeypatch.setenv("UNIFI_API_KEY_FILE", str(key_file))
+    _legacy_env(monkeypatch, UNIFI_API_KEY="inline", UNIFI_API_KEY_FILE=str(key_file))
     assert Settings().controllers[0].api_key.get_secret_value() == API_KEY
 
 
 def test_legacy_env_explicit_verify_ssl_false_with_file(
     monkeypatch: pytest.MonkeyPatch, key_file: Path
 ) -> None:
-    monkeypatch.setenv("STUB_MODE", "false")
-    monkeypatch.setenv("UNIFI_HOST", "h")
-    monkeypatch.setenv("UNIFI_API_KEY_FILE", str(key_file))
-    monkeypatch.setenv("UNIFI_VERIFY_SSL", "false")
+    _legacy_env(monkeypatch, UNIFI_API_KEY_FILE=str(key_file), UNIFI_VERIFY_SSL="false")
     assert Settings().controllers[0].verify_ssl is False
 
 
@@ -227,13 +199,14 @@ def test_legacy_env_secondary_files_promote(
 ) -> None:
     access = _write(tmp_path, "access", ACCESS_KEY)
     console = _write(tmp_path, "console", OS_PASSWORD)
-    monkeypatch.setenv("STUB_MODE", "false")
-    monkeypatch.setenv("UNIFI_HOST", "h")
-    monkeypatch.setenv("UNIFI_API_KEY", "inline")
-    monkeypatch.setenv("UNIFI_ACCESS_HOST", "hub")
-    monkeypatch.setenv("UNIFI_ACCESS_API_KEY_FILE", str(access))
-    monkeypatch.setenv("UNIFI_OS_USERNAME", "admin")
-    monkeypatch.setenv("UNIFI_OS_PASSWORD_FILE", str(console))
+    _legacy_env(
+        monkeypatch,
+        UNIFI_API_KEY="inline",
+        UNIFI_ACCESS_HOST="hub",
+        UNIFI_ACCESS_API_KEY_FILE=str(access),
+        UNIFI_OS_USERNAME="admin",
+        UNIFI_OS_PASSWORD_FILE=str(console),
+    )
     c = Settings().controllers[0]
     assert c.access_api_key is not None
     assert c.access_api_key.get_secret_value() == ACCESS_KEY
@@ -416,6 +389,26 @@ def test_safe_repr_reports_paths_and_never_contents(tmp_path: Path) -> None:
     assert controller["os_password_set"] is True
 
 
+def _file_fields() -> set[str]:
+    """Every ``*_file`` field the startup line can report, by its safe_repr key."""
+    controller = {f for f in ControllerConfig.model_fields if f.endswith("_file")}
+    settings = {
+        f for f in Settings.model_fields if f.endswith("_file") and not f.startswith("unifi_")
+    }
+    return controller | settings
+
+
+def test_every_file_field_survives_redaction() -> None:
+    """A path field whose name contains ``key``, ``password`` or ``token``
+    would come out of the startup line as ``[REDACTED]`` unless it is listed
+    in ``NON_SECRET_KEYS``. The next ``*_file`` field must be added there
+    too, and this is the test that says so."""
+    fields = _file_fields()
+    assert {"api_key_file", "auth_token_file"} <= fields, fields
+    paths = dict.fromkeys(fields, "/run/secrets/x")
+    assert redact(paths) == paths
+
+
 def test_no_secret_reaches_any_log_record(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     """Boot exactly as ``main()`` does and read every record back rendered.
 
@@ -442,15 +435,14 @@ def test_no_secret_reaches_any_log_record(tmp_path: Path, caplog: pytest.LogCapt
 # ---------------------------------------------------------------------------
 
 
-def test_legacy_controller_is_named_exactly_once(caplog: pytest.LogCaptureFixture) -> None:
-    caplog.set_level(logging.WARNING)
+def test_legacy_controller_is_named_exactly_once(
+    config_warnings: Callable[[], list[str]],
+) -> None:
     s = Settings(
         stub_mode=False, unifi_host="192.168.1.1", unifi_api_key="inline", mcp_transport="stdio"
     )
     build_server(s)
-    warnings = _config_warnings(caplog)
-    assert len(warnings) == 1
-    msg = warnings[0].getMessage()
+    (msg,) = config_warnings()
     assert "controller 'default'" in msg
     assert "API key supplied as a value" in msg
     assert "TLS verification off" in msg
@@ -459,9 +451,8 @@ def test_legacy_controller_is_named_exactly_once(caplog: pytest.LogCaptureFixtur
 
 
 def test_hardened_controller_is_silent(
-    tmp_path: Path, key_file: Path, caplog: pytest.LogCaptureFixture
+    key_file: Path, config_warnings: Callable[[], list[str]]
 ) -> None:
-    caplog.set_level(logging.WARNING)
     s = Settings(
         stub_mode=False,
         unifi_host="unifi.example.com",
@@ -469,13 +460,12 @@ def test_hardened_controller_is_silent(
         mcp_transport="stdio",
     )
     build_server(s)
-    assert _config_warnings(caplog) == []
+    assert config_warnings() == []
 
 
 def test_file_key_with_tls_off_still_warns_about_tls_only(
-    key_file: Path, caplog: pytest.LogCaptureFixture
+    key_file: Path, config_warnings: Callable[[], list[str]]
 ) -> None:
-    caplog.set_level(logging.WARNING)
     s = Settings(
         stub_mode=False,
         unifi_host="h",
@@ -484,16 +474,14 @@ def test_file_key_with_tls_off_still_warns_about_tls_only(
         mcp_transport="stdio",
     )
     build_server(s)
-    (record,) = _config_warnings(caplog)
-    msg = record.getMessage()
+    (msg,) = config_warnings()
     assert "TLS verification off" in msg
     assert "API key supplied as a value" not in msg
 
 
 def test_mixed_controllers_warn_only_for_the_legacy_one(
-    key_file: Path, caplog: pytest.LogCaptureFixture
+    key_file: Path, config_warnings: Callable[[], list[str]]
 ) -> None:
-    caplog.set_level(logging.WARNING)
     s = Settings(
         stub_mode=False,
         mcp_transport="stdio",
@@ -503,38 +491,38 @@ def test_mixed_controllers_warn_only_for_the_legacy_one(
         ],
     )
     build_server(s)
-    (record,) = _config_warnings(caplog)
-    assert "controller 'lan'" in record.getMessage()
-    assert "'dc'" not in record.getMessage()
+    (msg,) = config_warnings()
+    assert "controller 'lan'" in msg
+    assert "'dc'" not in msg
 
 
-def test_stub_mode_never_warns(caplog: pytest.LogCaptureFixture) -> None:
-    caplog.set_level(logging.WARNING)
+def test_stub_mode_never_warns(config_warnings: Callable[[], list[str]]) -> None:
     build_server(Settings(auth_required=False))
-    assert _config_warnings(caplog) == []
+    assert config_warnings() == []
 
 
-def test_env_bearer_tokens_warn_on_http_only(caplog: pytest.LogCaptureFixture) -> None:
-    caplog.set_level(logging.WARNING)
+def test_env_bearer_tokens_warn_on_http_only(
+    config_warnings: Callable[[], list[str]], caplog: pytest.LogCaptureFixture
+) -> None:
     base = {"stub_mode": False, "unifi_host": "h", "unifi_api_key": "k", "auth_tokens": "a:tok"}
     build_server(Settings(**base, mcp_transport="streamable-http"))  # type: ignore[arg-type]
-    http = [r for r in _config_warnings(caplog) if "MCP_UNIFI_AUTH_TOKENS" in r.getMessage()]
-    assert len(http) == 1
-    assert "MCP_UNIFI_AUTH_TOKEN_FILE" in http[0].getMessage()
+    (http,) = [m for m in config_warnings() if "MCP_UNIFI_AUTH_TOKENS" in m]
+    assert "MCP_UNIFI_AUTH_TOKEN_FILE" in http
     caplog.clear()
     build_server(Settings(**base, mcp_transport="stdio"))  # type: ignore[arg-type]
-    assert not [r for r in _config_warnings(caplog) if "MCP_UNIFI_AUTH_TOKENS" in r.getMessage()]
+    assert not [m for m in config_warnings() if "MCP_UNIFI_AUTH_TOKENS" in m]
 
 
-def test_file_bearer_token_does_not_warn(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-    caplog.set_level(logging.WARNING)
-    s = _all_file_settings(tmp_path)
-    build_server(s)
-    assert _config_warnings(caplog) == []
+def test_file_bearer_token_does_not_warn(
+    tmp_path: Path, config_warnings: Callable[[], list[str]]
+) -> None:
+    build_server(_all_file_settings(tmp_path))
+    assert config_warnings() == []
 
 
-def test_return_value_counts_the_lines(key_file: Path, caplog: pytest.LogCaptureFixture) -> None:
-    caplog.set_level(logging.WARNING)
+def test_one_line_per_legacy_controller_plus_one_for_env_tokens(
+    key_file: Path, config_warnings: Callable[[], list[str]]
+) -> None:
     s = Settings(
         stub_mode=False,
         auth_tokens="a:tok",
@@ -544,15 +532,14 @@ def test_return_value_counts_the_lines(key_file: Path, caplog: pytest.LogCapture
             ControllerConfig(name="old", host="10.0.0.1", api_key=SecretStr("inline2")),
         ],
     )
-    assert log_legacy_shape_warnings(s) == 3
-    assert len(_config_warnings(caplog)) == 3
+    build_server(s)
+    assert len(config_warnings()) == 3
 
 
 # ---------------------------------------------------------------------------
 # Docs guard: every _FILE variable the code accepts is in the two config tables
 # ---------------------------------------------------------------------------
 
-_CONFIG_SOURCE = REPO_ROOT / "src" / "mcp_unifi" / "config.py"
 _CONFIG_DOCS = (
     REPO_ROOT / "README.md",
     REPO_ROOT / "docs" / "site" / "src" / "content" / "docs" / "reference" / "configuration.md",
@@ -560,11 +547,17 @@ _CONFIG_DOCS = (
 
 
 def _file_env_vars() -> set[str]:
-    """Every ``*_FILE`` environment variable ``config.py`` binds."""
-    text = _CONFIG_SOURCE.read_text(encoding="utf-8")
-    aliased = set(re.findall(r'AliasChoices\("(MCP_UNIFI_[A-Z_]*_FILE)"', text))
-    legacy = {m.upper() for m in re.findall(r"^\s{4}(unifi_[a-z_]*_file): Path", text, re.M)}
-    return aliased | legacy
+    """Every ``*_FILE`` environment variable ``Settings`` binds, read off the model."""
+    out: set[str] = set()
+    for name, info in Settings.model_fields.items():
+        if not name.endswith("_file"):
+            continue
+        alias = info.validation_alias
+        if isinstance(alias, AliasChoices):
+            out.update(str(c) for c in alias.choices if str(c).isupper())
+        else:
+            out.add(name.upper())
+    return out
 
 
 def test_every_file_variable_is_documented() -> None:
