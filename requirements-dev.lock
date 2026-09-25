@@ -13,6 +13,7 @@ anyio==4.15.1 \
     --hash=sha256:9f28306018cbd6d329e64a36d58256edff76dd996fe423bc957326e578b82a94
     # via
     #   httpx
+    #   httpx2
     #   mcp
     #   py-key-value-aio
     #   sse-starlette
@@ -440,13 +441,13 @@ exceptiongroup==1.3.1 \
     --hash=sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219 \
     --hash=sha256:a7a39a3bd276781e98394987d3a5701d0c4edffb633bb7a5144577f82c773598
     # via fastmcp-slim
-fastmcp==3.4.7 \
-    --hash=sha256:43117aca886f5ee2f6a569bba91cef02b59c339aad04ba29950ff18d251c822a \
-    --hash=sha256:e4e7698cb4af5bc667b1901685261fa2f3526dc73d243a461fca42500c8dbe56
+fastmcp==4.0.5 \
+    --hash=sha256:1d30e5ba6b711318bf2ddc929cf9c0d6299a6330fbf42b2925dd120984176dc8 \
+    --hash=sha256:4234f9dfc396310ed3a04c2b5314f85394cab161023f9de2fa06842be96288cb
     # via -r requirements.in
-fastmcp-slim==3.4.7 \
-    --hash=sha256:06b32a358320a7dc2b2ee040ba89ea55ddc20763dff2949f384f7974b13b5d8f \
-    --hash=sha256:6c931a0089705f3f2935428ef9b2bc74ad94140adc64aab84d116d103e694b3a
+fastmcp-slim==4.0.5 \
+    --hash=sha256:2bb5bc1ff0a0f3ae063b97f647ea3730d32d5481050231818c161214b9047f67 \
+    --hash=sha256:5dc5395bcacb0eb405787393298891210c821d3f66334c2695e5e435d88fe575
     # via fastmcp
 griffelib==2.3.0 \
     --hash=sha256:1b8f9cd525681c26b1d6d574faa1371651e8459ca51d209684f50b8096ae06e0 \
@@ -457,23 +458,28 @@ h11==0.16.0 \
     --hash=sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86
     # via
     #   httpcore
+    #   httpcore2
     #   uvicorn
 httpcore==1.0.9 \
     --hash=sha256:2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55 \
     --hash=sha256:6e34463af53fd2ab5d807f399a9b45ea31c3dfa2276f15a2c3f00afff6e176e8
     # via httpx
+httpcore2==2.13.1 \
+    --hash=sha256:e0aa977abe17e69a3b820a24542a6fa88702676d83880b8d194dcd18408e5103 \
+    --hash=sha256:e1e05d4f25f7d7d496bfb96748f6f4b67657b03da069b3a68c36069f3db73d0a
+    # via httpx2
 httpx==0.28.1 \
     --hash=sha256:75e98c5f16b0f35b567856f597f06ff2270a374470a5c2392242528e3e3e42fc \
     --hash=sha256:d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad
     # via
     #   -r requirements.in
+    #   respx
+httpx2==2.13.1 \
+    --hash=sha256:6dff50fabc270ee5fd25d845d0b078ed20564579744d6d962850975996d2f9a4 \
+    --hash=sha256:e48744a19e3af5ee48313d0ce5fe941d5422fae5705ea922a4aabf94d7800dfa
+    # via
     #   fastmcp-slim
     #   mcp
-    #   respx
-httpx-sse==0.4.3 \
-    --hash=sha256:0ac1c9fe3c0afad2e0ebb25a934a59f4c7823b60792691f779fad2c5568830fc \
-    --hash=sha256:9b1ed0127459a66014aec3c56bebd93da3c1bc8bb6618c8082039a44889a755d
-    # via mcp
 hypothesis==6.168.0 \
     --hash=sha256:046fe4bcfce2a2fa186ba9d96bbb62c25c2f6c2e4071f0783ed6b5cc481d0669 \
     --hash=sha256:076a2096c34448931c3cfeb2eb7a6b843a56ffdce5e4e3a025bfdf8f935666d9 \
@@ -564,6 +570,7 @@ idna==3.20 \
     #   anyio
     #   email-validator
     #   httpx
+    #   httpx2
 iniconfig==2.3.0 \
     --hash=sha256:c76315c77db068650d49c5b56314774a7804df16fee4402c1f19d6d15d8c4730 \
     --hash=sha256:f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12
@@ -756,12 +763,18 @@ markdown-it-py==4.2.0 \
     --hash=sha256:04a21681d6fbb623de53f6f364d352309d4094dd4194040a10fd51833e418d49 \
     --hash=sha256:9f7ebbcd14fe59494226453aed97c1070d83f8d24b6fc3a3bcf9a38092641c4a
     # via rich
-mcp==1.29.0 \
-    --hash=sha256:52d01f334de1868cc3bb2d6604931126a67631f99a6c5d3b82ba47290315ec36 \
-    --hash=sha256:f5a075bb611f23d6f4d080c6a1699fa62772eebc562ba9e66b306ddde1c755f7
+mcp==2.0.0 \
+    --hash=sha256:0f440e735c13ece8bb19bc62cf0b86f4313448432fbb77d35e14034f4e050728 \
+    --hash=sha256:1cb4c75d2d2c7b8c1d756355e5d82a39f2822cc7f13e22a2051d7ca3592349d6
     # via
     #   -r requirements.in
     #   fastmcp-slim
+mcp-types==2.0.0 \
+    --hash=sha256:6b2de797ca2797f568b79529e1b25948e34de511bcc0bd82fef1039a6d1b8eb0 \
+    --hash=sha256:d7d939b9285c9961ae8866ba75ef85da34d12bafe276efbf4eb6a131786d8379
+    # via
+    #   fastmcp-slim
+    #   mcp
 mdurl==0.1.2 \
     --hash=sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8 \
     --hash=sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba
@@ -834,10 +847,12 @@ openapi-pydantic==0.5.1 \
     --hash=sha256:a3a09ef4586f5bd760a8df7f43028b60cafb6d9f61de2acba9574766255ab146 \
     --hash=sha256:ff6835af6bde7a459fb93eb93bb92b8749b754fc6e51b2f1590a19dc3005ee0d
     # via fastmcp-slim
-opentelemetry-api==1.44.0 \
-    --hash=sha256:67647e5e9566edcf421166fdf022b3537f818635daa852b289e34604dc6fb33a \
-    --hash=sha256:94b98c893a91b88657eaac1e3ba89618cdb85be6918196705354f34728b2cdef
-    # via fastmcp-slim
+opentelemetry-api==1.45.0 \
+    --hash=sha256:711ede81773c8025c2c03dac0450bc89f3d30aea6eabcc815c570d4e35a963f7 \
+    --hash=sha256:80e068aba7cd56c8b58512d6a36f8d25cb1dfaa0c0a4cc1c938ccf9f362d9cb3
+    # via
+    #   fastmcp-slim
+    #   mcp
 packaging==26.3 \
     --hash=sha256:94edc256424af38762eb31306eed28beb9f0efc50a8837492c9d6fd6004aed79 \
     --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
@@ -852,9 +867,9 @@ pathspec==1.1.1 \
     --hash=sha256:17db5ecd524104a120e173814c90367a96a98d07c45b2e10c2f3919fff91bf5a \
     --hash=sha256:a00ce642f577bf7f473932318056212bc4f8bfdf53128c78bbd5af0b9b20b189
     # via mypy
-platformdirs==4.11.12 \
-    --hash=sha256:b1ba966ac76153d9985a0787ffab951e7c18416189873d4e4ddb2c8a04a0a254 \
-    --hash=sha256:e8dc1cb58f1153fd7f61db1374317770baababec2480b37b8f01c6cc25b45267
+platformdirs==4.11.13 \
+    --hash=sha256:228b2283af5c1f32673cdf55271216a52bbd8258cb31374e302ad7bd26cd7513 \
+    --hash=sha256:6985eefdc2298693e4ce1fe124645524cb967428eb6384e0ce5b49767e7ea8ba
     # via fastmcp-slim
 pluggy==1.6.0 \
     --hash=sha256:7dcc130b76258d33b90f61b658791dede3486c3e6bfb003ee5c9bfb396dd22f3 \
@@ -877,6 +892,7 @@ pydantic==2.13.5 \
     #   -r requirements.in
     #   fastmcp-slim
     #   mcp
+    #   mcp-types
     #   openapi-pydantic
     #   pydantic-settings
 pydantic-core==2.46.5 \
@@ -1007,7 +1023,6 @@ pydantic-settings==2.15.0 \
     # via
     #   -r requirements.in
     #   fastmcp-slim
-    #   mcp
 pygments==2.21.0 \
     --hash=sha256:2363c69b61c4a97c838da3b130dcd6468f4848992b21a82f2a63ec34377137d9 \
     --hash=sha256:610ca751c9bc2492b38eb9a38a7fbc93edbbb2d7182edaf34e66ae493dee5c8c
@@ -1312,6 +1327,12 @@ starlette==1.7.0 \
     #   fastmcp-slim
     #   mcp
     #   sse-starlette
+truststore==0.10.4 \
+    --hash=sha256:9d91bd436463ad5e4ee4aba766628dd6cd7010cf3e2461756b3303710eebc301 \
+    --hash=sha256:adaeaecf1cbb5f4de3b1959b42d41f6fab57b2b1666adb59e89cb0b53361d981
+    # via
+    #   httpcore2
+    #   httpx2
 types-pyyaml==6.0.12.20260815 \
     --hash=sha256:28764110c9cf35846e733da32d8d734df7473c5dde9ef67c3b7332ec0e819858 \
     --hash=sha256:6f332212b7e191f3afd5016a713c510b6340593b7ebec573c7d5d20aa5386d3b
@@ -1323,6 +1344,7 @@ typing-extensions==4.16.0 \
     #   anyio
     #   fastmcp-slim
     #   mcp
+    #   mcp-types
     #   mypy
     #   opentelemetry-api
     #   py-key-value-aio

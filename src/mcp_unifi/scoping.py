@@ -52,7 +52,7 @@ from fastmcp.server.middleware.middleware import (
     Middleware,
     MiddlewareContext,
 )
-from fastmcp.tools.tool import Tool, ToolResult
+from fastmcp.tools import Tool, ToolResult
 from mcp import types as mt
 
 from mcp_unifi import audit, telemetry
