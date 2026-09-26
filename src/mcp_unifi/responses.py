@@ -53,7 +53,7 @@ from fastmcp.server.middleware.middleware import (
     Middleware,
     MiddlewareContext,
 )
-from fastmcp.tools.tool import Tool, ToolResult
+from fastmcp.tools import Tool, ToolResult
 from mcp import types as mt
 
 logger = logging.getLogger("mcp_unifi.responses")
@@ -272,7 +272,9 @@ def _negotiated_revision(context: MiddlewareContext[Any]) -> str | None:
         params = fastmcp_context.session.client_params
         if params is None:
             return None
-        version = params.protocolVersion
+        version = getattr(params, "protocol_version", None) or getattr(
+            params, "protocolVersion", None
+        )
     except Exception:
         return None
     return version if isinstance(version, str) else None
