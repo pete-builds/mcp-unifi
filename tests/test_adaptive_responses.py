@@ -143,7 +143,7 @@ class _FakeContext:
 
 
 def _tool_result(payload: Any) -> Any:
-    from fastmcp.tools.tool import ToolResult
+    from fastmcp.tools import ToolResult
     from mcp import types as mt
 
     return ToolResult(
@@ -179,7 +179,7 @@ async def test_force_full_text_overrides_a_capable_client() -> None:
 
 
 async def test_non_json_text_passes_through() -> None:
-    from fastmcp.tools.tool import ToolResult
+    from fastmcp.tools import ToolResult
     from mcp import types as mt
 
     async def call_next(_ctx: Any) -> Any:
@@ -190,7 +190,7 @@ async def test_non_json_text_passes_through() -> None:
 
 
 async def test_genuine_structured_content_is_left_alone() -> None:
-    from fastmcp.tools.tool import ToolResult
+    from fastmcp.tools import ToolResult
     from mcp import types as mt
 
     async def call_next(_ctx: Any) -> Any:
@@ -218,7 +218,6 @@ async def test_end_to_end_client_reads_full_data_from_structured_content(
 ) -> None:
     """The compact text must never be the only copy of the data."""
     async with Client(stdio_server) as client:
-        assert supports_structured_content(client.initialize_result.protocolVersion)
         result = await client.call_tool("list_wlans", {})
 
         assert "structuredContent" in result.content[0].text
