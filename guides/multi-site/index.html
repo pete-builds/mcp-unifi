@@ -113,15 +113,9 @@
 </tr>
 <tr>
 <td><code dir="auto">api_key</code></td>
-<td>yes, or <code dir="auto">api_key_file</code></td>
+<td>yes</td>
 <td>—</td>
 <td>Local API key from the gateway. Wrapped in <code dir="auto">SecretStr</code> internally; never logged.</td>
-</tr>
-<tr>
-<td><code dir="auto">api_key_file</code></td>
-<td>no</td>
-<td>—</td>
-<td>Path to a file containing the API key (a secret mount). Wins over <code dir="auto">api_key</code> when both are set, and turns <code dir="auto">verify_ssl</code> on by default. <code dir="auto">access_api_key_file</code> and <code dir="auto">os_password_file</code> work the same way for those secrets.</td>
 </tr>
 <tr>
 <td><code dir="auto">port</code></td>
@@ -138,14 +132,8 @@
 <tr>
 <td><code dir="auto">verify_ssl</code></td>
 <td>no</td>
-<td><code dir="auto">false</code> (<code dir="auto">true</code> with <code dir="auto">api_key_file</code> or <code dir="auto">pinned_cert</code>)</td>
-<td>Set <code dir="auto">true</code> if the gateway has a real TLS certificate. An explicit value always wins over the default.</td>
-</tr>
-<tr>
-<td><code dir="auto">pinned_cert</code></td>
-<td>no</td>
-<td>—</td>
-<td>Path to this console’s own certificate, recorded with <code dir="auto">mcp-unifi-pin-cert</code>. Makes it the only certificate the server accepts from this controller; a mismatch fails closed. See the <a href="/mcp-unifi/reference/configuration/#certificate-pinning">configuration reference</a>.</td>
+<td><code dir="auto">false</code></td>
+<td>Set <code dir="auto">true</code> if the gateway has a real TLS certificate.</td>
 </tr>
 </tbody>
 </table>
