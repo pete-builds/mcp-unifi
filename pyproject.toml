@@ -41,7 +41,7 @@ dependencies = [
 # to catch it. The floor is the version this was developed against.
 otel = [
     "opentelemetry-api>=1.44.0,<2",
-    "opentelemetry-sdk>=1.44.0,<2",
+    "opentelemetry-sdk>=1.45.0,<2",
     "opentelemetry-exporter-otlp-proto-http>=1.44.0,<2",
 ]
 dev = [
