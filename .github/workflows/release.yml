@@ -31,51 +31,12 @@ jobs:
         # v0.16.1 moved the bump before the tag; this step enforces that
         # invariant so a future stale tag fails the release immediately
         # instead of being silently repaired.
+        # The check itself lives in scripts/check_version_surfaces.sh, shared
+        # with ci.yml, which runs it on every PR.
         env:
           REF_NAME: ${{ github.ref_name }}
           REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          VERSION="${REF_NAME#v}"
-          echo "Verifying every version surface matches tag ${REF_NAME} (${VERSION})..."
-
-          fail=0
-          check() {
-            local label="$1"
-            local expected="$2"
-            local actual="$3"
-            if [ "${actual}" != "${expected}" ]; then
-              echo "::error::${label} is '${actual}', expected '${expected}'"
-              fail=1
-            else
-              echo "  ok  ${label} = ${actual}"
-            fi
-          }
-
-          pyproject=$(grep -E '^version = ' pyproject.toml | head -1 | sed -E 's/version = "([^"]+)"/\1/')
-          init=$(grep -E '^__version__ = ' src/mcp_unifi/__init__.py | head -1 | sed -E 's/__version__ = "([^"]+)"/\1/')
-          manifest=$(python3 -c "import json;print(json.load(open('manifest.json'))['version'])")
-          server_version=$(python3 -c "import json;print(json.load(open('server.json'))['version'])")
-          server_oci=$(python3 -c "import json;print(json.load(open('server.json'))['packages'][0]['identifier'])")
-          expected_oci="ghcr.io/${REPO}:${VERSION}"
-          compose_image=$(grep -E "image: ghcr\.io/${REPO}:" docker-compose.yml | head -1 | sed -E 's/.*image: (.+)/\1/')
-          chart_app=$(grep -E '^appVersion:' charts/mcp-unifi/Chart.yaml | head -1 | sed -E 's/appVersion: "?([^"]+)"?/\1/')
-
-          check "pyproject.toml version" "${VERSION}" "${pyproject}"
-          check "src/mcp_unifi/__init__.py __version__" "${VERSION}" "${init}"
-          check "manifest.json version" "${VERSION}" "${manifest}"
-          check "server.json version" "${VERSION}" "${server_version}"
-          check "server.json packages[0].identifier" "${expected_oci}" "${server_oci}"
-          check "docker-compose.yml image" "${expected_oci}" "${compose_image}"
-          check "charts/mcp-unifi/Chart.yaml appVersion" "${VERSION}" "${chart_app}"
-
-          if [ "${fail}" -ne 0 ]; then
-            echo ""
-            echo "::error::Version surfaces disagree with tag ${REF_NAME}."
-            echo "::error::Bump every surface in a commit BEFORE cutting the tag."
-            echo "::error::See CONTRIBUTING.md for the release procedure."
-            exit 1
-          fi
+        run: scripts/check_version_surfaces.sh "${REF_NAME}"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4

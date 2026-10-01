@@ -51,6 +51,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file; those four path keys are allowlisted in the redactor as references,
   and a captured-boot test asserts no file's contents reach any log record.
 
+- **CI checks that every version surface agrees, on every PR.** The seven
+  surfaces plus the CHANGELOG section that `release.yml` verified only at tag
+  time now live in `scripts/check_version_surfaces.sh`, which `release.yml`
+  and a new `Version surfaces agree` CI job both run. A half-bumped release
+  PR now goes red before merge. The job carries its own control: a version
+  no surface carries must fail.
+
 ### Fixed
 
 - **Abandoned HTTP sessions are reaped again.** Since the move to FastMCP 4

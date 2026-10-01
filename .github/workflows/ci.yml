@@ -58,6 +58,26 @@ jobs:
           sys.exit(1 if fail else 0)
           PYEOF
 
+  version-surfaces:
+    name: Version surfaces agree
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Same script release.yml runs against the tag. Here it catches a
+      # half-bumped release PR before merge rather than after the tag.
+      - name: Every version surface matches pyproject.toml
+        run: scripts/check_version_surfaces.sh
+
+      # The control: a version nothing carries must fail, or the check above
+      # is passing because it no longer reads anything.
+      - name: Control (a mismatched version must fail)
+        run: |
+          if scripts/check_version_surfaces.sh 0.0.0-control >/dev/null; then
+            echo "::error::check_version_surfaces.sh accepted a version no surface carries"
+            exit 1
+          fi
+
   lint-and-type:
     name: Lint + Type Check
     runs-on: ubuntu-latest
