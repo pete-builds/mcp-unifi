@@ -25,6 +25,7 @@ import logging
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 
+import fastmcp
 from fastmcp import FastMCP
 from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
 from starlette.requests import Request
@@ -260,12 +261,23 @@ def _build_auth_provider(settings: Settings) -> StaticTokenVerifier | None:
     return StaticTokenVerifier(tokens=tokens)
 
 
+#: Seconds an abandoned streamable-http session survives before the SDK reaps
+#: it. FastMCP 4 hands the SDK ``session_idle_timeout=None`` unless
+#: ``fastmcp.settings.http_session_idle_timeout`` is filled in, which overrides
+#: the SDK's own default and keeps every abandoned session (~57 KB each,
+#: measured on a sibling server) in memory for the life of the process.
+#: ``FASTMCP_HTTP_SESSION_IDLE_TIMEOUT`` still wins when an operator sets it.
+SESSION_IDLE_TIMEOUT = 1800.0
+
+
 def main() -> None:
     """CLI entrypoint. Dispatches on MCP_TRANSPORT.
 
     - ``streamable-http`` (default): long-running container / multi-client.
     - ``stdio``: per-session subprocess (Claude Desktop, ``uvx mcp-unifi``).
     """
+    if fastmcp.settings.http_session_idle_timeout is None:
+        fastmcp.settings.http_session_idle_timeout = SESSION_IDLE_TIMEOUT
     settings = load_settings()
     configure_logging(level=settings.log_level, fmt=settings.log_format)
     logger.info("MCP UniFi starting", extra={"config": settings.safe_repr()})
