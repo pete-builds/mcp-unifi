@@ -60,6 +60,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Abandoned HTTP sessions are reaped again.** Since the move to FastMCP 4
+  (#169), FastMCP passed `session_idle_timeout=None` to the MCP SDK's
+  session manager, which overrode the SDK's own 1800-second default: a
+  streamable-http client that went away without closing its session left
+  it in memory for the life of the process (about 57 KB each, measured on
+  a sibling server). Measured on `main` before this fix, the live session
+  manager held `None` with and without bearer auth. `main()` now sets 1800
+  seconds when `FASTMCP_HTTP_SESSION_IDLE_TIMEOUT` is unset, so an
+  operator's value still wins. `tests/test_session_idle.py` reads the
+  timeout off the live session manager of the app the server builds.
+
 - **`audit_open_ports` counts a port forward once, not twice.** A controller
   mirrors every port forward into its own `predefined`
   External-to-Internal policy (`origin_type: port_forward`, `origin_id` =
