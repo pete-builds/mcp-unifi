@@ -431,9 +431,9 @@ cryptography==50.0.1 \
     #   joserfc
     #   pyjwt
     #   secretstorage
-cyclopts==5.0.0 \
-    --hash=sha256:69c5d98bd48827a0f7c663b76f966f730652cbc48daa7625f1e69ae429b82376 \
-    --hash=sha256:8bee8822319f5cd90711f568aec54a0a02bd3571ddff45c94aa62405beed38b6
+cyclopts==5.1.1 \
+    --hash=sha256:252fe37b01a80f10933f91c312db551e4e86ffd87bee401ab2ed091769135426 \
+    --hash=sha256:ff0da67b2d2d8fe716d20ab82c698277ef30a8fb75d24e9b38a06f56c44931fd
     # via fastmcp-slim
 dnspython==2.8.0 \
     --hash=sha256:01d9bbc4a2d76bf0db7c1f729812ded6d912bd318d3b1cf81d30c0f845dbf3af \
@@ -877,9 +877,9 @@ pathspec==1.1.1 \
     --hash=sha256:17db5ecd524104a120e173814c90367a96a98d07c45b2e10c2f3919fff91bf5a \
     --hash=sha256:a00ce642f577bf7f473932318056212bc4f8bfdf53128c78bbd5af0b9b20b189
     # via mypy
-platformdirs==4.12.1 \
-    --hash=sha256:38da801a4af303033cbffccb39030db22bf0473e6414309b02acebeee7ca8bf1 \
-    --hash=sha256:7f251621befae78b2cb74616f9fc99d3fa3db0afba5035987731f8dcd430337d
+platformdirs==4.12.2 \
+    --hash=sha256:29dbf06d96c500bc6bdbce75fb0a14d63279c93b1842f97e72a135b33e856983 \
+    --hash=sha256:eab5f70271a490ef74618bb314fbb86e3c7e82fa3b9c922c2ea0e0a1a155d329
     # via fastmcp-slim
 pluggy==1.6.0 \
     --hash=sha256:7dcc130b76258d33b90f61b658791dede3486c3e6bfb003ee5c9bfb396dd22f3 \
