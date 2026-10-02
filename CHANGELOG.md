@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-10-01
+
 ### Added
 
 - **Certificate pinning for self-signed consoles.** `mcp-unifi-pin-cert <host>
@@ -57,6 +59,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and a new `Version surfaces agree` CI job both run. A half-bumped release
   PR now goes red before merge. The job carries its own control: a version
   no surface carries must fail.
+
+### Changed
+
+- **Runs on FastMCP 4** (4.0.x, from 3.4.7, #169). The session-reaping
+  regression that move introduced is fixed below.
 
 ### Fixed
 
