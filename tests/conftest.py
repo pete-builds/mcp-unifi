@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+import logging
+from collections.abc import Callable, Iterator
 
 import pytest
 
@@ -58,6 +59,63 @@ def _isolated_audit_log(tmp_path: object, monkeypatch: pytest.MonkeyPatch) -> It
     finally:
         audit.set_audit_log(None)
         reset_pending_actions()
+
+
+#: Every environment variable that shapes ``Settings``. One list, so a test
+#: file that wants a clean slate gets the same slate as every other.
+UNIFI_ENV_VARS: tuple[str, ...] = (
+    "STUB_MODE",
+    "UNIFI_HOST",
+    "UNIFI_API_KEY",
+    "UNIFI_API_KEY_FILE",
+    "UNIFI_PORT",
+    "UNIFI_SITE",
+    "UNIFI_VERIFY_SSL",
+    "UNIFI_PINNED_CERT",
+    "UNIFI_PROTECT_API",
+    "UNIFI_ACCESS_HOST",
+    "UNIFI_ACCESS_API_KEY",
+    "UNIFI_ACCESS_API_KEY_FILE",
+    "UNIFI_ACCESS_PORT",
+    "UNIFI_OS_USERNAME",
+    "UNIFI_OS_PASSWORD",
+    "UNIFI_OS_PASSWORD_FILE",
+    "IOT_SUBNET_TEMPLATE",
+    "IOT_DHCP_START_OFFSET",
+    "IOT_DHCP_STOP_OFFSET",
+    "MCP_TRANSPORT",
+    "MCP_HOST",
+    "MCP_PORT",
+    "LOG_LEVEL",
+    "LOG_FORMAT",
+    "MCP_UNIFI_CONTROLLERS_FILE",
+    "MCP_UNIFI_AUTH_TOKENS",
+    "MCP_UNIFI_AUTH_TOKEN_FILE",
+    "MCP_UNIFI_CLIENT_ID",
+    "MCP_UNIFI_AUTH_REQUIRED",
+)
+
+
+@pytest.fixture
+def clean_unifi_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Nothing from a developer's shell or ``.env`` may shape the test."""
+    for var in UNIFI_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
+
+
+@pytest.fixture
+def config_warnings(caplog: pytest.LogCaptureFixture) -> Callable[[], list[str]]:
+    """The WARNING lines ``mcp_unifi.config`` has emitted so far, as messages."""
+    caplog.set_level(logging.WARNING)
+
+    def _messages() -> list[str]:
+        return [
+            r.getMessage()
+            for r in caplog.records
+            if r.name == "mcp_unifi.config" and r.levelno == logging.WARNING
+        ]
+
+    return _messages
 
 
 @pytest.fixture
