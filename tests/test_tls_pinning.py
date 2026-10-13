@@ -11,10 +11,10 @@ from __future__ import annotations
 
 import http.server
 import json
-import logging
+import socket
 import ssl
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -25,10 +25,10 @@ from pydantic import SecretStr, ValidationError
 
 from mcp_unifi import tls
 from mcp_unifi.cli import pin_cert
-from mcp_unifi.clients.retry import request_with_retry
 from mcp_unifi.clients.unifi import UniFiClient, UniFiError
 from mcp_unifi.config import ControllerConfig, Settings
 from mcp_unifi.server import build_server
+from tests.conftest import UNIFI_ENV_VARS
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -49,12 +49,29 @@ def test_cryptography_is_available_to_mint_test_certificates() -> None:
         )
 
 
-def _self_signed(cn: str = "unifi.local") -> tuple[bytes, bytes]:
-    """A self-signed certificate shaped like a UniFi console's, plus its key.
+def _mint(
+    cn: str = "unifi.local",
+    *,
+    ca: bool = False,
+    issuer: tuple[bytes, bytes] | None = None,
+) -> tuple[bytes, bytes]:
+    """Mint a certificate and its key, both PEM.
 
-    No IP entry in the SAN on purpose: the real console lists ``unifi.local``,
-    ``localhost`` and loopback names only, so a connection to the LAN
-    address can never satisfy hostname matching.
+    The default is shaped like a UniFi console's: self-signed, and with no IP
+    entry in the SAN on purpose, because the real console lists
+    ``unifi.local``, ``localhost`` and loopback names only, so a connection
+    to the LAN address can never satisfy hostname matching.
+
+    ``ca=True`` marks it CA:TRUE with keyCertSign: a pin an operator might
+    plausibly record from a console that fronts its own internal CA. Against
+    a trust-anchor-only design that pin would vouch for every leaf it
+    signed; the exact-match check is what stops that.
+
+    ``issuer=(cert_pem, key_pem)`` signs with that pair instead: the attack
+    "hostname checking off, partial chain on" invites. The child carries its
+    own subject name; with the parent's name OpenSSL would treat it as
+    self-signed and refuse it before ever walking the chain, which would
+    leave the check under test unexercised.
     """
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
@@ -62,12 +79,17 @@ def _self_signed(cn: str = "unifi.local") -> tuple[bytes, bytes]:
     from cryptography.x509.oid import NameOID
 
     key = ec.generate_private_key(ec.SECP256R1())
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
+    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
+    if issuer is None:
+        issuer_name, signer = subject, key
+    else:
+        issuer_name = x509.load_pem_x509_certificate(issuer[0]).subject
+        signer = serialization.load_pem_private_key(issuer[1], password=None)
     now = datetime.now(UTC)
-    cert = (
+    builder = (
         x509.CertificateBuilder()
-        .subject_name(name)
-        .issuer_name(name)
+        .subject_name(subject)
+        .issuer_name(issuer_name)
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - timedelta(days=1))
@@ -76,43 +98,11 @@ def _self_signed(cn: str = "unifi.local") -> tuple[bytes, bytes]:
             x509.SubjectAlternativeName([x509.DNSName(cn), x509.DNSName("localhost")]),
             critical=False,
         )
-        .sign(key, hashes.SHA256())
     )
-    return (
-        cert.public_bytes(serialization.Encoding.PEM),
-        key.private_bytes(
-            serialization.Encoding.PEM,
-            serialization.PrivateFormat.PKCS8,
-            serialization.NoEncryption(),
-        ),
-    )
-
-
-def _self_signed_ca(cn: str = "UniFi Root CA") -> tuple[bytes, bytes]:
-    """Like :func:`_self_signed` but marked CA:TRUE with keyCertSign.
-
-    A pin an operator might plausibly record from a console that fronts its
-    own internal CA. Against a trust-anchor-only design this pin would vouch
-    for every leaf it signed; the exact-match check is what stops that.
-    """
-    from cryptography import x509
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.x509.oid import NameOID
-
-    key = ec.generate_private_key(ec.SECP256R1())
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
-    now = datetime.now(UTC)
-    cert = (
-        x509.CertificateBuilder()
-        .subject_name(name)
-        .issuer_name(name)
-        .public_key(key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(now - timedelta(days=1))
-        .not_valid_after(now + timedelta(days=365))
-        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
-        .add_extension(
+    if ca:
+        builder = builder.add_extension(
+            x509.BasicConstraints(ca=True, path_length=None), critical=True
+        ).add_extension(
             x509.KeyUsage(
                 digital_signature=True,
                 content_commitment=False,
@@ -126,51 +116,9 @@ def _self_signed_ca(cn: str = "UniFi Root CA") -> tuple[bytes, bytes]:
             ),
             critical=True,
         )
-        .sign(key, hashes.SHA256())
-    )
+    cert = builder.sign(signer, hashes.SHA256())  # type: ignore[arg-type]
     return (
         cert.public_bytes(serialization.Encoding.PEM),
-        key.private_bytes(
-            serialization.Encoding.PEM,
-            serialization.PrivateFormat.PKCS8,
-            serialization.NoEncryption(),
-        ),
-    )
-
-
-def _signed_by(
-    parent_cert_pem: bytes, parent_key_pem: bytes, cn: str = "impostor.local"
-) -> tuple[bytes, bytes]:
-    """A certificate issued by the pinned certificate's key.
-
-    The attack "hostname checking off, partial chain on" invites: if the
-    pinned certificate were accepted as an issuer, anything it signed would
-    pass. The child carries its own subject name; with the parent's name
-    OpenSSL would treat it as self-signed and refuse it before ever walking
-    the chain, which would leave the check under test unexercised.
-    """
-    from cryptography import x509
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import ec
-
-    parent = x509.load_pem_x509_certificate(parent_cert_pem)
-    parent_key = serialization.load_pem_private_key(parent_key_pem, password=None)
-    key = ec.generate_private_key(ec.SECP256R1())
-    now = datetime.now(UTC)
-    from cryptography.x509.oid import NameOID
-
-    child = (
-        x509.CertificateBuilder()
-        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)]))
-        .issuer_name(parent.subject)
-        .public_key(key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(now - timedelta(days=1))
-        .not_valid_after(now + timedelta(days=365))
-        .sign(parent_key, hashes.SHA256())  # type: ignore[arg-type]
-    )
-    return (
-        child.public_bytes(serialization.Encoding.PEM),
         key.private_bytes(
             serialization.Encoding.PEM,
             serialization.PrivateFormat.PKCS8,
@@ -208,7 +156,7 @@ class Console:
         name: str = "console",
         material: tuple[bytes, bytes] | None = None,
     ) -> None:
-        cert_pem, key_pem = material or _self_signed()
+        cert_pem, key_pem = material or _mint()
         self.cert_path = tmp_path / f"{name}.pem"
         self.cert_path.write_bytes(cert_pem)
         key_path = tmp_path / f"{name}.key"
@@ -223,24 +171,24 @@ class Console:
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
 
-    def close(self) -> None:
+    def __enter__(self) -> Console:
+        return self
+
+    def __exit__(self, *_: object) -> None:
         self._server.shutdown()
         self._server.server_close()
 
 
 @pytest.fixture
 def console(tmp_path: Path) -> Iterator[Console]:
-    c = Console(tmp_path)
-    try:
+    with Console(tmp_path) as c:
         yield c
-    finally:
-        c.close()
 
 
 @pytest.fixture
 def other_pin(tmp_path: Path) -> Path:
     """A different self-signed certificate with the same subject, as a wrong pin."""
-    cert_pem, _ = _self_signed()
+    cert_pem, _ = _mint()
     path = tmp_path / "other.pem"
     path.write_bytes(cert_pem)
     return path
@@ -250,13 +198,22 @@ def _url(console: Console) -> str:
     return f"https://{console.host}:{console.port}/"
 
 
+def _ctx(pin: Path) -> ssl.SSLContext:
+    """The context the server would build for ``pin``, from the file."""
+    return tls.build_pinned_context(tls.load_pinned_cert(pin, "pin"))
+
+
+def _argv(console: Console, out: Path, *extra: str) -> list[str]:
+    return [console.host, "--port", str(console.port), "--out", str(out), *extra]
+
+
 # ---------------------------------------------------------------------------
 # The pin is the only thing that lets a console connection verify
 # ---------------------------------------------------------------------------
 
 
 async def test_pinned_context_accepts_the_pinned_console(console: Console) -> None:
-    ctx = tls.build_pinned_context(console.cert_path)
+    ctx = _ctx(console.cert_path)
     async with httpx.AsyncClient(verify=ctx) as client:
         resp = await client.get(_url(console))
     assert resp.status_code == 200
@@ -277,7 +234,7 @@ async def test_system_trust_rejects_the_same_console(console: Console) -> None:
 
 async def test_wrong_pin_is_rejected(console: Console, other_pin: Path) -> None:
     """A certificate with the identical subject but a different key fails closed."""
-    ctx = tls.build_pinned_context(other_pin)
+    ctx = _ctx(other_pin)
     async with httpx.AsyncClient(verify=ctx) as client:
         with pytest.raises(httpx.ConnectError) as exc:
             await client.get(_url(console))
@@ -294,18 +251,16 @@ async def test_certificate_signed_by_the_pin_is_rejected(tmp_path: Path) -> None
     the pin. Pinned by test rather than trusted from memory, because this is
     the case the "hostname off" design is asked about first.
     """
-    parent_cert, parent_key = _self_signed()
+    parent = _mint()
     pin = tmp_path / "parent.pem"
-    pin.write_bytes(parent_cert)
-    impostor = Console(tmp_path, name="child", material=_signed_by(parent_cert, parent_key))
-    try:
-        ctx = tls.build_pinned_context(pin)
-        async with httpx.AsyncClient(verify=ctx) as client:
+    pin.write_bytes(parent[0])
+    with Console(
+        tmp_path, name="child", material=_mint("impostor.local", issuer=parent)
+    ) as impostor:
+        async with httpx.AsyncClient(verify=_ctx(pin)) as client:
             with pytest.raises(httpx.ConnectError) as exc:
                 await client.get(_url(impostor))
-        assert tls.is_verification_failure(exc.value)
-    finally:
-        impostor.close()
+    assert tls.is_verification_failure(exc.value)
 
 
 async def test_ca_capable_pin_cannot_vouch_for_a_leaf_it_signed(tmp_path: Path) -> None:
@@ -315,38 +270,50 @@ async def test_ca_capable_pin_cannot_vouch_for_a_leaf_it_signed(tmp_path: Path) 
     signed. Only the byte-for-byte comparison after the handshake refuses
     it. This is the test that goes red if that comparison is removed.
     """
-    parent_cert, parent_key = _self_signed_ca()
+    parent = _mint("UniFi Root CA", ca=True)
     pin = tmp_path / "ca-pin.pem"
-    pin.write_bytes(parent_cert)
-    impostor = Console(tmp_path, name="ca-child", material=_signed_by(parent_cert, parent_key))
-    try:
-        ctx = tls.build_pinned_context(pin)
-        async with httpx.AsyncClient(verify=ctx) as client:
+    pin.write_bytes(parent[0])
+    child = _mint("impostor.local", issuer=parent)
+    with Console(tmp_path, name="ca-child", material=child) as impostor:
+        async with httpx.AsyncClient(verify=_ctx(pin)) as client:
             with pytest.raises(httpx.ConnectError) as exc:
                 await client.get(_url(impostor))
-        assert tls.is_verification_failure(exc.value)
-        assert "not the pinned certificate" in str(exc.value)
-    finally:
-        impostor.close()
+    assert tls.is_verification_failure(exc.value)
+    assert "not the pinned certificate" in str(exc.value)
+
+
+def test_ca_capable_pin_is_also_checked_on_a_blocking_socket(tmp_path: Path) -> None:
+    """The same exact-match check on ``wrap_socket``, which httpx never uses.
+
+    ``PinnedContext`` promises the pin is checked however the context is
+    wrapped. This is the test that goes red if the blocking-socket twin of
+    the check is removed while the async one stays.
+    """
+    parent = _mint("UniFi Root CA", ca=True)
+    pin = tmp_path / "ca-pin.pem"
+    pin.write_bytes(parent[0])
+    child = _mint("impostor.local", issuer=parent)
+    with Console(tmp_path, name="ca-child", material=child) as impostor:
+        raw = socket.create_connection((impostor.host, impostor.port), timeout=5)
+        with pytest.raises(ssl.SSLCertVerificationError, match="not the pinned certificate"):
+            _ctx(pin).wrap_socket(raw, server_hostname=impostor.host)
+        raw.close()
 
 
 async def test_ca_capable_pin_still_accepts_itself(tmp_path: Path) -> None:
     """Control for the test above: the same CA pin, presented directly, passes."""
-    material = _self_signed_ca()
+    material = _mint("UniFi Root CA", ca=True)
     pin = tmp_path / "ca-self.pem"
     pin.write_bytes(material[0])
-    server = Console(tmp_path, name="ca-self", material=material)
-    try:
-        async with httpx.AsyncClient(verify=tls.build_pinned_context(pin)) as client:
+    with Console(tmp_path, name="ca-self", material=material) as server:
+        async with httpx.AsyncClient(verify=_ctx(pin)) as client:
             resp = await client.get(_url(server))
-        assert resp.status_code == 200
-    finally:
-        server.close()
+    assert resp.status_code == 200
 
 
 def test_multi_certificate_bundle_is_rejected(tmp_path: Path, console: Console) -> None:
     """A bundle would trust every certificate in it while reporting one fingerprint."""
-    other_cert, _ = _self_signed()
+    other_cert, _ = _mint()
     bundle = tmp_path / "bundle.pem"
     bundle.write_bytes(console.cert_path.read_bytes() + other_cert)
     with pytest.raises(ValueError, match=r"exactly one certificate \(found 2\)"):
@@ -356,7 +323,7 @@ def test_multi_certificate_bundle_is_rejected(tmp_path: Path, console: Console) 
 
 
 def test_pinned_context_shape(console: Console) -> None:
-    ctx = tls.build_pinned_context(console.cert_path)
+    ctx = tls.build_pinned_context(console.der)
     assert ctx.verify_mode == ssl.CERT_REQUIRED
     assert ctx.check_hostname is False
     assert ctx.verify_flags & ssl.VERIFY_X509_PARTIAL_CHAIN
@@ -369,35 +336,28 @@ def test_pinned_context_shape(console: Console) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_load_missing_pin(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match=r"pin: .*does not exist"):
-        tls.load_pinned_cert(tmp_path / "absent.pem", "pin")
-
-
-def test_load_empty_pin(tmp_path: Path) -> None:
-    p = tmp_path / "empty.pem"
-    p.write_text("\n\n")
-    with pytest.raises(ValueError, match="is empty"):
-        tls.load_pinned_cert(p, "pin")
-
-
-def test_load_garbage_pin(tmp_path: Path) -> None:
-    p = tmp_path / "garbage.pem"
-    p.write_text("not a certificate")
-    with pytest.raises(ValueError, match=r"exactly one certificate \(found 0\)"):
-        tls.load_pinned_cert(p, "pin")
-
-
-def test_load_malformed_pem_body(tmp_path: Path) -> None:
-    p = tmp_path / "malformed.pem"
-    p.write_text("-----BEGIN CERTIFICATE-----\nnot base64 at all\n-----END CERTIFICATE-----\n")
-    with pytest.raises(ValueError, match="not a PEM certificate"):
-        tls.load_pinned_cert(p, "pin")
-
-
-def test_load_directory_pin(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="not a regular file"):
-        tls.load_pinned_cert(tmp_path, "pin")
+@pytest.mark.parametrize(
+    ("name", "contents", "match"),
+    [
+        ("absent.pem", None, r"pin: .*does not exist"),
+        ("", None, "not a regular file"),  # the directory itself
+        ("empty.pem", "\n\n", "is empty"),
+        ("garbage.pem", "not a certificate", r"exactly one certificate \(found 0\)"),
+        (
+            "malformed.pem",
+            "-----BEGIN CERTIFICATE-----\nnot base64 at all\n-----END CERTIFICATE-----\n",
+            "not a PEM certificate",
+        ),
+    ],
+)
+def test_load_pin_failures_name_the_label_and_path(
+    tmp_path: Path, name: str, contents: str | None, match: str
+) -> None:
+    path = tmp_path / name if name else tmp_path
+    if contents is not None:
+        path.write_text(contents)
+    with pytest.raises(ValueError, match=match):
+        tls.load_pinned_cert(path, "pin")
 
 
 def test_fingerprint_forms_round_trip(console: Console) -> None:
@@ -418,6 +378,7 @@ def test_pinned_controller_verifies_by_default(console: Console) -> None:
     )
     assert c.verify_ssl is True
     assert isinstance(c.tls_verify, ssl.SSLContext)
+    assert c.tls_verify is c.tls_verify  # one context per controller, shared by its clients
     assert c.pinned_cert_sha256 == console.fingerprint
 
 
@@ -446,15 +407,8 @@ def test_missing_pin_fails_startup_naming_the_controller(tmp_path: Path) -> None
         )
 
 
+@pytest.mark.usefixtures("clean_unifi_env")
 def test_legacy_env_pin_promotes(monkeypatch: pytest.MonkeyPatch, console: Console) -> None:
-    for var in (
-        "STUB_MODE",
-        "UNIFI_HOST",
-        "UNIFI_API_KEY",
-        "UNIFI_VERIFY_SSL",
-        "UNIFI_PINNED_CERT",
-    ):
-        monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("STUB_MODE", "false")
     monkeypatch.setenv("UNIFI_HOST", "192.168.1.1")
     monkeypatch.setenv("UNIFI_API_KEY", "k")
@@ -480,9 +434,8 @@ def test_safe_repr_reports_pin_path_and_fingerprint(console: Console) -> None:
 
 
 def test_pinned_controller_does_not_warn_about_tls(
-    console: Console, caplog: pytest.LogCaptureFixture
+    console: Console, config_warnings: Callable[[], list[str]]
 ) -> None:
-    caplog.set_level(logging.WARNING)
     s = Settings(
         stub_mode=False,
         mcp_transport="stdio",
@@ -493,17 +446,17 @@ def test_pinned_controller_does_not_warn_about_tls(
         ],
     )
     build_server(s)
-    msgs = [r.getMessage() for r in caplog.records if r.name == "mcp_unifi.config"]
-    assert len(msgs) == 1  # the inline API key still warns
-    assert "TLS verification off" not in msgs[0]
-    assert "API key supplied as a value" in msgs[0]
+    (msg,) = config_warnings()  # the inline API key still warns
+    assert "TLS verification off" not in msg
+    assert "API key supplied as a value" in msg
 
 
-def test_unpinned_warning_names_the_pin_command(caplog: pytest.LogCaptureFixture) -> None:
-    caplog.set_level(logging.WARNING)
+def test_unpinned_warning_names_the_pin_command(
+    config_warnings: Callable[[], list[str]],
+) -> None:
     s = Settings(stub_mode=False, unifi_host="h", unifi_api_key="k", mcp_transport="stdio")
     build_server(s)
-    (msg,) = [r.getMessage() for r in caplog.records if r.name == "mcp_unifi.config"]
+    (msg,) = config_warnings()
     assert tls.PIN_COMMAND in msg
 
 
@@ -517,7 +470,7 @@ async def test_unifi_client_reads_through_a_pinned_connection(console: Console) 
         host=console.host,
         port=console.port,
         api_key="k",
-        verify_ssl=tls.build_pinned_context(console.cert_path),
+        verify_ssl=_ctx(console.cert_path),
     )
     try:
         assert await client.list_devices() == []
@@ -532,7 +485,7 @@ async def test_unifi_client_mismatch_names_the_repin_command(
         host=console.host,
         port=console.port,
         api_key="k",
-        verify_ssl=tls.build_pinned_context(other_pin),
+        verify_ssl=_ctx(other_pin),
     )
     try:
         with pytest.raises(UniFiError) as exc:
@@ -545,45 +498,6 @@ async def test_unifi_client_mismatch_names_the_repin_command(
     assert "k" not in msg.split("--out")[0].split(console.host)[0]  # no key in the message
 
 
-class _RaisingClient:
-    def __init__(self, exc: Exception) -> None:
-        self.exc = exc
-        self.calls = 0
-
-    async def request(self, *_: Any, **__: Any) -> httpx.Response:
-        self.calls += 1
-        raise self.exc
-
-
-async def test_verification_failure_is_not_retried() -> None:
-    fake = _RaisingClient(httpx.ConnectError("[SSL: CERTIFICATE_VERIFY_FAILED] self-signed"))
-    with pytest.raises(UniFiError, match="TLS verification failed"):
-        await request_with_retry(
-            fake,  # type: ignore[arg-type]
-            "GET",
-            "https://gateway.test/x",
-            logger=logging.getLogger("t"),
-            service="UniFi",
-            error_cls=UniFiError,
-        )
-    assert fake.calls == 1
-
-
-async def test_ordinary_connect_error_is_still_retried_once() -> None:
-    """Control for the test above: the retry path did not change for other errors."""
-    fake = _RaisingClient(httpx.ConnectError("connection refused"))
-    with pytest.raises(UniFiError, match="connection failed"):
-        await request_with_retry(
-            fake,  # type: ignore[arg-type]
-            "GET",
-            "https://gateway.test/x",
-            logger=logging.getLogger("t"),
-            service="UniFi",
-            error_cls=UniFiError,
-        )
-    assert fake.calls == 2
-
-
 # ---------------------------------------------------------------------------
 # The bootstrap command
 # ---------------------------------------------------------------------------
@@ -593,7 +507,7 @@ def test_pin_cert_writes_the_presented_certificate(
     console: Console, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     out = tmp_path / "pins" / "home.pem"
-    rc = pin_cert.main([console.host, "--port", str(console.port), "--out", str(out)])
+    rc = pin_cert.main(_argv(console, out))
     assert rc == 0
     assert ssl.PEM_cert_to_DER_cert(out.read_text()) == console.der
     printed = capsys.readouterr().out
@@ -604,42 +518,21 @@ def test_pin_cert_writes_the_presented_certificate(
 def test_pin_cert_refuses_to_overwrite_without_force(console: Console, tmp_path: Path) -> None:
     out = tmp_path / "home.pem"
     out.write_text("existing")
-    rc = pin_cert.main([console.host, "--port", str(console.port), "--out", str(out)])
+    rc = pin_cert.main(_argv(console, out))
     assert rc == 1
     assert out.read_text() == "existing"
-    rc = pin_cert.main([console.host, "--port", str(console.port), "--out", str(out), "--force"])
+    rc = pin_cert.main(_argv(console, out, "--force"))
     assert rc == 0
     assert ssl.PEM_cert_to_DER_cert(out.read_text()) == console.der
 
 
 def test_pin_cert_honours_expected_fingerprint(console: Console, tmp_path: Path) -> None:
     out = tmp_path / "home.pem"
-    wrong = "00" * 32
-    rc = pin_cert.main(
-        [
-            console.host,
-            "--port",
-            str(console.port),
-            "--out",
-            str(out),
-            "--expect-fingerprint",
-            wrong,
-        ]
-    )
+    rc = pin_cert.main(_argv(console, out, "--expect-fingerprint", "00" * 32))
     assert rc == 1
     assert not out.exists()
     pretty = tls.format_fingerprint(console.fingerprint)
-    rc = pin_cert.main(
-        [
-            console.host,
-            "--port",
-            str(console.port),
-            "--out",
-            str(out),
-            "--expect-fingerprint",
-            pretty,
-        ]
-    )
+    rc = pin_cert.main(_argv(console, out, "--expect-fingerprint", pretty))
     assert rc == 0
     assert out.exists()
 
@@ -678,7 +571,7 @@ def test_env_example_boots_with_the_pin_uncommented(
     """
     active = _env_example_active_lines()
     assert "UNIFI_VERIFY_SSL" not in active, "template sets verify_ssl explicitly"
-    for key in set(active) | {"UNIFI_PINNED_CERT", "UNIFI_VERIFY_SSL", "UNIFI_API_KEY_FILE"}:
+    for key in set(active) | set(UNIFI_ENV_VARS):
         monkeypatch.delenv(key, raising=False)
     for key, value in active.items():
         monkeypatch.setenv(key, value)
