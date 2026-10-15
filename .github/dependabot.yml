@@ -39,6 +39,16 @@ updates:
       update-types:
       - minor
       - patch
+  # The Python line is pinned on purpose: pyproject, the CI matrix, both uv locks and
+  # the image-version guard in ci.yml all target 3.13, and Dependabot reads 3.13 -> 3.14
+  # as a "minor" that the auto-merge workflow would arm. Moving the interpreter is a
+  # coordinated retarget of every version surface, never a dependency bump. Digest
+  # updates on the pinned line still flow.
+  ignore:
+  - dependency-name: python
+    update-types:
+    - version-update:semver-major
+    - version-update:semver-minor
 - package-ecosystem: github-actions
   directory: "/"
   schedule:
