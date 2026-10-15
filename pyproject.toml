@@ -21,11 +21,11 @@ classifiers = [
     "Topic :: System :: Networking",
 ]
 dependencies = [
-    "fastmcp==4.0.11",
+    "fastmcp==4.1.0",
     "httpx==0.28.1",
     "uvicorn==0.54.0",
     "python-dotenv==1.2.4",
-    "pydantic==2.13.5",
+    "pydantic==2.14.1",
     "pydantic-settings==2.15.0",
     "pyyaml==6.0.3",
 ]
@@ -49,10 +49,10 @@ dev = [
     "pytest-asyncio==1.4.0",
     "pytest-cov==7.1.0",
     "respx==0.23.1",
-    "ruff==0.16.10",
+    "ruff==0.17.0",
     "mypy==2.4.0",
     "types-PyYAML==6.0.12.20260815",
-    "hypothesis==6.168.4",
+    "hypothesis==6.169.0",
 ]
 
 [project.scripts]
