@@ -40,7 +40,7 @@ dependencies = [
 # nothing locks this extra, so an exact pin here would rot with no drift check
 # to catch it. The floor is the version this was developed against.
 otel = [
-    "opentelemetry-api>=1.44.0,<2",
+    "opentelemetry-api>=1.45.1,<2",
     "opentelemetry-sdk>=1.45.0,<2",
     "opentelemetry-exporter-otlp-proto-http>=1.45.0,<2",
 ]
