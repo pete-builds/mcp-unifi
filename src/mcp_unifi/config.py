@@ -37,7 +37,15 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import AliasChoices, BaseModel, Field, SecretStr, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    Field,
+    PrivateAttr,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from mcp_unifi import tls
@@ -58,23 +66,9 @@ ADR_0007 = (
 )
 
 
-def _read_secret_file(path: Path, label: str) -> str:
-    """Read one file-backed secret and return its stripped contents.
-
-    Every failure is a ``ValueError`` naming ``label`` and the path, never
-    the contents. Each is a startup error on purpose: a missing Docker
-    secret must fail the boot, not fall through to an empty key that the
-    controller rejects on the first tool call.
-    """
-    if not path.is_file():
-        raise ValueError(f"{label}: {path} does not exist or is not a regular file")
-    try:
-        value = path.read_text(encoding="utf-8").strip()
-    except (OSError, UnicodeError) as exc:
-        raise ValueError(f"{label}: {path} cannot be read ({type(exc).__name__})") from exc
-    if not value:
-        raise ValueError(f"{label}: {path} is empty")
-    return value
+def _path_or_none(path: Path | None) -> str | None:
+    """Render an optional path for the startup line."""
+    return str(path) if path else None
 
 
 #: ``(value field, file field)`` pairs on :class:`ControllerConfig` that
@@ -208,18 +202,29 @@ class ControllerConfig(BaseModel):
             return data
         resolved: dict[str, Any] = dict(data)
         name = resolved.get("name", "?")
+        for path_field in (
+            *(file_field for _, file_field in _CONTROLLER_SECRET_FILES),
+            "pinned_cert",
+        ):
+            if resolved.get(path_field) is not None:
+                resolved[path_field] = Path(resolved[path_field]).expanduser()
         for value_field, file_field in _CONTROLLER_SECRET_FILES:
-            raw_path = resolved.get(file_field)
-            if raw_path is None:
-                continue
-            path = Path(raw_path).expanduser()
-            resolved[file_field] = path
-            resolved[value_field] = _read_secret_file(path, f"controller '{name}' {file_field}")
+            path = resolved.get(file_field)
+            if path is not None:
+                label = f"controller '{name}' {file_field}"
+                resolved[value_field] = tls.read_text_file(path, label).strip()
         if resolved.get("verify_ssl") is None:
             resolved["verify_ssl"] = (
                 resolved.get("api_key_file") is not None or resolved.get("pinned_cert") is not None
             )
         return resolved
+
+    #: The pin's DER bytes, read once at validation. Everything that needs
+    #: the pin afterwards (the fingerprint on the startup line, the TLS
+    #: context every client shares) derives from these bytes, so what was
+    #: checked at boot is exactly what is enforced.
+    _pinned_der: bytes | None = PrivateAttr(default=None)
+    _pinned_context: ssl.SSLContext | None = PrivateAttr(default=None)
 
     @model_validator(mode="after")
     def _check_pinned_cert(self) -> ControllerConfig:
@@ -233,8 +238,9 @@ class ControllerConfig(BaseModel):
         """
         if self.pinned_cert is None:
             return self
-        self.pinned_cert = self.pinned_cert.expanduser()
-        tls.load_pinned_cert(self.pinned_cert, f"controller '{self.name}' pinned_cert")
+        self._pinned_der = tls.load_pinned_cert(
+            self.pinned_cert, f"controller '{self.name}' pinned_cert"
+        )
         if not self.verify_ssl:
             raise ValueError(
                 f"controller '{self.name}': pinned_cert is set but verify_ssl is false. "
@@ -246,22 +252,23 @@ class ControllerConfig(BaseModel):
     def tls_verify(self) -> bool | ssl.SSLContext:
         """What the HTTP clients pass as ``verify``.
 
-        A pinned controller gets a context whose only trust anchor is its
-        pin; anything else gets the plain ``verify_ssl`` flag. Built per call
-        because each client owns its own connection pool.
+        A pinned controller gets one context, built on first use from the
+        bytes the validator loaded and shared by every client for this
+        controller (httpx never mutates a ``verify=`` context); anything
+        else gets the plain ``verify_ssl`` flag.
         """
-        if self.pinned_cert is not None:
-            return tls.build_pinned_context(
-                self.pinned_cert, f"controller '{self.name}' pinned_cert"
-            )
-        return self.verify_ssl
+        if self._pinned_der is None:
+            return self.verify_ssl
+        if self._pinned_context is None:
+            self._pinned_context = tls.build_pinned_context(self._pinned_der)
+        return self._pinned_context
 
     @property
     def pinned_cert_sha256(self) -> str | None:
         """SHA-256 of the pinned certificate, or ``None``. Public material, safe to log."""
-        if self.pinned_cert is None:
+        if self._pinned_der is None:
             return None
-        return tls.fingerprint_sha256(tls.load_pinned_cert(self.pinned_cert, "pinned_cert"))
+        return tls.fingerprint_sha256(self._pinned_der)
 
 
 class Settings(BaseSettings):
@@ -575,7 +582,7 @@ class Settings(BaseSettings):
                     "the client name only applies to a file-backed token."
                 )
             return ""
-        contents = _read_secret_file(self.auth_token_file, "MCP_UNIFI_AUTH_TOKEN_FILE")
+        contents = tls.read_text_file(self.auth_token_file, "MCP_UNIFI_AUTH_TOKEN_FILE").strip()
         client_id = self.client_id.strip()
         if ":" in contents or "," in contents:
             if client_id:
@@ -794,7 +801,7 @@ class Settings(BaseSettings):
         return {
             "stub_mode": self.stub_mode,
             "readonly": self.readonly,
-            "controllers_file": str(self.controllers_file) if self.controllers_file else None,
+            "controllers_file": _path_or_none(self.controllers_file),
             "default_controller": self.default_controller or None,
             "controllers": [
                 {
@@ -803,22 +810,20 @@ class Settings(BaseSettings):
                     "port": c.port,
                     "site": c.site,
                     "verify_ssl": c.verify_ssl,
-                    "pinned_cert": str(c.pinned_cert) if c.pinned_cert else None,
+                    "pinned_cert": _path_or_none(c.pinned_cert),
                     "pinned_cert_sha256": c.pinned_cert_sha256,
                     "protect_api": c.protect_api,
                     "api_key_set": bool(c.api_key.get_secret_value()),
-                    "api_key_file": str(c.api_key_file) if c.api_key_file else None,
+                    "api_key_file": _path_or_none(c.api_key_file),
                     "os_username_set": bool(c.os_username),
                     "os_password_set": bool(c.os_password and c.os_password.get_secret_value()),
-                    "os_password_file": str(c.os_password_file) if c.os_password_file else None,
+                    "os_password_file": _path_or_none(c.os_password_file),
                     "access_host": c.access_host,
                     "access_port": c.access_port,
                     "access_api_key_set": bool(
                         c.access_api_key and c.access_api_key.get_secret_value()
                     ),
-                    "access_api_key_file": (
-                        str(c.access_api_key_file) if c.access_api_key_file else None
-                    ),
+                    "access_api_key_file": _path_or_none(c.access_api_key_file),
                 }
                 for c in self.controllers
             ],
@@ -831,12 +836,12 @@ class Settings(BaseSettings):
             "log_level": self.log_level,
             "log_format": self.log_format,
             "auth_required": self.auth_required,
-            "auth_token_file": str(self.auth_token_file) if self.auth_token_file else None,
+            "auth_token_file": _path_or_none(self.auth_token_file),
             "auth_client_ids": sorted(meta["client_id"] for meta in self.auth_token_map.values()),
         }
 
 
-def log_legacy_shape_warnings(settings: Settings) -> int:
+def log_legacy_shape_warnings(settings: Settings) -> None:
     """Warn once per boot for every controller still on the legacy shape.
 
     The legacy shape is an API key supplied as a value (environment variable
@@ -848,12 +853,10 @@ def log_legacy_shape_warnings(settings: Settings) -> int:
 
     Silent in stub mode, which talks to no gateway. One line per controller,
     naming it, plus one line when HTTP bearer tokens come from the
-    environment. Returns the number of lines emitted so callers can assert
-    on it.
+    environment.
     """
     if settings.stub_mode:
-        return 0
-    emitted = 0
+        return
     for c in settings.controllers:
         legacy: list[str] = []
         if c.api_key_file is None:
@@ -871,7 +874,6 @@ def log_legacy_shape_warnings(settings: Settings) -> int:
                 "; ".join(legacy),
                 ADR_0007,
             )
-            emitted += 1
     if settings.mcp_transport != "stdio" and settings.auth_tokens.strip():
         logger.warning(
             "HTTP bearer tokens supplied via MCP_UNIFI_AUTH_TOKENS (a value) is the legacy "
@@ -879,8 +881,6 @@ def log_legacy_shape_warnings(settings: Settings) -> int:
             "Supported through 0.x; it becomes mandatory only at a major release. See %s.",
             ADR_0007,
         )
-        emitted += 1
-    return emitted
 
 
 def _load_controllers_from_yaml(path: Path) -> list[ControllerConfig]:
