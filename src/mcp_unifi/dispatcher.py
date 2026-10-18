@@ -296,7 +296,7 @@ def build_registry(
                 site=ctrl.site,
                 verify_ssl=ctrl.tls_verify,
             )
-            backends[ctrl.name] = RealBackend(client)
+            backends[ctrl.name] = RealBackend(client, write_api=ctrl.write_api)
 
         if ctrl.name in protect_overrides:
             protect_backends[ctrl.name] = protect_overrides[ctrl.name]

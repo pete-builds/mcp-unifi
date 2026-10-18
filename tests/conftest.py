@@ -123,6 +123,9 @@ def real_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[Settings]:
         unifi_port=443,
         unifi_site="default",
         unifi_api_key="test-api-key-1234",
+        # The existing real-backend tests mock private routes only. The
+        # Integration API path has its own tests (test_integration_writes.py).
+        unifi_write_api="private",
         log_format="text",
         auth_required=False,
     )
