@@ -97,13 +97,13 @@ jobs:
           pip install -e . --no-deps
 
       - name: Ruff (lint)
-        run: ruff check src tests evals
+        run: ruff check src tests evals scripts/probe_integration_api.py
 
       - name: Ruff (format check)
-        run: ruff format --check src tests evals
+        run: ruff format --check src tests evals scripts/probe_integration_api.py
 
       - name: Mypy (strict)
-        run: mypy src/mcp_unifi evals
+        run: mypy src/mcp_unifi evals scripts/probe_integration_api.py
 
   test:
     name: Tests + Coverage

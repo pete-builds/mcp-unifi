@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`scripts/probe_integration_api.py`: a repeatable, read-only probe of the
+  official Integration API.** It sends GET requests only, using the server's own
+  env vars, and reports which `/proxy/network/integration/v1` resources a console
+  serves, cross-checked against the private API this server writes through. Two
+  controls run first (a wrong key must be rejected, a fake route must 404) and a
+  failed control exits 2. It never prints the API key or a response body. Runs
+  from a checkout or piped into a running container with
+  `docker exec -i mcp-unifi python - < scripts/probe_integration_api.py`.
+  Linted and type-checked in CI with the rest of the source.
+
+### Changed
+
+- **[ADR 0005](docs/decisions/0005-writes-stay-on-the-private-network-api.md)
+  re-probed on UniFi Network 10.6.106.** Its reversal condition is now met for
+  networks and WLANs, which the official API serves with live data; firewall
+  appears there only as zone policies, and port forwards, static routes, DHCP
+  reservations and port profiles are still absent. The record keeps its decision,
+  because no code has moved, and states that the hybrid alternative is reopened.
+  No v1 write was tested.
+
 ## [0.25.0] - 2026-10-01
 
 ### Added
