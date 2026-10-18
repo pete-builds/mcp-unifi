@@ -16,7 +16,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from mcp_unifi.clients.access import AccessClient
 from mcp_unifi.clients.access_stubs import AccessStubState
-from mcp_unifi.clients.integration import IntegrationWrites, WriteApi
+from mcp_unifi.clients.integration import IntegrationWrites, WriteApi, ZoneFirewallState
 from mcp_unifi.clients.protect import ProtectClient
 from mcp_unifi.clients.protect_stubs import ProtectStubState
 from mcp_unifi.clients.stats_shape import (
@@ -28,6 +28,7 @@ from mcp_unifi.clients.stats_shape import (
 )
 from mcp_unifi.clients.stubs import StubState
 from mcp_unifi.clients.unifi import UniFiClient, UniFiError
+from mcp_unifi.clients.zone_firewall_stubs import v1_network_id as stub_v1_network_id
 from mcp_unifi.models import UniFiRecord
 
 
@@ -81,6 +82,18 @@ class Backend(Protocol):
     # ----- Zone-Based Firewall (v2) ---------------------------------------
     async def list_firewall_policies(self) -> list[UniFiRecord]: ...
     async def list_firewall_zones(self) -> list[UniFiRecord]: ...
+
+    # ----- Zone-Based Firewall writes (Integration API v1, ADR 0009) -------
+    async def zone_firewall_state(self) -> ZoneFirewallState: ...
+    async def v1_network_id(self, network_id: str) -> str | None: ...
+    async def list_v1_firewall_zones(self) -> list[UniFiRecord]: ...
+    async def list_v1_firewall_policies(self) -> list[UniFiRecord]: ...
+    async def get_v1_firewall_policy(self, policy_id: str) -> UniFiRecord | None: ...
+    async def create_v1_firewall_policy(self, body: dict[str, Any]) -> UniFiRecord: ...
+    async def update_v1_firewall_policy(
+        self, policy_id: str, body: dict[str, Any]
+    ) -> UniFiRecord: ...
+    async def delete_v1_firewall_policy(self, policy_id: str) -> bool: ...
 
     # ----- Firewall groups ------------------------------------------------
     async def list_firewall_groups(self) -> list[UniFiRecord]: ...
@@ -269,6 +282,37 @@ class StubBackend:
 
     async def list_firewall_zones(self) -> list[UniFiRecord]:
         return self.state.list_firewall_zones()
+
+    # ----- Zone-Based Firewall writes (Integration API v1, ADR 0009) -------
+    async def zone_firewall_state(self) -> ZoneFirewallState:
+        return self.state.zone_firewall.state
+
+    async def v1_network_id(self, network_id: str) -> str | None:
+        for net in self.state.list_networks():
+            if net.get("_id") == network_id:
+                return stub_v1_network_id(net)
+        return None
+
+    async def list_v1_firewall_zones(self) -> list[UniFiRecord]:
+        return self.state.zone_firewall.zones(self.state.list_networks())
+
+    async def list_v1_firewall_policies(self) -> list[UniFiRecord]:
+        return self.state.zone_firewall.list_policies()
+
+    async def get_v1_firewall_policy(self, policy_id: str) -> UniFiRecord | None:
+        return self.state.zone_firewall.get_policy(policy_id)
+
+    async def create_v1_firewall_policy(self, body: dict[str, Any]) -> UniFiRecord:
+        self.state._check_failure("create_v1_firewall_policy")
+        return self.state.zone_firewall.create_policy(body)
+
+    async def update_v1_firewall_policy(self, policy_id: str, body: dict[str, Any]) -> UniFiRecord:
+        self.state._check_failure("update_v1_firewall_policy")
+        return self.state.zone_firewall.update_policy(policy_id, body)
+
+    async def delete_v1_firewall_policy(self, policy_id: str) -> bool:
+        self.state._check_failure("delete_v1_firewall_policy")
+        return self.state.zone_firewall.delete_policy(policy_id)
 
     # ----- Firewall groups ------------------------------------------------
     async def list_firewall_groups(self) -> list[UniFiRecord]:
@@ -583,6 +627,35 @@ class RealBackend:
 
     async def list_firewall_zones(self) -> list[UniFiRecord]:
         return await self.client.list_firewall_zones()
+
+    # ----- Zone-Based Firewall writes (Integration API v1, ADR 0009) -------
+    async def zone_firewall_state(self) -> ZoneFirewallState:
+        return await self.writes.zone_firewall_state()
+
+    async def v1_network_id(self, network_id: str) -> str | None:
+        for net in await self.client.list_networks():
+            if net.get("_id") == network_id:
+                ext = net.get("external_id")
+                return ext if isinstance(ext, str) and ext else None
+        return None
+
+    async def list_v1_firewall_zones(self) -> list[UniFiRecord]:
+        return await self.writes.list_firewall_zones()
+
+    async def list_v1_firewall_policies(self) -> list[UniFiRecord]:
+        return await self.writes.list_firewall_policies()
+
+    async def get_v1_firewall_policy(self, policy_id: str) -> UniFiRecord | None:
+        return await self.writes.get_firewall_policy(policy_id)
+
+    async def create_v1_firewall_policy(self, body: dict[str, Any]) -> UniFiRecord:
+        return await self.writes.create_firewall_policy(body)
+
+    async def update_v1_firewall_policy(self, policy_id: str, body: dict[str, Any]) -> UniFiRecord:
+        return await self.writes.update_firewall_policy(policy_id, body)
+
+    async def delete_v1_firewall_policy(self, policy_id: str) -> bool:
+        return await self.writes.delete_firewall_policy(policy_id)
 
     # ----- Firewall groups ------------------------------------------------
     async def list_firewall_groups(self) -> list[UniFiRecord]:

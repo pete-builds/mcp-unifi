@@ -21,6 +21,7 @@ from collections import defaultdict, deque
 from typing import Any
 
 from mcp_unifi.clients.errors import UniFiError
+from mcp_unifi.clients.zone_firewall_stubs import ZoneFirewallStubState
 from mcp_unifi.models import UniFiRecord
 
 
@@ -814,6 +815,8 @@ class StubState:
         self.firewall_groups: list[UniFiRecord] = _seed_firewall_groups()
         self.firewall_zones: list[UniFiRecord] = _seed_firewall_zones()
         self.firewall_policies: list[UniFiRecord] = _seed_firewall_policies(self.firewall_zones)
+        # Integration API (v1) zone policies; starts on legacy rulesets.
+        self.zone_firewall = ZoneFirewallStubState()
         self.routes: list[UniFiRecord] = _seed_routes()
         self.traffic_rules: list[UniFiRecord] = _seed_traffic_rules()
         self.traffic_routes: list[UniFiRecord] = _seed_traffic_routes()

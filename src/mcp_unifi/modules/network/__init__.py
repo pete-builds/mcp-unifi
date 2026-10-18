@@ -27,6 +27,7 @@ from mcp_unifi.modules.network import (
     drift,
     dynamic_dns,
     firewall,
+    firewall_policies,
     guest_portal,
     honeypot,
     ipv6,
@@ -66,6 +67,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     wlans.register(mcp, settings, registry)
     guest_portal.register(mcp, settings, registry)
     firewall.register(mcp, settings, registry)
+    firewall_policies.register(mcp, settings, registry)
     routing.register(mcp, settings, registry)
     traffic.register(mcp, settings, registry)
     content_filtering.register(mcp, settings, registry)
