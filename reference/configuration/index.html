@@ -155,6 +155,13 @@
 <td>no</td>
 <td>Protect API surface for legacy single-controller config. <code dir="auto">integration</code> uses <code dir="auto">/proxy/protect/integration/v1</code> for UniFi OS 5.x API keys; events and recordings are unavailable there.</td>
 </tr>
+<tr>
+<td><code dir="auto">UNIFI_WRITE_API</code></td>
+<td>enum (<code dir="auto">auto</code>, <code dir="auto">private</code>)</td>
+<td><code dir="auto">auto</code></td>
+<td>no</td>
+<td>Network and WLAN write surface for legacy single-controller config. <code dir="auto">auto</code> sends a create, update or delete through <code dir="auto">/proxy/network/integration/v1</code> when the request maps onto it exactly (corporate networks; WPA2-personal, non-guest WLANs on the default AP group) and uses the private API for everything else, for a 4xx from the console, and on firmware without the route. A 5xx or timeout is never replayed on the other surface. <code dir="auto">private</code> keeps every write on the private API. Tool inputs and outputs are identical either way. See <a href="https://github.com/pete-builds/mcp-unifi/blob/main/docs/decisions/0008-network-and-wlan-writes-use-the-integration-api.md">ADR 0008</a>.</td>
+</tr>
 </tbody>
 </table>
 <div class="sl-heading-wrapper level-h2"><h2 id="multi-controller">Multi-controller</h2><a class="sl-anchor-link" href="#multi-controller"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore>Section titled “Multi-controller”</span></a></div>
@@ -185,7 +192,7 @@
 </tr>
 </tbody>
 </table>
-<p>In the YAML, each controller may set <code dir="auto">protect_api: integration</code> independently.
+<p>In the YAML, each controller may set <code dir="auto">protect_api: integration</code> and <code dir="auto">write_api: private</code> independently.
 The default <code dir="auto">internal</code> preserves existing behavior. The mode is validated at
 startup; it does not probe/fallback between APIs automatically.</p>
 <div class="sl-heading-wrapper level-h2"><h2 id="module-dispatcher">Module dispatcher</h2><a class="sl-anchor-link" href="#module-dispatcher"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore>Section titled “Module dispatcher”</span></a></div>
