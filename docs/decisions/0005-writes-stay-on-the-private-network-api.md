@@ -1,9 +1,8 @@
 # 0005. Writes stay on the private UniFi Network API
 
-**Status:** Accepted, with an outstanding documentation task. Reversal condition
-met for networks and WLANs on UniFi Network 10.6.106 (re-probed 2026-10-17, see
-[Re-probe](#re-probe-2026-10-17-unifi-network-106106)); the migration it calls for
-is not built
+**Status:** Superseded by [0008](0008-network-and-wlan-writes-use-the-integration-api.md)
+for network and WLAN writes. Still accepted for every other write, with an
+outstanding documentation task
 
 ## Context
 

@@ -17,9 +17,10 @@ accepted costs**. A decision with no downside listed has not been examined.
 | [0002](0002-shared-substrate-stays-off-pypi.md) | Keep the shared MCP substrate off PyPI | Accepted (fleet-level; this repo is not a consumer) |
 | [0003](0003-verify-ssl-defaults-off.md) | `verify_ssl` defaults to `false` | Accepted |
 | [0004](0004-confirm-token-is-ceremony-not-consent.md) | The confirm-token handshake is ceremony, not consent | Interim control, known inadequate |
-| [0005](0005-writes-stay-on-the-private-network-api.md) | Writes stay on the private UniFi Network API | Accepted; reversal condition met for networks and WLANs (2026-10-17), migration not built |
+| [0005](0005-writes-stay-on-the-private-network-api.md) | Writes stay on the private UniFi Network API | Superseded by 0008 for network and WLAN writes; governs every other write |
 | [0006](0006-denied-by-is-a-separate-audit-field.md) | `denied_by` is a separate audit field, not a convention on `error` | Accepted |
 | [0007](0007-hardening-is-opt-in-unless-the-hole-has-no-legitimate-configuration.md) | Hardening that narrows a working install is opt-in; hardening that closes a hole with no legitimate configuration is mandatory | Accepted |
+| [0008](0008-network-and-wlan-writes-use-the-integration-api.md) | Network and WLAN writes use the Integration API where they map onto it | Accepted |
 
 ## Template
 

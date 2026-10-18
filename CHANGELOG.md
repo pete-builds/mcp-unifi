@@ -7,8 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-10-17
+
 ### Added
 
+- **Network and WLAN writes go through the official Integration API**
+  ([ADR 0008](docs/decisions/0008-network-and-wlan-writes-use-the-integration-api.md)).
+  Create, update and delete for networks and WLANs now use
+  `/proxy/network/integration/v1` whenever the request maps onto it exactly:
+  corporate networks (name, VLAN, subnet, DHCP range and lease, enabled,
+  internet access, isolation, mDNS) and WPA2-personal, non-guest WLANs on the
+  default AP group (name, enabled, hidden, network, passphrase, band). Guest
+  networks, IPv6, and WLANs that are guest, enterprise, open, WPA3, 6 GHz,
+  scheduled or AP-group targeted stay on the private API. Tool inputs and
+  outputs are unchanged: private `_id` values in, private records out, mapped
+  through each record's `external_id`. A 4xx from the console, or firmware
+  without the route, falls back to the private API; a 5xx or timeout is never
+  replayed on the other surface. Each v1 write logs at INFO with
+  `write_api: integration`; each fallback logs a WARNING carrying the console's
+  own message. Verified live on a UCG-Fiber (Network 10.6.106): every
+  operation ran through v1 and read back correctly on the private API.
+- **`write_api` per controller (`UNIFI_WRITE_API`), `auto` by default.**
+  `private` keeps every write on the private API, the pre-0.26.0 behavior.
 - **`scripts/probe_integration_api.py`: a repeatable, read-only probe of the
   official Integration API.** It sends GET requests only, using the server's own
   env vars, and reports which `/proxy/network/integration/v1` resources a console
@@ -27,7 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   appears there only as zone policies, and port forwards, static routes, DHCP
   reservations and port profiles are still absent. The record keeps its decision,
   because no code has moved, and states that the hybrid alternative is reopened.
-  No v1 write was tested.
+  It now points at ADR 0008, which supersedes it for network and WLAN
+  writes.
 
 ## [0.25.0] - 2026-10-01
 

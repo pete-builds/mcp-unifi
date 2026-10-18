@@ -16,6 +16,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from mcp_unifi.clients.access import AccessClient
 from mcp_unifi.clients.access_stubs import AccessStubState
+from mcp_unifi.clients.integration import IntegrationWrites, WriteApi
 from mcp_unifi.clients.protect import ProtectClient
 from mcp_unifi.clients.protect_stubs import ProtectStubState
 from mcp_unifi.clients.stats_shape import (
@@ -478,8 +479,11 @@ class RealBackend:
     once instead of inside every tool.
     """
 
-    def __init__(self, client: UniFiClient) -> None:
+    def __init__(self, client: UniFiClient, write_api: WriteApi = "auto") -> None:
         self.client = client
+        # Network and WLAN writes route through here (ADR 0008); reads stay
+        # on the private client.
+        self.writes = IntegrationWrites(client, write_api)
 
     # ----- Devices --------------------------------------------------------
     async def list_devices(self) -> list[UniFiRecord]:
@@ -539,26 +543,26 @@ class RealBackend:
         return await self.client.list_networks()
 
     async def create_network(self, payload: dict[str, Any]) -> UniFiRecord:
-        return await self.client.create_network(payload)
+        return await self.writes.create_network(payload)
 
     async def update_network(self, network_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
-        return await self.client.update_network(network_id, patch)
+        return await self.writes.update_network(network_id, patch)
 
     async def delete_network(self, network_id: str) -> bool:
-        return await self.client.delete_network(network_id)
+        return await self.writes.delete_network(network_id)
 
     # ----- WLANs ----------------------------------------------------------
     async def list_wlans(self) -> list[UniFiRecord]:
         return await self.client.list_wlans()
 
     async def create_wlan(self, payload: dict[str, Any]) -> UniFiRecord:
-        return await self.client.create_wlan(payload)
+        return await self.writes.create_wlan(payload)
 
     async def update_wlan(self, wlan_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
-        return await self.client.update_wlan(wlan_id, patch)
+        return await self.writes.update_wlan(wlan_id, patch)
 
     async def delete_wlan(self, wlan_id: str) -> bool:
-        return await self.client.delete_wlan(wlan_id)
+        return await self.writes.delete_wlan(wlan_id)
 
     # ----- Firewall -------------------------------------------------------
     async def list_firewall_rules(self) -> list[UniFiRecord]:

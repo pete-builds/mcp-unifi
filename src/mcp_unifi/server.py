@@ -45,6 +45,7 @@ from mcp_unifi.backends import (
 )
 from mcp_unifi.clients.access import AccessClient
 from mcp_unifi.clients.access_stubs import AccessStubState
+from mcp_unifi.clients.integration import WriteApi
 from mcp_unifi.clients.protect import ProtectClient
 from mcp_unifi.clients.protect_stubs import ProtectStubState
 from mcp_unifi.clients.stubs import StubState
@@ -109,8 +110,11 @@ def build_server(
     stub_overrides: dict[str, Backend] | None = (
         {"default": StubBackend(stub)} if stub is not None else None
     )
+    default_write_api: WriteApi = next(
+        (c.write_api for c in settings.controllers if c.name == "default"), "auto"
+    )
     real_overrides: dict[str, Backend] | None = (
-        {"default": RealBackend(unifi)} if unifi is not None else None
+        {"default": RealBackend(unifi, write_api=default_write_api)} if unifi is not None else None
     )
     protect_stub_overrides: dict[str, ProtectBackend] | None = (
         {"default": ProtectStubBackend(protect_stub)} if protect_stub is not None else None
