@@ -21,8 +21,10 @@ Two surfaces could carry zone policy writes:
   KallistoX/mcp-unifi-applications (`docs/network/*.json`, scraped 2026-10-12,
   `version: 10.6.106`), whose `sourceUrl` fields point at
   developer.ui.com/network/v10.6.106/.
-- The **private v2 API** the UniFi app itself uses. Its write payloads are not
-  documented anywhere this project can cite.
+- The **private v2 API** the UniFi app itself uses. Ubiquiti does not document
+  its write payloads. Third-party servers write them anyway (sirkirby's
+  unifi-network-mcp is built on zone policies), from shapes reverse-engineered
+  off the UniFi app; this project has not verified any of them.
 
 The console this server runs against (UCG-Fiber, Network 10.6.106) has not
 migrated. Its v1 `firewall/zones` and `firewall/policies` answer 400
@@ -62,9 +64,10 @@ else.
 ## Alternatives considered
 
 **Hybrid with a private fallback, as ADR 0008 does for networks and WLANs.**
-Rejected. ADR 0008's fallback replays a payload whose private shape is known
-and has been live-tested for years. Here the private shape is unknown: a
-fallback would mean writing an invented payload to a production firewall when
+Rejected. ADR 0008's fallback replays a payload whose private shape this
+server has exercised live for years. Here the private shape is known only
+second-hand, from another project's reverse engineering: a fallback would mean
+writing an unverified payload to a production firewall at exactly the moment
 the documented one was refused. A refusal surfaced verbatim is the safer
 failure.
 
