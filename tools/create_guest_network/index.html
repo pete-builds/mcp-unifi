@@ -81,12 +81,15 @@ the given <code dir="auto">subnet</code> (or <code dir="auto">10.0.&lt;vlan_id&g
 bound to the new network. Access points start broadcasting within
 seconds.</li>
 <li>Step 3: creates a LAN_IN drop rule blocking the guest subnet from
-reaching <code dir="auto">main_lan_subnet</code>.</li>
+reaching <code dir="auto">main_lan_subnet</code>. On a site running the Zone-Based
+Firewall it creates a BLOCK zone policy with the same subnets
+instead, through the Integration API (<code dir="auto">firewall_policy</code> in the
+response).</li>
 <li>Mutates controller state. Use dry_run=True to preview the change
 without applying.</li>
 <li>Rollback: if any sub-step fails, all prior sub-steps are reverted
-(firewall_rule → wlan → network) and the response includes
-<code dir="auto">rolled_back</code> and <code dir="auto">partial</code> keys.</li>
+(firewall_rule or firewall_policy → wlan → network) and the response
+includes <code dir="auto">rolled_back</code> and <code dir="auto">partial</code> keys.</li>
 </ul>
 <p>The <code dir="auto">passphrase</code> is <strong>redacted</strong> to <code dir="auto">"[REDACTED]"</code> everywhere this
 tool emits it: the <code dir="auto">dry_run</code> preview, the created WLAN record, and

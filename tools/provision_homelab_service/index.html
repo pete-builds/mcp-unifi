@@ -78,14 +78,18 @@
 <li>Step 1: creates a static DHCP reservation pinning <code dir="auto">mac</code> to
 <code dir="auto">ip</code> on the named network.</li>
 <li>Step 2 (when <code dir="auto">ports</code> is non-empty): creates a LAN_LOCAL accept
-firewall rule for <code dir="auto">ip</code> on the requested TCP ports.</li>
+firewall rule for <code dir="auto">ip</code> on the requested TCP ports. On a site
+running the Zone-Based Firewall it creates an ALLOW zone policy from
+the <code dir="auto">Internal</code> zone to <code dir="auto">ip</code> on those ports instead, through the
+Integration API (<code dir="auto">firewall_policy</code> in the response).</li>
 <li>Step 3 (when <code dir="auto">wan_expose=True</code> and <code dir="auto">ports</code> is non-empty):
 creates one port-forward rule per port, exposing the service to
 the WAN.</li>
 <li>Mutates controller state. Use dry_run=True to preview the change
 without applying.</li>
 <li>Rollback: if any sub-step fails, all prior sub-steps are reverted
-in reverse order (port_forwards → firewall_rule → lease) and the
+in reverse order (port_forwards → firewall_rule or
+firewall_policy → lease) and the
 response includes <code dir="auto">rolled_back</code> and <code dir="auto">partial</code> keys.</li>
 </ul>
 <div class="sl-heading-wrapper level-h2"><h2 id="example">Example</h2><a class="sl-anchor-link" href="#example"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore>Section titled “Example”</span></a></div>
