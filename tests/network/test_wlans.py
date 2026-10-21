@@ -24,6 +24,24 @@ async def test_list_wlans_stub(stub_server: FastMCP) -> None:
     assert wlans[0]["name"] == "Home"
 
 
+async def test_list_wlans_hides_the_iapp_key_and_keeps_the_ppsk_flag(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    # A real wlanconf carries x_iapp_key (the inter-AP roaming key) next to
+    # x_passphrase. It leaked through list_wlans until 0.26.1 because no
+    # pattern matched it; the per-client-PSK boolean was redacted instead.
+    record = stub_state.list_wlans()[0]
+    record["x_iapp_key"] = "iapp-secret-do-not-leak"
+    record["private_preshared_keys_enabled"] = True
+    record["private_preshared_keys"] = [{"password": "ppsk-secret-do-not-leak"}]
+    wlans = await _call(stub_server, "list_wlans")
+    shown = json.dumps(wlans)
+    assert "iapp-secret-do-not-leak" not in shown
+    assert "ppsk-secret-do-not-leak" not in shown
+    assert wlans[0]["x_iapp_key"] == "[REDACTED]"
+    assert wlans[0]["private_preshared_keys_enabled"] is True
+
+
 async def test_create_wlan_redacts_passphrase(stub_server: FastMCP, stub_state: StubState) -> None:
     net_id = stub_state.list_networks()[0]["_id"]
     result = await _call(

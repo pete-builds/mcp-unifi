@@ -49,6 +49,9 @@ SECRET_KEYS = [
     "x_dh_key",  # networkconf: OpenVPN Diffie-Hellman parameters
     "x_shared_client_key",  # networkconf: OpenVPN shared client key
     "x_auth_key",  # networkconf: OpenVPN TLS auth key (not the device x_authkey)
+    "x_iapp_key",  # wlanconf: IAPP (inter-AP roaming) key, leaked until 0.26.1
+    "private_preshared_keys",  # wlanconf: the per-client PSK list
+    "backup_json",  # restore_config argument: a whole backup, pasted by the caller
     "api_key",
     "X-API-Key",  # the header spelling; api_key does not contain it
     "auth_token",
@@ -89,6 +92,8 @@ NON_SECRET_KEYS = [
     "access_api_key_file",
     "os_password_file",
     "auth_token_file",
+    # a flag that contains ``preshared_key``: whether per-client PSKs are on
+    "private_preshared_keys_enabled",
     # identity and shape
     "x_ipsec_esp_dh_group",
     "wpa_mode",
