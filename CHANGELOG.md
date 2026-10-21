@@ -45,6 +45,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`restore_config`'s `backup_json` argument is scrubbed from the audit log.**
   `backup_config` strips secrets before it emits an envelope, but the argument
   is whatever the caller pasted and the log kept it whole.
+- **The pinned certificate is read once, at startup.** The trust anchor,
+  the exact-match check and the fingerprint on the startup line now all
+  come from the bytes validation loaded, and one TLS context serves every
+  client for a controller. Before, each was re-read from `pinned_cert` on
+  use, so a file replaced under a running server could change what a new
+  connection trusted without a restart or a startup check. Re-pinning
+  now takes effect on restart, which is when the new pin is validated.
+  File-backed secrets and pins share one reader with one error shape.
 
 ## [0.26.0] - 2026-10-17
 

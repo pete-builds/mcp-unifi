@@ -292,13 +292,17 @@ def _tls_verify() -> bool | ssl.SSLContext:
     pinned = os.environ.get("UNIFI_PINNED_CERT")
     if pinned:
         try:
-            from mcp_unifi.tls import build_pinned_context
+            from mcp_unifi.tls import build_pinned_context, load_pinned_cert
         except ImportError as exc:
             raise ProbeError(
                 "UNIFI_PINNED_CERT is set but mcp_unifi is not importable here; "
                 "run inside the container or an installed checkout"
             ) from exc
-        return build_pinned_context(Path(pinned))
+        try:
+            der = load_pinned_cert(Path(pinned).expanduser(), "UNIFI_PINNED_CERT")
+        except ValueError as exc:
+            raise ProbeError(str(exc)) from exc
+        return build_pinned_context(der)
     return _env_flag("UNIFI_VERIFY_SSL", default=False)
 
 
