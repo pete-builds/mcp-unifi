@@ -12,14 +12,18 @@ Side effects:
 - Step 1: creates a static DHCP reservation pinning ``mac`` to
   ``ip`` on the named network.
 - Step 2 (when ``ports`` is non-empty): creates a LAN_LOCAL accept
-  firewall rule for ``ip`` on the requested TCP ports.
+  firewall rule for ``ip`` on the requested TCP ports. On a site
+  running the Zone-Based Firewall it creates an ALLOW zone policy from
+  the ``Internal`` zone to ``ip`` on those ports instead, through the
+  Integration API (``firewall_policy`` in the response).
 - Step 3 (when ``wan_expose=True`` and ``ports`` is non-empty):
   creates one port-forward rule per port, exposing the service to
   the WAN.
 - Mutates controller state. Use dry_run=True to preview the change
   without applying.
 - Rollback: if any sub-step fails, all prior sub-steps are reverted
-  in reverse order (port_forwards → firewall_rule → lease) and the
+  in reverse order (port_forwards → firewall_rule or
+  firewall_policy → lease) and the
   response includes ``rolled_back`` and ``partial`` keys.
 
 ## Example

@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Zone-Based Firewall policy writes**
+  ([ADR 0009](docs/decisions/0009-zone-policy-writes-use-the-integration-api-only.md)).
+  `create_firewall_policy`, `update_firewall_policy` and
+  `delete_firewall_policy` write zone policies through
+  `/proxy/network/integration/v1` only. Policies are addressed by v1 id or
+  exact name, zones by name, networks by their private `_id`. Only
+  user-defined policies can be edited or deleted; delete goes through the
+  confirm token. A console refusal comes back with the console's own message
+  and is never replayed on the private API. Bodies follow the published
+  Network 10.6.106 reference and have **not yet been sent to a zone-based
+  console**.
+
+### Changed
+
+- **The provisioning composites are zone-aware.** On a site running the
+  Zone-Based Firewall, `create_iot_network` and `create_guest_network` create a
+  BLOCK zone policy (new subnet to main LAN subnet) and
+  `provision_homelab_service` creates an ALLOW zone policy (`Internal` to the
+  service IP on its TCP ports) in place of the legacy rule, with the same
+  rollback. Dry runs preview the policy. Legacy sites and `write_api: private`
+  behave exactly as before.
+- **`restore_config` skips legacy firewall rules on a zone-based site** and
+  warns with the count, instead of replaying them into rulesets the site no
+  longer uses.
+
 ### Fixed
 
 - **The pinned certificate is read once, at startup.** The trust anchor,
@@ -17,6 +44,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   connection trusted without a restart or a startup check. Re-pinning
   now takes effect on restart, which is when the new pin is validated.
   File-backed secrets and pins share one reader with one error shape.
+
+## [0.26.0] - 2026-10-17
+
+### Added
+
+- **Network and WLAN writes go through the official Integration API**
+  ([ADR 0008](docs/decisions/0008-network-and-wlan-writes-use-the-integration-api.md)).
+  Create, update and delete for networks and WLANs now use
+  `/proxy/network/integration/v1` whenever the request maps onto it exactly:
+  corporate networks (name, VLAN, subnet, DHCP range and lease, enabled,
+  internet access, isolation, mDNS) and WPA2-personal, non-guest WLANs on the
+  default AP group (name, enabled, hidden, network, passphrase, band). Guest
+  networks, IPv6, and WLANs that are guest, enterprise, open, WPA3, 6 GHz,
+  scheduled or AP-group targeted stay on the private API. Tool inputs and
+  outputs are unchanged: private `_id` values in, private records out, mapped
+  through each record's `external_id`. A 4xx from the console, or firmware
+  without the route, falls back to the private API; a 5xx or timeout is never
+  replayed on the other surface. Each v1 write logs at INFO with
+  `write_api: integration`; each fallback logs a WARNING carrying the console's
+  own message. Verified live on a UCG-Fiber (Network 10.6.106): every
+  operation ran through v1 and read back correctly on the private API.
+- **`write_api` per controller (`UNIFI_WRITE_API`), `auto` by default.**
+  `private` keeps every write on the private API, the pre-0.26.0 behavior.
+- **`scripts/probe_integration_api.py`: a repeatable, read-only probe of the
+  official Integration API.** It sends GET requests only, using the server's own
+  env vars, and reports which `/proxy/network/integration/v1` resources a console
+  serves, cross-checked against the private API this server writes through. Two
+  controls run first (a wrong key must be rejected, a fake route must 404) and a
+  failed control exits 2. It never prints the API key or a response body. Runs
+  from a checkout or piped into a running container with
+  `docker exec -i mcp-unifi python - < scripts/probe_integration_api.py`.
+  Linted and type-checked in CI with the rest of the source.
+
+### Changed
+
+- **[ADR 0005](docs/decisions/0005-writes-stay-on-the-private-network-api.md)
+  re-probed on UniFi Network 10.6.106.** Its reversal condition is now met for
+  networks and WLANs, which the official API serves with live data; firewall
+  appears there only as zone policies, and port forwards, static routes, DHCP
+  reservations and port profiles are still absent. The record keeps its decision,
+  because no code has moved, and states that the hybrid alternative is reopened.
+  It now points at ADR 0008, which supersedes it for network and WLAN
+  writes.
 
 ## [0.25.0] - 2026-10-01
 

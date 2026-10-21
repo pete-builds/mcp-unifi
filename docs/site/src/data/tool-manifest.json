@@ -1,5 +1,5 @@
 {
-  "tool_count": 136,
+  "tool_count": 139,
   "tools": [
     {
       "description": "Return credentials expiring within ``days_ahead`` days.\n\nSide effects: None (read-only).\n\nIterates ``list_credentials`` client-side and filters to those whose\n``expires_at`` falls inside the window ``[now, now + days_ahead]``.\nCredentials with no ``expires_at`` (typical for mobile credentials)\nare excluded. Each entry includes ``days_until_expiry`` so the LLM\ncan sort and summarise without re-doing the math.\n\nExample: audit_expiring_credentials(days_ahead=14)",
@@ -226,6 +226,160 @@
       "name": "create_firewall_group"
     },
     {
+      "description": "Create a Zone-Based Firewall policy (Integration API).\n\nSide effects:\n- Adds a policy from ``source_zone`` to ``destination_zone``. Takes\n  effect on the next packet. The console places it in its own\n  evaluation order (``index`` in the response).\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying. A dry run still reads zones and networks, so it\n  also reports a bad zone name or network id.\n- Sites still on legacy rulesets get an error pointing at\n  ``create_firewall_rule``; nothing is written.\n\nWritten through ``/proxy/network/integration/v1`` only, with no\nprivate-API fallback (ADR 0009). If the console refuses the body, the\nerror carries its own message, which names the field it wanted.\nReturns the created v1 policy record, including its ``id``, which is\nwhat ``update_firewall_policy`` and ``delete_firewall_policy`` take.\n\nEach side matches by networks or by addresses, not both; leaving both\nempty matches the whole zone.\n\nExample: create_firewall_policy(name=\"Allow IoT to Plex\", action=\"allow\", source_zone=\"Internal\", destination_zone=\"Internal\", protocol=\"tcp\", source_network_ids=[\"6a1240...\"], destination_addresses=[\"192.168.86.20\"], destination_ports=\"32400\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "description": "``\"allow\"``, ``\"block\"`` or ``\"reject\"``.",
+            "type": "string"
+          },
+          "allow_return_traffic": {
+            "default": true,
+            "description": "For ``allow`` only: also allow the reply\ntraffic. Default ``True``.",
+            "type": "boolean"
+          },
+          "connection_states": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional connection-state match, e.g.\n``[\"NEW\"]``. Empty = every state."
+          },
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "description": "Optional free-text description.",
+            "maxLength": 256,
+            "type": "string"
+          },
+          "destination_addresses": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "IPs, CIDRs or ranges to match as the\ndestination."
+          },
+          "destination_network_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Private network ``_id`` values to match\nas the destination."
+          },
+          "destination_ports": {
+            "default": "",
+            "description": "Destination port match: ``\"443\"``,\n``\"80,443\"`` or ``\"8000-8100\"``. Empty = any.",
+            "type": "string"
+          },
+          "destination_zone": {
+            "description": "Zone name or v1 id, as ``source_zone``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it. Returns the\nexact body that would be sent.",
+            "type": "boolean"
+          },
+          "enabled": {
+            "default": true,
+            "description": "``False`` creates the policy disabled, for staging.",
+            "type": "boolean"
+          },
+          "ip_version": {
+            "default": "IPV4",
+            "description": "``\"IPV4\"`` (default), ``\"IPV6\"`` or ``\"IPV4_AND_IPV6\"``.",
+            "type": "string"
+          },
+          "logging": {
+            "default": false,
+            "description": "``True`` logs every match.",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "Display name for the policy.",
+            "maxLength": 128,
+            "type": "string"
+          },
+          "protocol": {
+            "default": "all",
+            "description": "``\"all\"`` (default), ``\"tcp\"``, ``\"udp\"``, ``\"tcp_udp\"``,\n``\"icmp\"`` (IPv4) or ``\"icmpv6\"`` (IPv6). A port match needs\ntcp, udp or tcp_udp.",
+            "type": "string"
+          },
+          "source_addresses": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "IPs, CIDRs or ``\"a-b\"`` ranges to match as the\nsource."
+          },
+          "source_network_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Private network ``_id`` values from\n``list_networks`` to match as the source."
+          },
+          "source_zone": {
+            "description": "Zone name (``\"Internal\"``, ``\"External\"``,\n``\"Hotspot\"``, ``\"Vpn\"``, ``\"Dmz\"``, ``\"Gateway\"``, or a custom\nzone) or its v1 id.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "action",
+          "source_zone",
+          "destination_zone"
+        ],
+        "type": "object"
+      },
+      "name": "create_firewall_policy"
+    },
+    {
       "description": "Create a firewall rule on the controller.\n\nSide effects:\n- Adds a new rule into the named ``ruleset`` at the given\n  ``rule_index``. Rules with lower indexes evaluate first.\n- Takes effect immediately on the next packet hitting the affected\n  datapath.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: create_firewall_rule(name=\"Allow IoT to Plex\", ruleset=\"LAN_IN\", action=\"accept\", protocol=\"tcp\", src_networkconf_id=\"65f...\", dst_networkconf_id=\"65a...\", dst_port=\"32400\")",
       "input_schema": {
         "additionalProperties": false,
@@ -354,7 +508,7 @@
       "name": "create_firewall_rule"
     },
     {
-      "description": "Provision an isolated guest network end-to-end: VLAN + guest SSID + drop rule.\n\nSide effects:\n- Step 1: creates a VLAN-tagged network with ``purpose=\"guest\"`` at\n  the given ``subnet`` (or ``10.0.<vlan_id>.0/24`` by default).\n- Step 2: creates a guest WPA2 WiFi SSID (client isolation enabled)\n  bound to the new network. Access points start broadcasting within\n  seconds.\n- Step 3: creates a LAN_IN drop rule blocking the guest subnet from\n  reaching ``main_lan_subnet``.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n- Rollback: if any sub-step fails, all prior sub-steps are reverted\n  (firewall_rule \u2192 wlan \u2192 network) and the response includes\n  ``rolled_back`` and ``partial`` keys.\n\nThe ``passphrase`` is **redacted** to ``\"[REDACTED]\"`` everywhere this\ntool emits it: the ``dry_run`` preview, the created WLAN record, and\nthe ``partial`` record on a rollback. There is no opt-in flag.\n\nExample: create_guest_network(name=\"guest\", ssid=\"guest-wifi\", passphrase=\"hunter2hunter2\", vlan_id=60, main_lan_subnet=\"192.168.1.0/24\")",
+      "description": "Provision an isolated guest network end-to-end: VLAN + guest SSID + drop rule.\n\nSide effects:\n- Step 1: creates a VLAN-tagged network with ``purpose=\"guest\"`` at\n  the given ``subnet`` (or ``10.0.<vlan_id>.0/24`` by default).\n- Step 2: creates a guest WPA2 WiFi SSID (client isolation enabled)\n  bound to the new network. Access points start broadcasting within\n  seconds.\n- Step 3: creates a LAN_IN drop rule blocking the guest subnet from\n  reaching ``main_lan_subnet``. On a site running the Zone-Based\n  Firewall it creates a BLOCK zone policy with the same subnets\n  instead, through the Integration API (``firewall_policy`` in the\n  response).\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n- Rollback: if any sub-step fails, all prior sub-steps are reverted\n  (firewall_rule or firewall_policy \u2192 wlan \u2192 network) and the response\n  includes ``rolled_back`` and ``partial`` keys.\n\nThe ``passphrase`` is **redacted** to ``\"[REDACTED]\"`` everywhere this\ntool emits it: the ``dry_run`` preview, the created WLAN record, and\nthe ``partial`` record on a rollback. There is no opt-in flag.\n\nExample: create_guest_network(name=\"guest\", ssid=\"guest-wifi\", passphrase=\"hunter2hunter2\", vlan_id=60, main_lan_subnet=\"192.168.1.0/24\")",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -452,7 +606,7 @@
       "name": "create_honeypot"
     },
     {
-      "description": "Provision an isolated IoT network end-to-end: VLAN + SSID + drop rule.\n\nSide effects:\n- Step 1: creates a VLAN-tagged network at the given ``subnet`` (or\n  ``10.0.<vlan_id>.0/24`` by default).\n- Step 2: creates a WPA2 WiFi SSID bound to the new network. Access\n  points start broadcasting within seconds.\n- Step 3 (when ``isolate=True``): creates a LAN_IN drop rule blocking\n  the IoT subnet from reaching ``main_lan_subnet``.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n- Rollback: if any sub-step fails, all prior sub-steps are reverted\n  (firewall_rule \u2192 wlan \u2192 network) and the response includes\n  ``rolled_back`` and ``partial`` keys.\n\nThe ``passphrase`` is **redacted** to ``\"[REDACTED]\"`` everywhere this\ntool emits it: the ``dry_run`` preview, the created WLAN record, and\nthe ``partial`` record on a rollback. There is no opt-in flag.\n\nExample: create_iot_network(name=\"iot\", vlan_id=50, passphrase=\"hunter2hunter2\", main_lan_subnet=\"192.168.1.0/24\")",
+      "description": "Provision an isolated IoT network end-to-end: VLAN + SSID + drop rule.\n\nSide effects:\n- Step 1: creates a VLAN-tagged network at the given ``subnet`` (or\n  ``10.0.<vlan_id>.0/24`` by default).\n- Step 2: creates a WPA2 WiFi SSID bound to the new network. Access\n  points start broadcasting within seconds.\n- Step 3 (when ``isolate=True``): creates a LAN_IN drop rule blocking\n  the IoT subnet from reaching ``main_lan_subnet``. On a site running\n  the Zone-Based Firewall it creates a BLOCK zone policy with the same\n  subnets instead, through the Integration API (``firewall_policy`` in\n  the response).\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n- Rollback: if any sub-step fails, all prior sub-steps are reverted\n  (firewall_rule or firewall_policy \u2192 wlan \u2192 network) and the response\n  includes ``rolled_back`` and ``partial`` keys.\n\nThe ``passphrase`` is **redacted** to ``\"[REDACTED]\"`` everywhere this\ntool emits it: the ``dry_run`` preview, the created WLAN record, and\nthe ``partial`` record on a rollback. There is no opt-in flag.\n\nExample: create_iot_network(name=\"iot\", vlan_id=50, passphrase=\"hunter2hunter2\", main_lan_subnet=\"192.168.1.0/24\")",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -974,6 +1128,33 @@
         "type": "object"
       },
       "name": "delete_firewall_group"
+    },
+    {
+      "description": "Preview deletion of a Zone-Based Firewall policy you created.\n\nThis tool does not delete on its own. It returns a preview envelope\nwith a ``token``; call ``confirm_destructive_action(token)`` to commit\nthe delete. Tokens expire after 5 minutes.\n\nSide effects:\n- None until ``confirm_destructive_action`` runs against the token.\n- On confirm: removes the policy through the Integration API. Traffic\n  it matched falls through to the next policy or the zone pair's\n  default.\n- Controller-managed policies are refused.\n- ``dry_run=True`` returns the ``would_delete`` envelope with no token,\n  purely informational.\n\nExample: delete_firewall_policy(policy=\"Allow IoT to Plex\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "``True`` skips token generation and returns the\n``{\"dry_run\": true, ...}`` envelope.",
+            "type": "boolean"
+          },
+          "policy": {
+            "description": "The policy's v1 ``id`` or its exact name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "policy"
+        ],
+        "type": "object"
+      },
+      "name": "delete_firewall_policy"
     },
     {
       "description": "Preview deletion of a firewall rule.\n\nv0.7.0: this tool no longer deletes on its own. It returns a preview\nenvelope with a ``token``; call ``confirm_destructive_action(token)``\nto commit the delete. Tokens expire after 5 minutes.\n\nSide effects:\n- None until ``confirm_destructive_action`` runs against the token.\n- On confirm: removes the rule. Traffic that previously matched it\n  falls through to the next rule (or the implicit default).\n- ``dry_run=True`` returns the legacy ``would_delete`` envelope with\n  no token \u2014 purely informational, no commit step possible.\n\nExample: delete_firewall_rule(rule_id=\"65f...\")",
@@ -2202,7 +2383,7 @@
       "name": "list_firewall_groups"
     },
     {
-      "description": "List every Zone-Based Firewall policy on the controller (v2 API).\n\nSide effects: None (read-only).\n\nSites on UniFi Network 9.x and newer that use the Zone-Based Firewall\nkeep their policy here, not in the legacy rulesets that\n``list_firewall_rules`` reads. A site still on legacy rulesets returns\n``[]`` from this tool and its rules from ``list_firewall_rules``;\n``audit_open_ports`` reads both so you do not have to guess which\nmodel a site uses.\n\nReturns one record per policy with ``_id``, ``name``, ``action``\n(``ALLOW``/``BLOCK``/``REJECT``), ``enabled``, ``predefined``\n(controller-managed, not user-created), ``index``, ``protocol``,\n``ip_version``, and ``source`` / ``destination`` objects whose\n``zone_id`` refers to a record from ``list_firewall_zones``. Read\nonly: this server does not create or edit zone policies yet.\n\nExample: list_firewall_policies(controller=\"default\")",
+      "description": "List every Zone-Based Firewall policy on the controller (v2 API).\n\nSide effects: None (read-only).\n\nSites on UniFi Network 9.x and newer that use the Zone-Based Firewall\nkeep their policy here, not in the legacy rulesets that\n``list_firewall_rules`` reads. A site still on legacy rulesets returns\n``[]`` from this tool and its rules from ``list_firewall_rules``;\n``audit_open_ports`` reads both so you do not have to guess which\nmodel a site uses.\n\nReturns one record per policy with ``_id``, ``name``, ``action``\n(``ALLOW``/``BLOCK``/``REJECT``), ``enabled``, ``predefined``\n(controller-managed, not user-created), ``index``, ``protocol``,\n``ip_version``, and ``source`` / ``destination`` objects whose\n``zone_id`` refers to a record from ``list_firewall_zones``. To\nwrite zone policies use ``create_firewall_policy``,\n``update_firewall_policy`` and ``delete_firewall_policy``, which go\nthrough the Integration API and address policies by v1 id or name.\n\nExample: list_firewall_policies(controller=\"default\")",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -2573,7 +2754,7 @@
       "name": "provision_camera"
     },
     {
-      "description": "Stand up a homelab service: DHCP lease + firewall allow + (optional) port forwards.\n\nSide effects:\n- Step 1: creates a static DHCP reservation pinning ``mac`` to\n  ``ip`` on the named network.\n- Step 2 (when ``ports`` is non-empty): creates a LAN_LOCAL accept\n  firewall rule for ``ip`` on the requested TCP ports.\n- Step 3 (when ``wan_expose=True`` and ``ports`` is non-empty):\n  creates one port-forward rule per port, exposing the service to\n  the WAN.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n- Rollback: if any sub-step fails, all prior sub-steps are reverted\n  in reverse order (port_forwards \u2192 firewall_rule \u2192 lease) and the\n  response includes ``rolled_back`` and ``partial`` keys.\n\nExample: provision_homelab_service(name=\"plex\", mac=\"aa:bb:cc:00:00:01\", ip=\"10.50.0.10\", network_id=\"65f...\", ports=[32400], wan_expose=False)",
+      "description": "Stand up a homelab service: DHCP lease + firewall allow + (optional) port forwards.\n\nSide effects:\n- Step 1: creates a static DHCP reservation pinning ``mac`` to\n  ``ip`` on the named network.\n- Step 2 (when ``ports`` is non-empty): creates a LAN_LOCAL accept\n  firewall rule for ``ip`` on the requested TCP ports. On a site\n  running the Zone-Based Firewall it creates an ALLOW zone policy from\n  the ``Internal`` zone to ``ip`` on those ports instead, through the\n  Integration API (``firewall_policy`` in the response).\n- Step 3 (when ``wan_expose=True`` and ``ports`` is non-empty):\n  creates one port-forward rule per port, exposing the service to\n  the WAN.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n- Rollback: if any sub-step fails, all prior sub-steps are reverted\n  in reverse order (port_forwards \u2192 firewall_rule or\n  firewall_policy \u2192 lease) and the\n  response includes ``rolled_back`` and ``partial`` keys.\n\nExample: provision_homelab_service(name=\"plex\", mac=\"aa:bb:cc:00:00:01\", ip=\"10.50.0.10\", network_id=\"65f...\", ports=[32400], wan_expose=False)",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -2756,7 +2937,7 @@
       "name": "restart_device"
     },
     {
-      "description": "Restore controller state from a ``backup_config`` envelope.\n\nSide effects:\n- Diffs the envelope against current controller state and applies\n  an ordered create/delete plan. Deletes run first (firewall_rules,\n  port_forwards, wlans, dhcp_leases, port_profiles, networks);\n  creates run second in the reverse order. No update path in this\n  version: drifted fields show up as a delete + create pair (or\n  stay put when names match).\n- Cross-controller restore: if the envelope's ``controller``\n  differs from the target, the restore proceeds and the response\n  includes a warning.\n- Stripped secrets: if ``secrets_stripped: true``, every restored\n  WLAN or network still carrying the sentinel in any field is forced\n  to ``enabled=False`` so a known-string SSID is never broadcast and\n  a VPN tunnel is never stood up on a public pre-shared key. The\n  operator must reset each secret and re-enable manually.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n- Rollback: if any sub-step fails, all prior creates are reverted\n  in reverse order and the response includes ``partial`` and\n  ``rolled_back`` keys. Deletes that already ran are NOT undone\n  (no copy was kept); the response reports them so the operator\n  can re-run with ``dry_run`` to inspect the residual gap.\n\nSchema validation: ``schema != \"1\"`` returns an error envelope and\nno action is taken.\n\nExample: restore_config(backup_json=snapshot, dry_run=True)",
+      "description": "Restore controller state from a ``backup_config`` envelope.\n\nSide effects:\n- Diffs the envelope against current controller state and applies\n  an ordered create/delete plan. Deletes run first (firewall_rules,\n  port_forwards, wlans, dhcp_leases, port_profiles, networks);\n  creates run second in the reverse order. No update path in this\n  version: drifted fields show up as a delete + create pair (or\n  stay put when names match).\n- Cross-controller restore: if the envelope's ``controller``\n  differs from the target, the restore proceeds and the response\n  includes a warning.\n- Stripped secrets: if ``secrets_stripped: true``, every restored\n  WLAN or network still carrying the sentinel in any field is forced\n  to ``enabled=False`` so a known-string SSID is never broadcast and\n  a VPN tunnel is never stood up on a public pre-shared key. The\n  operator must reset each secret and re-enable manually.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n- Rollback: if any sub-step fails, all prior creates are reverted\n  in reverse order and the response includes ``partial`` and\n  ``rolled_back`` keys. Deletes that already ran are NOT undone\n  (no copy was kept); the response reports them so the operator\n  can re-run with ``dry_run`` to inspect the residual gap.\n\nZone-based sites: legacy ``firewall_rules`` in the backup are not\nreplayed onto a site running the Zone-Based Firewall. They appear in\nthe plan as ``skip`` actions with a warning.\n\nSchema validation: ``schema != \"1\"`` returns an error envelope and\nno action is taken.\n\nExample: restore_config(backup_json=snapshot, dry_run=True)",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -3590,6 +3771,94 @@
         "type": "object"
       },
       "name": "update_firewall_group"
+    },
+    {
+      "description": "Change a Zone-Based Firewall policy you created (Integration API).\n\nSide effects:\n- Reads the policy, applies the changes, and PUTs the whole policy\n  back, since the v1 PUT replaces it. Takes effect on the next packet.\n- Refuses controller-managed policies (predefined or derived return\n  traffic): only ``metadata.origin == \"USER_DEFINED\"`` is editable.\n- Mutates controller state. Use dry_run=True to preview the before and\n  after bodies without applying.\n\nVerified write: after the PUT the policy is re-read and the response\ncarries it plus a ``verification`` block (``verified``,\n``persisted_fields``, ``dropped_fields`` and the rest), the same block\nthe other ``update_*`` tools return. Written through the Integration\nAPI only (ADR 0009).\n\nThe named arguments cover the common edits. ``updates`` takes any\nother top-level v1 field (``source``, ``destination``,\n``ipProtocolScope``, ``connectionStateFilter``, ``schedule``) in v1\nshape, replacing that field whole; it is applied after the named\narguments.\n\nExample: update_firewall_policy(policy=\"Allow IoT to Plex\", enabled=False)",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "default": "",
+            "description": "New action: ``\"allow\"``, ``\"block\"`` or ``\"reject\"``.\nEmpty keeps the current one.",
+            "type": "string"
+          },
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "New description. ``None`` keeps it."
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the before/after bodies without applying.",
+            "type": "boolean"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "``True``/``False`` to enable or disable. ``None`` keeps it."
+          },
+          "logging": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "``True``/``False`` to turn match logging on or off."
+          },
+          "name": {
+            "default": "",
+            "description": "New name. Empty keeps the current one.",
+            "maxLength": 128,
+            "type": "string"
+          },
+          "policy": {
+            "description": "The policy's v1 ``id`` (from ``create_firewall_policy``) or\nits exact name. A name shared by two policies is refused.",
+            "type": "string"
+          },
+          "updates": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Other top-level v1 fields to replace whole."
+          }
+        },
+        "required": [
+          "policy"
+        ],
+        "type": "object"
+      },
+      "name": "update_firewall_policy"
     },
     {
       "description": "Patch fields on an existing firewall rule.\n\nSide effects:\n- Modifies the named rule in place. Only fields supplied in\n  ``updates`` change; everything else is preserved.\n- Takes effect immediately on the next packet hitting the affected\n  datapath.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nVerified write: after applying, the rule is re-read from the\ncontroller and the response carries the rule's fields plus a\n``verification`` block (``verified``, ``mutation_applied``,\n``persisted_fields``, ``unchanged_fields``, ``dropped_fields``,\n``coerced_fields``, ``unverifiable_fields``), the same block the other\n``update_*`` tools return. The rule's own fields stay at the top level\nso existing callers keep working.\n\nExample: update_firewall_rule(rule_id=\"65f...\", updates={\"enabled\": False})",

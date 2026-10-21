@@ -1,6 +1,8 @@
 # 0005. Writes stay on the private UniFi Network API
 
-**Status:** Accepted, with an outstanding documentation task
+**Status:** Superseded by [0008](0008-network-and-wlan-writes-use-the-integration-api.md)
+for network and WLAN writes. Still accepted for every other write, with an
+outstanding documentation task
 
 ## Context
 
@@ -33,7 +35,8 @@ Keep writes on the private API. Do not migrate.
 
 The reason is capability, not effort. The same probe that found the missing event
 route also checked the official surface: **Integration v1 on that firmware exposes
-only `devices` and `clients`.** It has no firewall rules, no VLANs, no WLANs, no
+only `devices` and `clients`.** (Network 10.4.57; no longer true on 10.6.106, see
+the re-probe below.) It has no firewall rules, no VLANs, no WLANs, no
 port forwards, no routes, no DHCP reservations, no port profiles. Migrating would
 not be a like-for-like port. It would delete most of the tool surface.
 
@@ -91,10 +94,55 @@ rejection above: once the covered surface is large enough that the two-code-path
 tax buys stability for most calls rather than a minority, the hybrid becomes
 correct.
 
-The concrete check: re-probe `/proxy/network/integration/v1/` on current firmware
-and see whether firewall, network, and WLAN resources exist. If they do, this
-record is superseded.
+The concrete check: run `scripts/probe_integration_api.py` against current
+firmware (it reads the server's own env vars and issues GET requests only) and
+see whether firewall, network, and WLAN resources exist. If they do, this record
+is superseded.
 
 Reverse sooner, and accept the hybrid tax immediately, if a firmware update breaks
 a private write endpoint that the Integration API already covers. One real outage
 in that shape settles the cost argument.
+
+## Re-probe: 2026-10-17, UniFi Network 10.6.106
+
+Run with `scripts/probe_integration_api.py` from inside the deployed container on a
+UCG-Fiber running UniFi Network 10.6.106. GET requests only; no write to the
+Integration API was attempted. Both controls held: a deliberately wrong API key
+was rejected with 401, and a route that cannot exist returned 404, so a 200 below
+means the resource is served and a non-404 4xx means the route exists.
+
+| Resource under `/v1/sites/{siteId}/` | Result |
+|---|---|
+| `devices`, `clients` | 200 with data (the two found on 10.4.57) |
+| `networks` | 200 with data |
+| `wifi/broadcasts` | 200 with data |
+| `wans`, `vpn/servers`, `radius/profiles` | 200 with data |
+| `acl-rules`, `dns/policies`, `traffic-matching-lists`, `device-tags`, `hotspot/vouchers`, `vpn/site-to-site-tunnels` | 200, none configured on this site |
+| `firewall/zones`, `firewall/policies` | 400 `api.firewall.zone-based-firewall-not-configured` |
+
+Cross-checked against the private API this server uses, so the 200s are the same
+configuration and not an empty shell: WLAN names match one for one. Networks list
+4 on v1 against 7 in the private `rest/networkconf`; the 3 missing are exactly the
+two WAN entries and the WireGuard VPN server, which v1 serves separately under
+`wans` and `vpn/servers`. The private v2 API also reports zero firewall zones and
+zero zone policies, which agrees with the 400: this site has not migrated to the
+Zone-Based Firewall, and the v1 firewall routes exist for sites that have.
+
+What this changes, measured against the reversal condition above:
+
+- **Networks and WLANs: met.** Both capabilities now appear on the Integration API
+  with live data. The per-capability trigger says to migrate them.
+- **Firewall: met only in zone form.** v1 carries zone policies and zones. It does
+  not carry the legacy firewall rules that `create_firewall_rule` and friends write
+  today, and the developer.ui.com reference for 10.6.106 lists no route for them.
+- **Still absent from the official reference:** port forwards, static routes, DHCP
+  reservations, and port profiles. A full migration remains impossible, so the
+  first alternative above stays rejected for the reason it was rejected.
+- **The hybrid alternative is reopened.** It lost because the covered surface was
+  devices and clients. Networks and WLANs are core write surfaces, which is the
+  scale at which this record said the two-code-path tax becomes correct.
+
+Not established by this probe, and needed before any migration ships: that the v1
+write routes (`POST`/`PUT`/`DELETE` on networks and WiFi broadcasts) accept the
+payloads this server needs to send, and how their validation errors differ from the
+private API's. The superseding decision belongs in a new record once that is known.

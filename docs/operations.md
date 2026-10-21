@@ -462,8 +462,10 @@ first. Those issue more than one request by construction, and the count varies
 with the payload. Measuring them properly needs per-endpoint mocks rather than a
 catch-all, which is worth doing and is not done here.
 
-Every write in this server rides the private UniFi surface (`/rest/*`,
-`/cmd/*`, `/set/*`) rather than the documented integration API. That is a
+Every write in this server except network and WLAN writes rides the private UniFi
+surface (`/rest/*`, `/cmd/*`, `/set/*`) rather than the documented integration
+API; those two go through the Integration API where they map onto it (ADR 0008),
+which also adds a site lookup and a private list read per write. That is a
 compatibility risk, not a cost one, but it is the same set of endpoints these
 counts are taken against, so a firmware change can move both at once.
 

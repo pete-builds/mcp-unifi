@@ -6,6 +6,12 @@
 - ``quarantine_client``: block + structured log entry.
 - ``audit_open_ports``: read-only summary of WAN exposure.
 
+On a site running the Zone-Based Firewall, the three provisioning composites
+create a zone policy through the Integration API where they would otherwise
+create a legacy rule (ADR 0009, :mod:`._zone_policy`). Detection runs before
+the first write, so a site that cannot be classified fails with nothing
+created.
+
 Every payload and record these tools emit goes through
 :func:`mcp_unifi.redaction.redact` on the way out, matching ``wlans``. The IoT
 and guest composites take a ``passphrase`` argument and build a WLAN payload
@@ -44,6 +50,12 @@ from mcp_unifi.modules.network._common import (
     wan_zone_ids,
     zone_names_by_id,
 )
+from mcp_unifi.modules.network._zone_policy import (
+    isolation_policy,
+    policy_preview,
+    service_policy,
+    site_is_zone_based,
+)
 from mcp_unifi.redaction import redact
 
 if TYPE_CHECKING:
@@ -73,6 +85,8 @@ async def _delete_resource(backend: Backend, kind: str, resource_id: str) -> boo
             return await backend.delete_wlan(resource_id)
         if kind == "firewall_rule":
             return await backend.delete_firewall_rule(resource_id)
+        if kind == "firewall_policy":
+            return await backend.delete_v1_firewall_policy(resource_id)
         if kind == "dhcp_lease":
             return await backend.delete_dhcp_lease(resource_id)
         if kind == "port_forward":
@@ -88,6 +102,15 @@ async def _delete_resource(backend: Backend, kind: str, resource_id: str) -> boo
 
 def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> None:
     err = make_err(settings)
+
+    async def _dry_run_zone_based(controller: str) -> bool:
+        # A dry run only previews, so a failed detection read falls back to the
+        # legacy preview; the real apply detects again and fails before writing.
+        try:
+            return await site_is_zone_based(resolve_backend(registry, controller))
+        except UniFiError:
+            logger.warning("dry run could not read the firewall model", exc_info=True)
+            return False
 
     @mcp.tool(annotations=CREATE)
     @audited("create_iot_network", mutates=True)
@@ -110,12 +133,15 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         - Step 2: creates a WPA2 WiFi SSID bound to the new network. Access
           points start broadcasting within seconds.
         - Step 3 (when ``isolate=True``): creates a LAN_IN drop rule blocking
-          the IoT subnet from reaching ``main_lan_subnet``.
+          the IoT subnet from reaching ``main_lan_subnet``. On a site running
+          the Zone-Based Firewall it creates a BLOCK zone policy with the same
+          subnets instead, through the Integration API (``firewall_policy`` in
+          the response).
         - Mutates controller state. Use dry_run=True to preview the change
           without applying.
         - Rollback: if any sub-step fails, all prior sub-steps are reverted
-          (firewall_rule → wlan → network) and the response includes
-          ``rolled_back`` and ``partial`` keys.
+          (firewall_rule or firewall_policy → wlan → network) and the response
+          includes ``rolled_back`` and ``partial`` keys.
 
         The ``passphrase`` is **redacted** to ``"[REDACTED]"`` everywhere this
         tool emits it: the ``dry_run`` preview, the created WLAN record, and
@@ -194,7 +220,16 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 "wlan": wlan_payload,
             }
             if fw_payload is not None:
-                would_create["firewall_rule"] = fw_payload
+                if await _dry_run_zone_based(controller):
+                    would_create["firewall_policy"] = policy_preview(
+                        "isolation",
+                        name=fw_payload["name"],
+                        action="BLOCK",
+                        source_addresses=[fw_payload["src_address"]],
+                        destination_addresses=[main_lan_subnet],
+                    )
+                else:
+                    would_create["firewall_rule"] = fw_payload
             return format_json(
                 {
                     "dry_run": True,
@@ -215,6 +250,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
 
         try:
             backend = resolve_backend(registry, controller)
+            zone_based = fw_payload is not None and await site_is_zone_based(backend)
         except UniFiError as exc:
             return err(str(exc))
         created: dict[str, Any] = {
@@ -222,9 +258,14 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             "wlan": None,
             "firewall_rule": None,
         }
+        if zone_based:
+            created["firewall_policy"] = None
 
         async def _rollback(failed_step: str) -> list[dict[str, Any]]:
             actions: list[dict[str, Any]] = []
+            if created.get("firewall_policy") and (fp_id := created["firewall_policy"].get("id")):
+                ok = await _delete_resource(backend, "firewall_policy", fp_id)
+                actions.append({"firewall_policy": fp_id, "deleted": ok})
             if created["firewall_rule"] and (fw_id := created["firewall_rule"].get("_id")):
                 ok = await _delete_resource(backend, "firewall_rule", fw_id)
                 actions.append({"firewall_rule": fw_id, "deleted": ok})
@@ -283,8 +324,21 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("create_iot_network: WLAN step failed")
             return await _fail("wlan", exc)
 
-        # Step 3: isolation rule (optional)
-        if fw_payload is not None:
+        # Step 3: isolation rule (optional); a zone policy on a zone-based site
+        if fw_payload is not None and zone_based:
+            try:
+                body = await isolation_policy(
+                    backend,
+                    name=name,
+                    network_id=net_id,
+                    subnet=iot_subnet,
+                    main_lan_subnet=main_lan_subnet,
+                )
+                created["firewall_policy"] = await backend.create_v1_firewall_policy(body)
+            except UniFiError as exc:
+                logger.exception("create_iot_network: firewall policy step failed")
+                return await _fail("firewall_policy", exc)
+        elif fw_payload is not None:
             try:
                 created["firewall_rule"] = await backend.create_firewall_rule(fw_payload)
             except UniFiError as exc:
@@ -321,14 +375,18 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         - Step 1: creates a static DHCP reservation pinning ``mac`` to
           ``ip`` on the named network.
         - Step 2 (when ``ports`` is non-empty): creates a LAN_LOCAL accept
-          firewall rule for ``ip`` on the requested TCP ports.
+          firewall rule for ``ip`` on the requested TCP ports. On a site
+          running the Zone-Based Firewall it creates an ALLOW zone policy from
+          the ``Internal`` zone to ``ip`` on those ports instead, through the
+          Integration API (``firewall_policy`` in the response).
         - Step 3 (when ``wan_expose=True`` and ``ports`` is non-empty):
           creates one port-forward rule per port, exposing the service to
           the WAN.
         - Mutates controller state. Use dry_run=True to preview the change
           without applying.
         - Rollback: if any sub-step fails, all prior sub-steps are reverted
-          in reverse order (port_forwards → firewall_rule → lease) and the
+          in reverse order (port_forwards → firewall_rule or
+          firewall_policy → lease) and the
           response includes ``rolled_back`` and ``partial`` keys.
 
         Example: provision_homelab_service(name="plex", mac="aa:bb:cc:00:00:01", ip="10.50.0.10", network_id="65f...", ports=[32400], wan_expose=False)
@@ -390,7 +448,18 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         if dry_run:
             would_create: dict[str, Any] = {"lease": lease_payload}
             if fw_payload is not None:
-                would_create["firewall_rule"] = fw_payload
+                if await _dry_run_zone_based(controller):
+                    would_create["firewall_policy"] = policy_preview(
+                        "service_allow",
+                        name=fw_payload["name"],
+                        action="ALLOW",
+                        source_zone="Internal",
+                        destination_addresses=[ip],
+                        protocol="tcp",
+                        destination_ports=fw_payload["dst_port"],
+                    )
+                else:
+                    would_create["firewall_rule"] = fw_payload
             if pf_payloads:
                 would_create["port_forwards"] = pf_payloads
             return format_json(
@@ -409,6 +478,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
 
         try:
             backend = resolve_backend(registry, controller)
+            zone_based = fw_payload is not None and await site_is_zone_based(backend)
         except UniFiError as exc:
             return err(str(exc))
         created: dict[str, Any] = {
@@ -416,6 +486,8 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             "firewall_rule": None,
             "port_forwards": [],
         }
+        if zone_based:
+            created["firewall_policy"] = None
 
         async def _rollback(failed_step: str) -> list[dict[str, Any]]:
             actions: list[dict[str, Any]] = []
@@ -424,6 +496,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 if pf_id:
                     ok = await _delete_resource(backend, "port_forward", pf_id)
                     actions.append({"port_forward": pf_id, "deleted": ok})
+            if created.get("firewall_policy") and (fp_id := created["firewall_policy"].get("id")):
+                ok = await _delete_resource(backend, "firewall_policy", fp_id)
+                actions.append({"firewall_policy": fp_id, "deleted": ok})
             if created["firewall_rule"] and (fw_id := created["firewall_rule"].get("_id")):
                 ok = await _delete_resource(backend, "firewall_rule", fw_id)
                 actions.append({"firewall_rule": fw_id, "deleted": ok})
@@ -456,8 +531,17 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         except UniFiError as exc:
             return await _fail("lease", exc)
 
-        # Step 2: firewall allow rule (LAN_LOCAL accept to the service IP)
-        if fw_payload is not None:
+        # Step 2: firewall allow (LAN_LOCAL accept to the service IP, or a zone
+        # policy on a zone-based site)
+        if fw_payload is not None and zone_based:
+            try:
+                body = await service_policy(
+                    backend, name=name, network_id=network_id, ip=ip, ports=ports
+                )
+                created["firewall_policy"] = await backend.create_v1_firewall_policy(body)
+            except UniFiError as exc:
+                return await _fail("firewall_policy", exc)
+        elif fw_payload is not None:
             try:
                 created["firewall_rule"] = await backend.create_firewall_rule(fw_payload)
             except UniFiError as exc:
@@ -564,12 +648,15 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
           bound to the new network. Access points start broadcasting within
           seconds.
         - Step 3: creates a LAN_IN drop rule blocking the guest subnet from
-          reaching ``main_lan_subnet``.
+          reaching ``main_lan_subnet``. On a site running the Zone-Based
+          Firewall it creates a BLOCK zone policy with the same subnets
+          instead, through the Integration API (``firewall_policy`` in the
+          response).
         - Mutates controller state. Use dry_run=True to preview the change
           without applying.
         - Rollback: if any sub-step fails, all prior sub-steps are reverted
-          (firewall_rule → wlan → network) and the response includes
-          ``rolled_back`` and ``partial`` keys.
+          (firewall_rule or firewall_policy → wlan → network) and the response
+          includes ``rolled_back`` and ``partial`` keys.
 
         The ``passphrase`` is **redacted** to ``"[REDACTED]"`` everywhere this
         tool emits it: the ``dry_run`` preview, the created WLAN record, and
@@ -654,7 +741,19 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                         {
                             "network": net_payload,
                             "wlan": wlan_payload,
-                            "firewall_rule": fw_payload,
+                            **(
+                                {
+                                    "firewall_policy": policy_preview(
+                                        "isolation",
+                                        name=fw_payload["name"],
+                                        action="BLOCK",
+                                        source_addresses=[fw_payload["src_address"]],
+                                        destination_addresses=[main_lan_subnet],
+                                    )
+                                }
+                                if await _dry_run_zone_based(controller)
+                                else {"firewall_rule": fw_payload}
+                            ),
                         }
                     ),
                     "summary": (
@@ -671,6 +770,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
 
         try:
             backend = resolve_backend(registry, controller)
+            zone_based = await site_is_zone_based(backend)
         except UniFiError as exc:
             return err(str(exc))
         created: dict[str, Any] = {
@@ -678,9 +778,14 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             "wlan": None,
             "firewall_rule": None,
         }
+        if zone_based:
+            created["firewall_policy"] = None
 
         async def _rollback(failed_step: str) -> list[dict[str, Any]]:
             actions: list[dict[str, Any]] = []
+            if created.get("firewall_policy") and (fp_id := created["firewall_policy"].get("id")):
+                ok = await _delete_resource(backend, "firewall_policy", fp_id)
+                actions.append({"firewall_policy": fp_id, "deleted": ok})
             if created["firewall_rule"] and (fw_id := created["firewall_rule"].get("_id")):
                 ok = await _delete_resource(backend, "firewall_rule", fw_id)
                 actions.append({"firewall_rule": fw_id, "deleted": ok})
@@ -736,11 +841,24 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         except UniFiError as exc:
             return await _fail("wlan", exc)
 
-        # Isolation rule
-        try:
-            created["firewall_rule"] = await backend.create_firewall_rule(fw_payload)
-        except UniFiError as exc:
-            return await _fail("firewall_rule", exc)
+        # Isolation rule; a zone policy on a zone-based site
+        if zone_based:
+            try:
+                body = await isolation_policy(
+                    backend,
+                    name=name,
+                    network_id=net_id,
+                    subnet=guest_subnet,
+                    main_lan_subnet=main_lan_subnet,
+                )
+                created["firewall_policy"] = await backend.create_v1_firewall_policy(body)
+            except UniFiError as exc:
+                return await _fail("firewall_policy", exc)
+        else:
+            try:
+                created["firewall_rule"] = await backend.create_firewall_rule(fw_payload)
+            except UniFiError as exc:
+                return await _fail("firewall_rule", exc)
 
         return format_json(
             {

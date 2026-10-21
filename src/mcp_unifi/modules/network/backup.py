@@ -100,6 +100,7 @@ from mcp_unifi.modules._params import (
 )
 from mcp_unifi.modules.network._common import format_json, make_err, upsert_dhcp_lease
 from mcp_unifi.modules.network._pending import format_preview_envelope, get_pending_actions
+from mcp_unifi.modules.network._zone_policy import site_is_zone_based
 from mcp_unifi.redaction import REDACTED, REDACTED_OUTPUT, is_sensitive
 
 if TYPE_CHECKING:
@@ -528,6 +529,10 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
           (no copy was kept); the response reports them so the operator
           can re-run with ``dry_run`` to inspect the residual gap.
 
+        Zone-based sites: legacy ``firewall_rules`` in the backup are not
+        replayed onto a site running the Zone-Based Firewall. They appear in
+        the plan as ``skip`` actions with a warning.
+
         Schema validation: ``schema != "1"`` returns an error envelope and
         no action is taken.
 
@@ -617,6 +622,32 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             current=current,
             current_with_ids=current_with_ids,
         )
+
+        # A zone-based site has no legacy rulesets to restore into. Replaying
+        # the backup's firewall_rules there would at best be refused and at
+        # worst land rules the console ignores, so they are skipped and named.
+        try:
+            zone_based = await site_is_zone_based(backend)
+        except UniFiError as exc:
+            logger.exception("restore_config: firewall model detection failed")
+            return err(str(exc))
+        if zone_based:
+            skipped_rules = 0
+            for i, action in enumerate(plan):
+                if action["type"] == "firewall_rules" and action["action"] == "create":
+                    plan[i] = {
+                        "action": "skip",
+                        "type": "firewall_rules",
+                        "reason": "legacy firewall rule; this site uses zone policies",
+                        "record": action["payload"],
+                    }
+                    skipped_rules += 1
+            if skipped_rules:
+                warnings.append(
+                    f"This site runs the Zone-Based Firewall. {skipped_rules} legacy "
+                    "firewall rule(s) in the backup were skipped; recreate any you "
+                    "still need with create_firewall_policy."
+                )
 
         if dry_run:
             return format_json(

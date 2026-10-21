@@ -144,6 +144,17 @@ class ControllerConfig(BaseModel):
             "snapshots but not event/recording endpoints."
         ),
     )
+    write_api: Literal["auto", "private"] = Field(
+        default="auto",
+        description=(
+            "Network write surface for networks and WLANs. 'auto' sends a write "
+            "through the official Integration API (/proxy/network/integration/v1) "
+            "when the payload maps onto it exactly, and falls back to the private "
+            "API when it does not, when the console rejects it with a 4xx, or "
+            "when the route is absent on older firmware. 'private' keeps every "
+            "write on the private API. See ADR 0008."
+        ),
+    )
 
     access_host: str = Field(
         default="",
@@ -393,6 +404,10 @@ class Settings(BaseSettings):
         ),
     )
     unifi_protect_api: Literal["internal", "integration"] = Field(default="internal")
+    unifi_write_api: Literal["auto", "private"] = Field(
+        default="auto",
+        description="Legacy write_api for the single-controller env. Env var: UNIFI_WRITE_API.",
+    )
     unifi_pinned_cert: Path | None = Field(
         default=None,
         description=(
@@ -732,6 +747,7 @@ class Settings(BaseSettings):
                         port=self.unifi_port,
                         site=self.unifi_site,
                         protect_api=self.unifi_protect_api,
+                        write_api=self.unifi_write_api,
                         access_host=self.unifi_access_host,
                         access_api_key=(
                             SecretStr(self.unifi_access_api_key)
@@ -758,6 +774,7 @@ class Settings(BaseSettings):
                         port=self.unifi_port,
                         site=self.unifi_site,
                         protect_api=self.unifi_protect_api,
+                        write_api=self.unifi_write_api,
                         access_host=self.unifi_access_host or "stub",
                         access_api_key=SecretStr(self.unifi_access_api_key or "stub"),
                         access_port=self.unifi_access_port,
@@ -813,6 +830,7 @@ class Settings(BaseSettings):
                     "pinned_cert": _path_or_none(c.pinned_cert),
                     "pinned_cert_sha256": c.pinned_cert_sha256,
                     "protect_api": c.protect_api,
+                    "write_api": c.write_api,
                     "api_key_set": bool(c.api_key.get_secret_value()),
                     "api_key_file": _path_or_none(c.api_key_file),
                     "os_username_set": bool(c.os_username),
