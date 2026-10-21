@@ -2,6 +2,29 @@ apiVersion: v1
 entries:
   mcp-unifi:
   - apiVersion: v2
+    appVersion: 0.27.0
+    created: "2026-10-21T03:20:09.679195251Z"
+    description: MCP server for self-hosted UniFi gateway management (Network + Protect
+      + Access)
+    digest: 431869b930b53e055d4fc0516cbe173c482ed4651ebe3192d64ef405ffba5dd0
+    home: https://github.com/pete-builds/mcp-unifi
+    keywords:
+    - mcp
+    - unifi
+    - homelab
+    - protect
+    - access
+    maintainers:
+    - name: Pete Stergion
+      url: https://github.com/pete-builds
+    name: mcp-unifi
+    sources:
+    - https://github.com/pete-builds/mcp-unifi
+    type: application
+    urls:
+    - https://github.com/pete-builds/mcp-unifi/releases/download/mcp-unifi-0.2.13/mcp-unifi-0.2.13.tgz
+    version: 0.2.13
+  - apiVersion: v2
     appVersion: 0.26.0
     created: "2026-10-18T14:24:34.977744729Z"
     description: MCP server for self-hosted UniFi gateway management (Network + Protect
@@ -320,4 +343,4 @@ entries:
     urls:
     - https://github.com/pete-builds/mcp-unifi/releases/download/mcp-unifi-0.1.1/mcp-unifi-0.1.1.tgz
     version: 0.1.1
-generated: "2026-10-18T14:24:34.977803609Z"
+generated: "2026-10-21T03:20:09.679274165Z"
