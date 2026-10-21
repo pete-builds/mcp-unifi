@@ -149,6 +149,11 @@ SENSITIVE_KEY_PATTERNS: frozenset[str] = frozenset(
         "x_dh_key",
         "x_shared_client_key",
         "x_auth_key",
+        "x_iapp_key",
+        # The whole-backup argument restore_config takes. backup_config strips
+        # secrets before it emits an envelope, but the argument is whatever
+        # the caller pasted, and the audit log would otherwise keep it whole.
+        "backup_json",
     }
 )
 
@@ -169,6 +174,10 @@ SENSITIVE_KEY_PATTERNS: frozenset[str] = frozenset(
 #:   them, so the startup line showed ``[REDACTED]`` where the path belonged.
 #:   The contents never enter any record; ``tests/test_secret_files.py``
 #:   proves that from a captured boot.
+#: * ``private_preshared_keys_enabled`` → the wlanconf boolean saying whether
+#:   per-client PSKs are on. ``preshared_key`` matched it, so the flag came
+#:   out as ``[REDACTED]``. The key list itself (``private_preshared_keys``)
+#:   still matches and stays hidden.
 NON_SECRET_KEYS: frozenset[str] = frozenset(
     {
         "secrets_stripped",
@@ -176,6 +185,7 @@ NON_SECRET_KEYS: frozenset[str] = frozenset(
         "access_api_key_file",
         "os_password_file",
         "auth_token_file",
+        "private_preshared_keys_enabled",
     }
 )
 

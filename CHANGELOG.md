@@ -36,6 +36,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`x_iapp_key` leaked through every WLAN tool.** The inter-AP roaming key
+  sits next to `x_passphrase` on a wlanconf record and no redaction pattern
+  matched it, so `list_wlans`, `create_wlan` and `update_wlan` returned it in
+  clear. It is now redacted on output and in the audit log, and
+  `private_preshared_keys_enabled`, a boolean that `preshared_key` was
+  swallowing, is reported again. Reported in the monoti fork.
+- **`restore_config`'s `backup_json` argument is scrubbed from the audit log.**
+  `backup_config` strips secrets before it emits an envelope, but the argument
+  is whatever the caller pasted and the log kept it whole.
 - **The pinned certificate is read once, at startup.** The trust anchor,
   the exact-match check and the fingerprint on the startup line now all
   come from the bytes validation loaded, and one TLS context serves every
