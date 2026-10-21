@@ -21,8 +21,10 @@ Returns one record per policy with ``_id``, ``name``, ``action``
 (``ALLOW``/``BLOCK``/``REJECT``), ``enabled``, ``predefined``
 (controller-managed, not user-created), ``index``, ``protocol``,
 ``ip_version``, and ``source`` / ``destination`` objects whose
-``zone_id`` refers to a record from ``list_firewall_zones``. Read
-only: this server does not create or edit zone policies yet.
+``zone_id`` refers to a record from ``list_firewall_zones``. To
+write zone policies use ``create_firewall_policy``,
+``update_firewall_policy`` and ``delete_firewall_policy``, which go
+through the Integration API and address policies by v1 id or name.
 
 ## Example
 

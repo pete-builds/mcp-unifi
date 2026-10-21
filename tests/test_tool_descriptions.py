@@ -37,6 +37,10 @@ DESTRUCTIVE_TOOLS: frozenset[str] = frozenset(
         "create_firewall_rule",
         "update_firewall_rule",
         "delete_firewall_rule",
+        # zone-based firewall policies (Integration API)
+        "create_firewall_policy",
+        "update_firewall_policy",
+        "delete_firewall_policy",
         # firewall groups
         "create_firewall_group",
         "update_firewall_group",

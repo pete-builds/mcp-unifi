@@ -31,6 +31,10 @@ Side effects:
   (no copy was kept); the response reports them so the operator
   can re-run with ``dry_run`` to inspect the residual gap.
 
+Zone-based sites: legacy ``firewall_rules`` in the backup are not
+replayed onto a site running the Zone-Based Firewall. They appear in
+the plan as ``skip`` actions with a warning.
+
 Schema validation: ``schema != "1"`` returns an error envelope and
 no action is taken.
 

@@ -21,6 +21,7 @@ accepted costs**. A decision with no downside listed has not been examined.
 | [0006](0006-denied-by-is-a-separate-audit-field.md) | `denied_by` is a separate audit field, not a convention on `error` | Accepted |
 | [0007](0007-hardening-is-opt-in-unless-the-hole-has-no-legitimate-configuration.md) | Hardening that narrows a working install is opt-in; hardening that closes a hole with no legitimate configuration is mandatory | Accepted |
 | [0008](0008-network-and-wlan-writes-use-the-integration-api.md) | Network and WLAN writes use the Integration API where they map onto it | Accepted |
+| [0009](0009-zone-policy-writes-use-the-integration-api-only.md) | Zone policy writes use the Integration API only, with no private fallback | Accepted; live test owed |
 
 ## Template
 

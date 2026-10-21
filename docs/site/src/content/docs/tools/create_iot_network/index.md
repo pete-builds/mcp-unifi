@@ -14,12 +14,15 @@ Side effects:
 - Step 2: creates a WPA2 WiFi SSID bound to the new network. Access
   points start broadcasting within seconds.
 - Step 3 (when ``isolate=True``): creates a LAN_IN drop rule blocking
-  the IoT subnet from reaching ``main_lan_subnet``.
+  the IoT subnet from reaching ``main_lan_subnet``. On a site running
+  the Zone-Based Firewall it creates a BLOCK zone policy with the same
+  subnets instead, through the Integration API (``firewall_policy`` in
+  the response).
 - Mutates controller state. Use dry_run=True to preview the change
   without applying.
 - Rollback: if any sub-step fails, all prior sub-steps are reverted
-  (firewall_rule → wlan → network) and the response includes
-  ``rolled_back`` and ``partial`` keys.
+  (firewall_rule or firewall_policy → wlan → network) and the response
+  includes ``rolled_back`` and ``partial`` keys.
 
 The ``passphrase`` is **redacted** to ``"[REDACTED]"`` everywhere this
 tool emits it: the ``dry_run`` preview, the created WLAN record, and

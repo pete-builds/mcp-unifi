@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Zone-Based Firewall policy writes**
+  ([ADR 0009](docs/decisions/0009-zone-policy-writes-use-the-integration-api-only.md)).
+  `create_firewall_policy`, `update_firewall_policy` and
+  `delete_firewall_policy` write zone policies through
+  `/proxy/network/integration/v1` only. Policies are addressed by v1 id or
+  exact name, zones by name, networks by their private `_id`. Only
+  user-defined policies can be edited or deleted; delete goes through the
+  confirm token. A console refusal comes back with the console's own message
+  and is never replayed on the private API. Bodies follow the published
+  Network 10.6.106 reference and have **not yet been sent to a zone-based
+  console**.
+
+### Changed
+
+- **The provisioning composites are zone-aware.** On a site running the
+  Zone-Based Firewall, `create_iot_network` and `create_guest_network` create a
+  BLOCK zone policy (new subnet to main LAN subnet) and
+  `provision_homelab_service` creates an ALLOW zone policy (`Internal` to the
+  service IP on its TCP ports) in place of the legacy rule, with the same
+  rollback. Dry runs preview the policy. Legacy sites and `write_api: private`
+  behave exactly as before.
+- **`restore_config` skips legacy firewall rules on a zone-based site** and
+  warns with the count, instead of replaying them into rulesets the site no
+  longer uses.
+
 ## [0.26.0] - 2026-10-17
 
 ### Added

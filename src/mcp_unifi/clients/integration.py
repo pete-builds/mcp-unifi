@@ -46,6 +46,10 @@ if TYPE_CHECKING:  # avoids an import cycle with clients.unifi
 logger = logging.getLogger("mcp_unifi.integration")
 
 WriteApi = Literal["auto", "private"]
+ZoneFirewallState = Literal["configured", "legacy", "unsupported", "disabled"]
+
+#: The 400 code a site still on legacy rulesets returns from v1 firewall routes.
+ZBF_NOT_CONFIGURED = "api.firewall.zone-based-firewall-not-configured"
 
 
 class IntegrationRejectedError(UniFiError):
@@ -60,7 +64,10 @@ class IntegrationRejectedError(UniFiError):
 
 
 class IntegrationWrites:
-    """Per-controller router for network and WLAN create/update/delete."""
+    """Per-controller router for network and WLAN writes, plus zone policies.
+
+    Zone policies (ADR 0009) are Integration-API-only; see that section.
+    """
 
     def __init__(self, client: UniFiClient, write_api: WriteApi = "auto") -> None:
         self.client = client
@@ -298,3 +305,104 @@ class IntegrationWrites:
             except IntegrationRejectedError as exc:
                 self._fallback("delete", exc, "wifi")
         return await self.client.delete_wlan(wlan_id)
+
+    # ------------------------------------------------------------------
+    # Zone-Based Firewall (ADR 0009)
+    # ------------------------------------------------------------------
+    #
+    # Unlike networks and WLANs, nothing here falls back to the private API.
+    # The private v2 write payloads for zone policies are undocumented, and a
+    # site with no zones cannot be probed for them, so a fallback would be a
+    # guess. A 4xx propagates with the console's own message instead.
+
+    async def zone_firewall_state(self) -> ZoneFirewallState:
+        """Whether this site runs the Zone-Based Firewall, read from v1.
+
+        ``configured`` when ``firewall/zones`` answers 200; ``legacy`` when it
+        answers 400 ``api.firewall.zone-based-firewall-not-configured`` (seen
+        live on Network 10.6.106 before migration); ``unsupported`` when the
+        route or the site is missing; ``disabled`` under ``write_api=private``,
+        which never sends the request. Not cached: a site can migrate while the
+        server runs. A 5xx or timeout raises, so a caller about to write
+        stops before writing anything.
+        """
+        if self.write_api != "auto":
+            return "disabled"
+        site = await self._site()
+        if site is None:
+            return "unsupported"
+        try:
+            await self._request("GET", f"/sites/{site}/firewall/zones?limit=1")
+        except IntegrationRejectedError as exc:
+            if exc.code == ZBF_NOT_CONFIGURED:
+                return "legacy"
+            if exc.status == 404:
+                return "unsupported"
+            raise
+        return "configured"
+
+    async def _zbf_site(self) -> str:
+        if self.write_api != "auto":
+            raise UniFiError(
+                "Zone-Based Firewall writes go through the Integration API only, "
+                "and this controller is set to write_api=private"
+            )
+        site = await self._site()
+        if site is None:
+            raise UniFiError(
+                f"Integration API has no site with internalReference {self.client.site!r}"
+            )
+        return site
+
+    async def _list_all(self, path: str) -> list[UniFiRecord]:
+        records: list[UniFiRecord] = []
+        offset = 0
+        while True:
+            body = await self._request("GET", f"{path}?limit=200&offset={offset}")
+            page = body.get("data", []) if isinstance(body, dict) else []
+            records.extend(r for r in page if isinstance(r, dict))
+            total = body.get("totalCount") if isinstance(body, dict) else None
+            offset += len(page)
+            if not page or not isinstance(total, int) or offset >= total:
+                return records
+
+    async def list_firewall_zones(self) -> list[UniFiRecord]:
+        site = await self._zbf_site()
+        return await self._list_all(f"/sites/{site}/firewall/zones")
+
+    async def list_firewall_policies(self) -> list[UniFiRecord]:
+        site = await self._zbf_site()
+        return await self._list_all(f"/sites/{site}/firewall/policies")
+
+    async def get_firewall_policy(self, policy_id: str) -> UniFiRecord | None:
+        site = await self._zbf_site()
+        seg = path_segment(policy_id, "policy_id")
+        try:
+            record = await self._request("GET", f"/sites/{site}/firewall/policies/{seg}")
+        except IntegrationRejectedError as exc:
+            if exc.status == 404:
+                return None
+            raise
+        return record if isinstance(record, dict) else None
+
+    async def create_firewall_policy(self, body: dict[str, Any]) -> UniFiRecord:
+        site = await self._zbf_site()
+        created = await self._request("POST", f"/sites/{site}/firewall/policies", json=body)
+        if not isinstance(created, dict) or not isinstance(created.get("id"), str):
+            raise UniFiError("Integration API created a firewall policy but returned no id")
+        self._used("create", "firewall/policies", created["id"])
+        return created
+
+    async def update_firewall_policy(self, policy_id: str, body: dict[str, Any]) -> UniFiRecord:
+        site = await self._zbf_site()
+        seg = path_segment(policy_id, "policy_id")
+        updated = await self._request("PUT", f"/sites/{site}/firewall/policies/{seg}", json=body)
+        self._used("update", "firewall/policies", policy_id)
+        return updated if isinstance(updated, dict) else {}
+
+    async def delete_firewall_policy(self, policy_id: str) -> bool:
+        site = await self._zbf_site()
+        seg = path_segment(policy_id, "policy_id")
+        await self._request("DELETE", f"/sites/{site}/firewall/policies/{seg}")
+        self._used("delete", "firewall/policies", policy_id)
+        return True

@@ -141,6 +141,11 @@
   answer: create_port_forward
   trap: create_firewall_rule
 
+- id: zone_policy_on_a_migrated_site
+  prompt: "My site is on the zone-based firewall now. Block the Hotspot zone from reaching the Internal zone."
+  answer: create_firewall_policy
+  trap: create_firewall_rule
+
 - id: reboot_an_ap
   prompt: "Reboot the living room access point."
   answer: restart_device
