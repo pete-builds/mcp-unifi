@@ -51,7 +51,7 @@ dev = [
     "respx==0.23.1",
     "ruff==0.17.1",
     "mypy==2.4.0",
-    "types-PyYAML==6.0.12.20260815",
+    "types-PyYAML==6.0.12.20260906",
     "hypothesis==6.170.2",
 ]
 
