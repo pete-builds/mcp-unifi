@@ -462,13 +462,13 @@ exceptiongroup==1.3.1 \
     --hash=sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219 \
     --hash=sha256:a7a39a3bd276781e98394987d3a5701d0c4edffb633bb7a5144577f82c773598
     # via fastmcp-slim
-fastmcp==4.1.1 \
-    --hash=sha256:23b8fa7cfc30779fdedbcb78c62f8c621d5d5708f3f29188b7a05e71f7c4a34a \
-    --hash=sha256:a82721d40e2a2e49637f4e30ec5b6892d2ccc02d3684ca74429fef995d6d29b2
+fastmcp==4.1.2 \
+    --hash=sha256:1b70a8467ac4dd6416c7c101cd54562f089b55e6636a196b4a20bdac3ccb0284 \
+    --hash=sha256:3d5eddfe624b002ebcf202d5a55ff13bdce6925ce58bfcaeb28bc2e3bbee1830
     # via -r requirements.in
-fastmcp-slim==4.1.1 \
-    --hash=sha256:5d23d2fb7df131097fe87b642f9ad27dde72ebbbd73369c512d96cbaf505e836 \
-    --hash=sha256:64bd63e8222305ab1408d11d3498bcc94dc14629f4d55fe5399ccdb496509122
+fastmcp-slim==4.1.2 \
+    --hash=sha256:4b703ddbd35165ebf03b2cc560688f458f3fe4db11e635074fcc303496734154 \
+    --hash=sha256:58a4e547a0f85cfee2d2219677ed31c0f1c4911741a5c91a1ee5fbf69dde35fa
     # via fastmcp
 griffelib==2.4.1 \
     --hash=sha256:40c028dd2e623f464423f0e11e3c553158f1cf4f1368239a370534d73e1407ff \
