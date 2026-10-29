@@ -1,9 +1,9 @@
 -r requirements.in
 pytest==9.1.1
-pytest-asyncio==1.4.0
+pytest-asyncio==1.4.1
 pytest-cov==7.1.0
 respx==0.23.1
-ruff==0.17.1
+ruff==0.17.2
 mypy==2.4.0
 types-PyYAML==6.0.12.20260815
-hypothesis==6.170.2
+hypothesis==6.170.11
