@@ -166,3 +166,78 @@ def test_a_record_under_a_message_key_is_not_echoed() -> None:
     """A controller that puts a record where the message goes is not echoed."""
     resp = httpx.Response(400, json={"error": {"x_passphrase": SECRET}})
     assert SECRET not in describe_error_body(resp)
+
+
+# ---------------------------------------------------------------------------
+# Secrets echoed inside free text (second review, Codex P1)
+# ---------------------------------------------------------------------------
+
+
+def test_a_sent_secret_echoed_in_the_message_is_masked() -> None:
+    resp = httpx.Response(400, json={"message": f"invalid passphrase {SECRET}"})
+    sent = {"name": "Home", "x_passphrase": SECRET}
+    detail = describe_error_body(resp, sent)
+    assert SECRET not in detail
+    assert "invalid passphrase [REDACTED]" in detail
+
+
+def test_a_sent_secret_in_a_legacy_msg_is_masked() -> None:
+    resp = httpx.Response(400, json={"meta": {"rc": "error", "msg": f"bad key {SECRET}"}})
+    detail = describe_error_body(resp, {"wireguard": {"x_private_key": SECRET}})
+    assert SECRET not in detail
+
+
+def test_masking_happens_before_the_length_cut() -> None:
+    """A secret straddling the 200-char cut must not leave its first half behind."""
+    prefix = "x" * 190
+    resp = httpx.Response(400, json={"message": prefix + SECRET})
+    detail = describe_error_body(resp, {"x_passphrase": SECRET})
+    assert SECRET[:10] not in detail
+
+
+def test_short_and_non_sensitive_sent_values_are_left_alone() -> None:
+    resp = httpx.Response(400, json={"message": "vlan 20 name Home rejected"})
+    detail = describe_error_body(resp, {"name": "Home", "vlan": 20, "x_passphrase": "abc"})
+    assert detail == ": vlan 20 name Home rejected"
+
+
+@respx.mock
+async def test_the_request_path_masks_what_it_sent() -> None:
+    """Drives the real legacy request so the call site must pass ``json``."""
+    respx.route().mock(
+        return_value=_json(400, {"meta": {"rc": "error", "msg": f"api.err.Invalid {SECRET}"}})
+    )
+    c = _unifi()
+    try:
+        with pytest.raises(UniFiError) as caught:
+            await c._request("PUT", "/rest/wlanconf/abc", json={"x_passphrase": SECRET})
+    finally:
+        await c.aclose()
+    assert SECRET not in str(caught.value)
+    assert "api.err.Invalid" in str(caught.value)
+
+
+# ---------------------------------------------------------------------------
+# Integration ``detail`` reaches the log (second review, Codex P1)
+# ---------------------------------------------------------------------------
+
+
+@respx.mock
+async def test_integration_detail_is_scrubbed_like_the_message() -> None:
+    from mcp_unifi.clients.integration import IntegrationRejectedError
+
+    respx.route().mock(
+        return_value=_json(
+            400, {"code": "api.request.invalid", "message": f"bad passphrase {SECRET}"}
+        )
+    )
+    c = _unifi()
+    w = IntegrationWrites(c)
+    try:
+        with pytest.raises(IntegrationRejectedError) as caught:
+            await w._request("POST", "/sites/x/wifi", json={"passphrase": SECRET})
+    finally:
+        await c.aclose()
+    assert caught.value.code == "api.request.invalid"
+    assert SECRET not in caught.value.detail
+    assert "bad passphrase [REDACTED]" in caught.value.detail

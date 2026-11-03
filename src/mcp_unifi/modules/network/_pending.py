@@ -48,6 +48,11 @@ Design notes
   client. Another client presenting the token gets the same answer as an
   unknown token, and the token is left in place, so a wrong-client attempt
   can neither execute the owner's change nor cancel it.
+* Identity for this check comes from :func:`current_client_id`, not the
+  audit helper. The audit helper turns a failed lookup into ``None`` so
+  logging never breaks; here that would make two failed lookups look like
+  the same anonymous caller. A failed lookup at preview time marks the token
+  unconfirmable, and a failed lookup at confirm time refuses.
 """
 
 from __future__ import annotations
@@ -59,12 +64,32 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from mcp_unifi.modules._audit import _current_client_id
 from mcp_unifi.modules.network._common import dump_json
 from mcp_unifi.redaction import redact
 
 #: How long a preview token stays valid before it's swept. Tracks the spec.
 TOKEN_TTL_SECONDS: float = 300.0  # 5 minutes
+
+
+class IdentityUnavailableError(RuntimeError):
+    """The caller's identity could not be determined, as opposed to absent."""
+
+
+def current_client_id() -> str | None:
+    """Authenticated ``client_id`` for this request, or ``None`` when there is none.
+
+    ``None`` means no authenticated caller: stdio, or HTTP with auth off,
+    where FastMCP's lookup returns ``None``. A lookup that raises is a
+    different thing and is raised as :class:`IdentityUnavailableError`, so an
+    authorization check can refuse instead of treating it as anonymous.
+    """
+    try:
+        from fastmcp.server.dependencies import get_access_token
+
+        token = get_access_token()
+    except Exception as exc:
+        raise IdentityUnavailableError("could not resolve the caller's identity") from exc
+    return token.client_id if token is not None else None
 
 
 @dataclass
@@ -84,6 +109,8 @@ class PendingAction:
             returns the same JSON string the legacy delete tool returned.
         issuer: Authenticated ``client_id`` that requested the preview, or
             ``None`` when there is no authenticated client (stdio, auth off).
+        issuer_known: False when the identity lookup failed at preview time.
+            Such a token can never be confirmed; the caller previews again.
     """
 
     token: str
@@ -93,6 +120,7 @@ class PendingAction:
     expires_at: float
     executor: Callable[[], Awaitable[str]] = field(repr=False)
     issuer: str | None = None
+    issuer_known: bool = True
 
     def expires_at_iso(self) -> str:
         """Return ``expires_at`` formatted as ISO 8601 UTC."""
@@ -144,6 +172,10 @@ class PendingActionsRegistry:
         """
         self._sweep()
         token = str(uuid.uuid4())
+        try:
+            issuer, issuer_known = current_client_id(), True
+        except IdentityUnavailableError:
+            issuer, issuer_known = None, False
         pending = PendingAction(
             token=token,
             action=action,
@@ -151,21 +183,30 @@ class PendingActionsRegistry:
             resource=resource,
             expires_at=time.time() + self._ttl_seconds,
             executor=executor,
-            issuer=_current_client_id(),
+            issuer=issuer,
+            issuer_known=issuer_known,
         )
         self._actions[token] = pending
         return pending
 
-    def claim(self, token: str, client_id: str | None) -> PendingAction | None:
+    def claim(self, token: str) -> PendingAction | None:
         """Resolve and remove a token, but only for the client that issued it.
 
-        Returns ``None`` for an unknown or expired token, and also for a
-        token issued to a different client. In that second case the token is
-        NOT removed: the owner can still confirm it before it expires.
+        Returns ``None`` for an unknown or expired token, a token issued to a
+        different client, a token whose issuer could not be resolved, or when
+        the caller's own identity cannot be resolved. A refused token is
+        left in place, so a refused attempt can neither run the owner's
+        change nor cancel it.
         """
         self._sweep()
         pending = self._actions.get(token)
-        if pending is None or pending.issuer != client_id:
+        if pending is None or not pending.issuer_known:
+            return None
+        try:
+            caller = current_client_id()
+        except IdentityUnavailableError:
+            return None
+        if caller != pending.issuer:
             return None
         return self._actions.pop(token)
 

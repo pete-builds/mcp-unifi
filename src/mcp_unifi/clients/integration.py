@@ -35,7 +35,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Literal
 
 from mcp_unifi.clients import integration_translate as tr
-from mcp_unifi.clients.errors import UniFiError, describe_error_body
+from mcp_unifi.clients.errors import UniFiError, describe_error_body, error_fields
 from mcp_unifi.clients.ids import path_segment
 from mcp_unifi.clients.retry import request_with_retry
 from mcp_unifi.models import UniFiRecord
@@ -92,21 +92,14 @@ class IntegrationWrites:
             json=json,
         )
         if 400 <= resp.status_code < 500:
-            code: str | None = None
-            detail = ""
-            try:
-                body = resp.json()
-                if isinstance(body, dict):
-                    if isinstance(body.get("code"), str):
-                        code = body["code"]
-                    if isinstance(body.get("message"), str):
-                        detail = body["message"][:300]
-            except ValueError:
-                pass
+            # Same scrubbing as the message: ``detail`` is logged by _fallback
+            # under a key the log redactor does not treat as sensitive.
+            code, message = error_fields(resp, json)
+            detail = message or ""
             raise IntegrationRejectedError(
                 (
                     f"UniFi Integration {method} {path} returned {resp.status_code}"
-                    f"{describe_error_body(resp)}"
+                    f"{describe_error_body(resp, json)}"
                 ),
                 resp.status_code,
                 code,
@@ -115,7 +108,7 @@ class IntegrationWrites:
         if resp.status_code >= 500:
             raise UniFiError(
                 f"UniFi Integration {method} {path} returned {resp.status_code}"
-                f"{describe_error_body(resp)}"
+                f"{describe_error_body(resp, json)}"
             )
         if not resp.content:
             return None

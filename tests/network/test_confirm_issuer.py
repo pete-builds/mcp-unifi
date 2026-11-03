@@ -18,6 +18,7 @@ from fastmcp.server.auth import AccessToken
 
 from mcp_unifi.clients.stubs import StubState
 from mcp_unifi.config import Settings
+from mcp_unifi.modules.network import _pending
 from mcp_unifi.modules.network._pending import get_pending_actions, reset_pending_actions
 from mcp_unifi.server import build_server
 
@@ -121,3 +122,60 @@ def test_the_tool_description_states_the_rule(stub_server: FastMCP) -> None:
     tool = asyncio.run(stub_server.get_tool("confirm_destructive_action"))
     assert tool is not None
     assert "Only the client that requested the preview can confirm it" in (tool.description or "")
+
+
+# ---------------------------------------------------------------------------
+# Fail closed when identity lookup breaks (second review, Codex P2)
+#
+# FastMCP's own middleware calls get_access_token without catching, so a
+# lookup that raises there already aborts the whole call. These tests break
+# only this module's lookup, which is the case the issuer check has to
+# survive on its own (a future FastMCP that stops calling it, or a lookup
+# that fails here and not there).
+# ---------------------------------------------------------------------------
+
+
+def _broken() -> str | None:
+    raise _pending.IdentityUnavailableError("lookup failed")
+
+
+async def test_a_failed_lookup_at_confirm_refuses_and_keeps_the_token(
+    stub_server: FastMCP,
+    stub_state: StubState,
+    identity: _Identity,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vlan_id = stub_state.networks[0]["_id"]
+    token = (await _call(stub_server, "delete_vlan", {"network_id": vlan_id}))["token"]
+
+    monkeypatch.setattr(_pending, "current_client_id", _broken)
+    refused = await _call(stub_server, "confirm_destructive_action", {"token": token})
+    assert "error" in refused
+    assert any(n["_id"] == vlan_id for n in stub_state.networks)
+    assert token in get_pending_actions()
+
+
+async def test_a_failed_lookup_at_preview_makes_the_token_unconfirmable(
+    stub_server: FastMCP,
+    stub_state: StubState,
+    identity: _Identity,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two failed lookups must not match each other as the same anonymous caller."""
+    vlan_id = stub_state.networks[0]["_id"]
+    with monkeypatch.context() as m:
+        m.setattr(_pending, "current_client_id", _broken)
+        token = (await _call(stub_server, "delete_vlan", {"network_id": vlan_id}))["token"]
+    pending = get_pending_actions().get(token)
+    assert pending is not None
+    assert pending.issuer_known is False
+
+    # A caller that now resolves cleanly as "no identity" still cannot confirm it.
+    refused = await _call(stub_server, "confirm_destructive_action", {"token": token})
+    assert "error" in refused
+    assert any(n["_id"] == vlan_id for n in stub_state.networks)
+
+
+def test_fastmcp_with_no_request_reports_no_identity_rather_than_failing() -> None:
+    """Pins the assumption that makes failing closed safe on stdio."""
+    assert _pending.current_client_id() is None

@@ -105,7 +105,8 @@ class ProtectClient:
         )
         if resp.status_code >= 400:
             raise UniFiError(
-                f"Protect {method} {path} returned {resp.status_code}{describe_error_body(resp)}"
+                f"Protect {method} {path} returned {resp.status_code}"
+                f"{describe_error_body(resp, json)}"
             )
         if not resp.content:
             return None

@@ -95,7 +95,8 @@ class UniFiClient:
         )
         if resp.status_code >= 400:
             raise UniFiError(
-                f"UniFi {method} {path} returned {resp.status_code}{describe_error_body(resp)}"
+                f"UniFi {method} {path} returned {resp.status_code}"
+                f"{describe_error_body(resp, json)}"
             )
         if not resp.content:
             return None
@@ -136,7 +137,8 @@ class UniFiClient:
         )
         if resp.status_code >= 400:
             raise UniFiError(
-                f"UniFi {method} (v2) {path} returned {resp.status_code}{describe_error_body(resp)}"
+                f"UniFi {method} (v2) {path} returned {resp.status_code}"
+                f"{describe_error_body(resp, json)}"
             )
         if not resp.content:
             return None
