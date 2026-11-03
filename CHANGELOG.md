@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **A failed startup no longer prints the secrets it was configured with.**
+  `load_settings` let pydantic's `ValidationError` escape, and that message
+  carries `input_value=` for the object being validated: for a model-level
+  check on `Settings` that is every bound environment variable, bearer tokens
+  and API key included, and for one on `ControllerConfig` it is the whole
+  controller entry. The exception leaves `main()` before logging is
+  configured, so the text went to stderr and the container log, where a
+  healthcheck restart loop repeated it. Reproduced: a mistyped
+  `MCP_UNIFI_DEFAULT_CONTROLLER` printed a live `MCP_UNIFI_AUTH_TOKENS`
+  value, and a malformed controllers YAML printed the line holding the API
+  key through PyYAML's own quoted-line message. `load_settings` now raises
+  `ConfigurationError` built from the error locations and messages only,
+  with the cause chain cut, and a YAML parse error reports line and column
+  without quoting the file. `Settings()` called directly is unchanged.
 - **Controller error bodies are no longer pasted into errors or logs.** Seven
   raise sites (Network legacy and v2, the Integration API 4xx and 5xx, Protect
   JSON and binary, Access) put `resp.text[:300]` into the message, so a
