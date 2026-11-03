@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- **Controller error bodies are no longer pasted into errors or logs.** Seven
+  raise sites (Network legacy and v2, the Integration API 4xx and 5xx, Protect
+  JSON and binary, Access) put `resp.text[:300]` into the message, so a
+  controller that echoed a rejected record back handed its passphrase or key
+  to the tool result and the audit log. Every client now uses one helper,
+  `clients.errors.describe_error_body`, which keeps only the error fields
+  (`meta.msg`, `code`, `message`, `error`, `detail`), redacts them, masks any
+  value the request itself sent under a sensitive key wherever it reappears
+  in that text ("invalid passphrase [REDACTED]"), cuts each to 200
+  characters, and reports anything else by content type and size. The
+  Integration API's `detail`, which the fallback path logs, goes through the
+  same scrubbing. Error codes callers match on (`api.err.MacUsed`,
+  `api.err.InvalidObject`, Integration `code`) are unchanged. Not covered: a
+  secret the controller holds but the request did not send, written into
+  free text.
+- **A preview token can only be confirmed by the client that asked for it.**
+  `confirm_destructive_action` used to run a queued change for any
+  authenticated client holding the token. The token now records the
+  requesting `client_id`; another client gets the same "unknown or expired
+  token" error and the token stays valid for its owner. The check fails
+  closed: if the identity lookup fails at preview time the token cannot be
+  confirmed, and if it fails at confirm time the call is refused. Stdio and
+  HTTP with auth off are unchanged, since both calls have no identity.
+
 ## [0.27.0] - 2026-10-20
 
 ### Added

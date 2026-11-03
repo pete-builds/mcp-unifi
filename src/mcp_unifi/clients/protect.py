@@ -23,6 +23,7 @@ from typing import Any, Literal
 
 import httpx
 
+from mcp_unifi.clients.errors import describe_error_body
 from mcp_unifi.clients.ids import path_segment
 from mcp_unifi.clients.retry import request_with_retry
 from mcp_unifi.clients.unifi import UniFiError
@@ -104,7 +105,8 @@ class ProtectClient:
         )
         if resp.status_code >= 400:
             raise UniFiError(
-                f"Protect {method} {path} returned {resp.status_code}: {resp.text[:300]}"
+                f"Protect {method} {path} returned {resp.status_code}"
+                f"{describe_error_body(resp, json)}"
             )
         if not resp.content:
             return None
@@ -126,7 +128,7 @@ class ProtectClient:
         )
         if resp.status_code >= 400:
             raise UniFiError(
-                f"Protect {method} {path} returned {resp.status_code}: {resp.text[:300]}"
+                f"Protect {method} {path} returned {resp.status_code}{describe_error_body(resp)}"
             )
         return resp.content
 
