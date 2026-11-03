@@ -52,6 +52,24 @@ ZoneFirewallState = Literal["configured", "legacy", "unsupported", "disabled"]
 ZBF_NOT_CONFIGURED = "api.firewall.zone-based-firewall-not-configured"
 
 
+def _created_id(created: Any, what: str) -> str:
+    """The ``id`` of a record the Integration API just created, or raise.
+
+    A 2xx on a create means the console made the object. If the body then
+    carries no ``id`` there is nothing safe left to do: the private-API
+    fallback exists for a 4xx, where the console changed nothing, and taking
+    it here would create the object a second time. Raising is the only
+    outcome that leaves one object and tells the caller the truth.
+    """
+    v1_id = created.get("id") if isinstance(created, dict) else None
+    if isinstance(v1_id, str) and v1_id:
+        return v1_id
+    raise UniFiError(
+        f"Integration API accepted the {what} create but returned no id; not retried on "
+        f"the private API because the console may already hold the new {what}"
+    )
+
+
 class IntegrationRejectedError(UniFiError):
     """The Integration API answered 4xx: the console refused and changed nothing."""
 
@@ -183,11 +201,10 @@ class IntegrationWrites:
                 site = await self._site()
                 if site is not None:
                     created = await self._request("POST", f"/sites/{site}/networks", json=body)
-                    v1_id = created.get("id") if isinstance(created, dict) else None
-                    if isinstance(v1_id, str):
-                        self._used("create", "networks", v1_id)
-                        record = self._by_external(await self.client.list_networks(), v1_id)
-                        return record if record is not None else {"external_id": v1_id, **payload}
+                    v1_id = _created_id(created, "network")
+                    self._used("create", "networks", v1_id)
+                    record = self._by_external(await self.client.list_networks(), v1_id)
+                    return record if record is not None else {"external_id": v1_id, **payload}
             except IntegrationRejectedError as exc:
                 self._fallback("create", exc, "networks")
         return await self.client.create_network(payload)
@@ -251,11 +268,10 @@ class IntegrationWrites:
                     created = await self._request(
                         "POST", f"/sites/{site}/wifi/broadcasts", json=body
                     )
-                    v1_id = created.get("id") if isinstance(created, dict) else None
-                    if isinstance(v1_id, str):
-                        self._used("create", "wifi", v1_id)
-                        record = self._by_external(await self.client.list_wlans(), v1_id)
-                        return record if record is not None else {"external_id": v1_id, **payload}
+                    v1_id = _created_id(created, "WLAN")
+                    self._used("create", "wifi", v1_id)
+                    record = self._by_external(await self.client.list_wlans(), v1_id)
+                    return record if record is not None else {"external_id": v1_id, **payload}
             except IntegrationRejectedError as exc:
                 self._fallback("create", exc, "wifi")
         return await self.client.create_wlan(payload)
@@ -385,10 +401,8 @@ class IntegrationWrites:
     async def create_firewall_policy(self, body: dict[str, Any]) -> UniFiRecord:
         site = await self._zbf_site()
         created = await self._request("POST", f"/sites/{site}/firewall/policies", json=body)
-        if not isinstance(created, dict) or not isinstance(created.get("id"), str):
-            raise UniFiError("Integration API created a firewall policy but returned no id")
-        self._used("create", "firewall/policies", created["id"])
-        return created
+        self._used("create", "firewall/policies", _created_id(created, "firewall policy"))
+        return created if isinstance(created, dict) else {}
 
     async def update_firewall_policy(self, policy_id: str, body: dict[str, Any]) -> UniFiRecord:
         site = await self._zbf_site()
