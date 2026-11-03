@@ -43,6 +43,7 @@ from pydantic import (
     Field,
     PrivateAttr,
     SecretStr,
+    ValidationError,
     field_validator,
     model_validator,
 )
@@ -930,7 +931,20 @@ def _load_controllers_from_yaml(path: Path) -> list[ControllerConfig]:
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     except yaml.YAMLError as exc:
-        raise ValueError(f"controllers_file is not valid YAML ({path}): {exc}") from exc
+        # PyYAML's message quotes the offending line of the file, which in a
+        # controllers file is as likely as not the line holding an api_key.
+        # Keep the position, drop the quote, and drop the cause so the
+        # traceback cannot print it either.
+        mark = getattr(exc, "problem_mark", None)
+        where = (
+            f" at line {mark.line + 1}, column {mark.column + 1}"
+            if mark is not None and hasattr(mark, "line")
+            else ""
+        )
+        raise ValueError(
+            f"controllers_file is not valid YAML ({path}){where}. The parser's message is "
+            f"withheld because it quotes the file; open it at that position."
+        ) from None
 
     if isinstance(raw, dict) and "controllers" in raw:
         items: Any = raw["controllers"]
@@ -945,6 +959,45 @@ def _load_controllers_from_yaml(path: Path) -> list[ControllerConfig]:
     return [ControllerConfig(**item) for item in items]
 
 
+class ConfigurationError(ValueError):
+    """Startup configuration is invalid.
+
+    Its text names the field and the problem and never a configured value.
+    Raised by :func:`load_settings` in place of pydantic's ``ValidationError``,
+    whose message prints ``input_value=`` for the object being validated. For
+    a model-level check on ``Settings`` that object is the whole environment
+    (``UNIFI_API_KEY``, ``MCP_UNIFI_AUTH_TOKENS``, ``.env``), and for one on
+    ``ControllerConfig`` it is the controller entry with the key already
+    resolved from ``api_key_file``. Startup fails before logging is
+    configured, so that text lands verbatim in stderr and the container log,
+    where a healthcheck restart loop repeats it. Verified by test: a wrong
+    ``MCP_UNIFI_DEFAULT_CONTROLLER`` printed a live bearer token.
+    """
+
+
+def describe_validation_error(exc: ValidationError) -> str:
+    """Render a pydantic error as ``loc: msg`` lines, without any input value.
+
+    ``include_input=False`` is the whole point; ``include_context=False`` also
+    drops the ``ctx`` dict, which carries the raised exception object for a
+    validator error. The ``msg`` text that remains is pydantic's own wording
+    plus the messages this module writes, none of which quote a value.
+    """
+    lines = [f"{exc.error_count()} configuration error(s):"]
+    for error in exc.errors(include_url=False, include_context=False, include_input=False):
+        loc = ".".join(str(part) for part in error.get("loc", ())) or "settings"
+        lines.append(f"  {loc}: {error.get('msg', 'invalid')}")
+    return "\n".join(lines)
+
+
 def load_settings() -> Settings:
-    """Build a Settings instance from the environment. Raises on invalid config."""
-    return Settings()
+    """Build a Settings instance from the environment.
+
+    Raises :class:`ConfigurationError` on invalid configuration. ``from None``
+    is deliberate: the original ``ValidationError`` carries the input values,
+    and a chained cause is printed in full by the default traceback handler.
+    """
+    try:
+        return Settings()
+    except ValidationError as exc:
+        raise ConfigurationError(describe_validation_error(exc)) from None
