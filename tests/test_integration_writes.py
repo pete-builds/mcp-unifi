@@ -170,6 +170,45 @@ async def test_create_network_goes_through_v1_and_returns_the_private_record(
 
 
 @respx.mock
+async def test_v1_create_network_without_an_id_is_not_replayed_on_the_private_api(
+    client: UniFiClient,
+) -> None:
+    """A 2xx with no ``id`` is still a create. Replaying it would make two."""
+    _mock_site()
+    v1_post = respx.post(f"{INT}/networks").mock(
+        return_value=httpx.Response(201, json={"name": "cams"})
+    )
+    priv_post = respx.post(f"{PRIV}/rest/networkconf").mock(
+        return_value=_priv([{"_id": "second-copy"}])
+    )
+
+    with pytest.raises(UniFiError, match="returned no id"):
+        await IntegrationWrites(client).create_network(dict(VLAN_PAYLOAD))
+
+    assert v1_post.call_count == 1
+    assert not priv_post.called
+
+
+@respx.mock
+async def test_v1_create_wlan_without_an_id_is_not_replayed_on_the_private_api(
+    client: UniFiClient,
+) -> None:
+    _mock_site()
+    _mock_ap_groups()
+    respx.get(f"{PRIV}/rest/networkconf").mock(return_value=_priv([NETWORK_RECORD]))
+    v1_post = respx.post(f"{INT}/wifi/broadcasts").mock(return_value=httpx.Response(201, json={}))
+    priv_post = respx.post(f"{PRIV}/rest/wlanconf").mock(
+        return_value=_priv([{"_id": "second-copy"}])
+    )
+
+    with pytest.raises(UniFiError, match="returned no id"):
+        await IntegrationWrites(client).create_wlan(dict(WLAN_PAYLOAD))
+
+    assert v1_post.call_count == 1
+    assert not priv_post.called
+
+
+@respx.mock
 async def test_guest_network_stays_private(client: UniFiClient) -> None:
     v1_post = respx.post(f"{INT}/networks")
     priv_post = respx.post(f"{PRIV}/rest/networkconf").mock(

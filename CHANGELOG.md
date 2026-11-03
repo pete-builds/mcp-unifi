@@ -33,6 +33,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   confirmed, and if it fails at confirm time the call is refused. Stdio and
   HTTP with auth off are unchanged, since both calls have no identity.
 
+### Fixed
+
+- **A network or WLAN create accepted by the Integration API is never
+  replayed on the private API.** When the v1 POST answered 2xx but the body
+  carried no `id`, `IntegrationWrites.create_network` and `create_wlan` fell
+  through to the private-API create, so one tool call made two objects: a
+  VLAN or SSID the console now holds twice, with only the private copy known
+  to the composite's rollback. The fallback is for a 4xx, where the console
+  changed nothing. A 2xx with no id now raises instead, the same way
+  `create_firewall_policy` already did, and the three share one check.
+
 ## [0.27.0] - 2026-10-20
 
 ### Added
