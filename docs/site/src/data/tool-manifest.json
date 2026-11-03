@@ -107,7 +107,7 @@
       "name": "block_client"
     },
     {
-      "description": "Execute a queued destructive action by its preview token.\n\nSide effects:\n- Runs the mutation that was previewed (delete VLAN, WLAN, firewall\n  rule, port profile, port forward, or static DHCP lease).\n- Removes the token from the in-process pending-actions registry.\n  A second call with the same token returns an error.\n\nExample: confirm_destructive_action(token=\"3f1a...\")",
+      "description": "Execute a queued destructive action by its preview token.\n\nSide effects:\n- Runs the mutation that was previewed (delete VLAN, WLAN, firewall\n  rule, port profile, port forward, or static DHCP lease).\n- Removes the token from the in-process pending-actions registry.\n  A second call with the same token returns an error.\n- Only the client that requested the preview can confirm it. Any\n  other client gets the unknown-token error and the token stays\n  valid for its owner.\n\nExample: confirm_destructive_action(token=\"3f1a...\")",
       "input_schema": {
         "additionalProperties": false,
         "properties": {

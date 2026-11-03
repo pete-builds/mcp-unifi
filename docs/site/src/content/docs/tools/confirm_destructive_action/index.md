@@ -13,6 +13,9 @@ Side effects:
   rule, port profile, port forward, or static DHCP lease).
 - Removes the token from the in-process pending-actions registry.
   A second call with the same token returns an error.
+- Only the client that requested the preview can confirm it. Any
+  other client gets the unknown-token error and the token stays
+  valid for its owner.
 
 ## Example
 

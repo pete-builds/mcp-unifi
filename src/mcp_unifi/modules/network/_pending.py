@@ -42,6 +42,12 @@ Design notes
   tests need to express "the token is expired" by advancing the clock, and
   monkeypatching ``time.time`` is the established pattern in this repo.
   Using ``time.time`` here keeps that pattern intact.
+* A token belongs to the client that asked for the preview. ``put`` records
+  the authenticated ``client_id`` (``None`` on stdio or with auth off) and
+  :meth:`PendingActionsRegistry.claim` only hands the action to that same
+  client. Another client presenting the token gets the same answer as an
+  unknown token, and the token is left in place, so a wrong-client attempt
+  can neither execute the owner's change nor cancel it.
 """
 
 from __future__ import annotations
@@ -53,6 +59,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from mcp_unifi.modules._audit import _current_client_id
 from mcp_unifi.modules.network._common import dump_json
 from mcp_unifi.redaction import redact
 
@@ -75,6 +82,8 @@ class PendingAction:
             valid. Lazy sweeps drop tokens with ``expires_at <= time.time()``.
         executor: Async callable that performs the actual mutation and
             returns the same JSON string the legacy delete tool returned.
+        issuer: Authenticated ``client_id`` that requested the preview, or
+            ``None`` when there is no authenticated client (stdio, auth off).
     """
 
     token: str
@@ -83,6 +92,7 @@ class PendingAction:
     resource: dict[str, Any]
     expires_at: float
     executor: Callable[[], Awaitable[str]] = field(repr=False)
+    issuer: str | None = None
 
     def expires_at_iso(self) -> str:
         """Return ``expires_at`` formatted as ISO 8601 UTC."""
@@ -141,12 +151,30 @@ class PendingActionsRegistry:
             resource=resource,
             expires_at=time.time() + self._ttl_seconds,
             executor=executor,
+            issuer=_current_client_id(),
         )
         self._actions[token] = pending
         return pending
 
+    def claim(self, token: str, client_id: str | None) -> PendingAction | None:
+        """Resolve and remove a token, but only for the client that issued it.
+
+        Returns ``None`` for an unknown or expired token, and also for a
+        token issued to a different client. In that second case the token is
+        NOT removed: the owner can still confirm it before it expires.
+        """
+        self._sweep()
+        pending = self._actions.get(token)
+        if pending is None or pending.issuer != client_id:
+            return None
+        return self._actions.pop(token)
+
     def pop(self, token: str) -> PendingAction | None:
-        """Resolve and remove a token. Returns ``None`` if unknown/expired."""
+        """Resolve and remove a token regardless of issuer.
+
+        Returns ``None`` if unknown/expired. Tool code must use
+        :meth:`claim`; this exists for tests and internal cleanup.
+        """
         self._sweep()
         return self._actions.pop(token, None)
 

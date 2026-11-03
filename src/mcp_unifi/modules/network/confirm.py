@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING
 
 from mcp_unifi.annotations import DESTRUCTIVE_ONCE
 from mcp_unifi.clients.unifi import UniFiError
-from mcp_unifi.modules._audit import annotate_audit, audited
+from mcp_unifi.modules._audit import _current_client_id, annotate_audit, audited
 from mcp_unifi.modules.network._common import make_err
 from mcp_unifi.modules.network._pending import get_pending_actions, preview_id
 
@@ -59,6 +59,9 @@ def register(mcp: FastMCP, settings: Settings, _registry: ControllerRegistry) ->
           rule, port profile, port forward, or static DHCP lease).
         - Removes the token from the in-process pending-actions registry.
           A second call with the same token returns an error.
+        - Only the client that requested the preview can confirm it. Any
+          other client gets the unknown-token error and the token stays
+          valid for its owner.
 
         Example: confirm_destructive_action(token="3f1a...")
 
@@ -73,7 +76,7 @@ def register(mcp: FastMCP, settings: Settings, _registry: ControllerRegistry) ->
             for unknown, used, or expired tokens.
         """
         annotate_audit(preview_id=preview_id(token))
-        pending = get_pending_actions().pop(token)
+        pending = get_pending_actions().claim(token, _current_client_id())
         if pending is None:
             return err(
                 "unknown or expired token. Tokens are single-use and "

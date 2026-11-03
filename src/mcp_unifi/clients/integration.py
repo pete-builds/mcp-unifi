@@ -35,7 +35,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Literal
 
 from mcp_unifi.clients import integration_translate as tr
-from mcp_unifi.clients.errors import UniFiError
+from mcp_unifi.clients.errors import UniFiError, describe_error_body
 from mcp_unifi.clients.ids import path_segment
 from mcp_unifi.clients.retry import request_with_retry
 from mcp_unifi.models import UniFiRecord
@@ -104,14 +104,18 @@ class IntegrationWrites:
             except ValueError:
                 pass
             raise IntegrationRejectedError(
-                f"UniFi Integration {method} {path} returned {resp.status_code}: {resp.text[:300]}",
+                (
+                    f"UniFi Integration {method} {path} returned {resp.status_code}"
+                    f"{describe_error_body(resp)}"
+                ),
                 resp.status_code,
                 code,
                 detail,
             )
         if resp.status_code >= 500:
             raise UniFiError(
-                f"UniFi Integration {method} {path} returned {resp.status_code}: {resp.text[:300]}"
+                f"UniFi Integration {method} {path} returned {resp.status_code}"
+                f"{describe_error_body(resp)}"
             )
         if not resp.content:
             return None
