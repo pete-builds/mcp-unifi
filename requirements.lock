@@ -27,17 +27,17 @@ attrs==26.1.0 \
     #   jsonschema
     #   jsonschema-path
     #   referencing
-authlib==1.9.2 \
-    --hash=sha256:4a39f59fa7b94160859cc447514caf199e133b7ca64a351fb4065bf5006d5a40 \
-    --hash=sha256:83271024b7d3b9992f0d928abd87c5f6e89cfb5aaada294972b860aa807ddafc
+authlib==1.9.5 \
+    --hash=sha256:3f031d5e9b6486089e91e8f7f1b68f36275f3151c66460d650fc90d420545fd7 \
+    --hash=sha256:e32a63e3d869196b61816b2602231862179a2ffc29358c009d1f022c8b86a8b2
     # via fastmcp-slim
 beartype==0.23.1 \
     --hash=sha256:4461b4dc57e3fdd6c8a8464b22cf118002eea107c33e9fef651c69068ab3cce3 \
     --hash=sha256:8b805f246b32931c74f2b321ea0939fe5bb2ff43c12a3eff19cc4c854b832e1d
     # via py-key-value-aio
-cachetools==7.2.8 \
-    --hash=sha256:09b04a85741d0019b3fb7d02b7ee9933a422fa6923af92a0fd63b893b695830c \
-    --hash=sha256:3f9b146b2160975da273e7c23ec882f3996b65df608150d52083c07de0682075
+cachetools==7.3.0 \
+    --hash=sha256:2105787c94619bde7072624fec0fe7b8a08bb7bf6c757c318f8925573c6f07c9 \
+    --hash=sha256:3f63fc208410f0c3a3b37883c4903ecdacd6f0b259134e6d2e82debd5b2e01de
     # via py-key-value-aio
 caio==0.12.10 \
     --hash=sha256:1140246b2bdd2e46c33826464fee66cc2244345e38462d96b8055081acca213e \
@@ -266,9 +266,9 @@ cyclopts==5.3.3 \
     --hash=sha256:86182ba223839686d52178c2b6151b28de8fe9d02cb64d290fbc86341a4a5b76 \
     --hash=sha256:b16ae3619f9447f6b7e42834586e2def254b940ce0b39f82eaf3cfee788a924f
     # via fastmcp-slim
-dnspython==2.9.1 \
-    --hash=sha256:7c81caf8de1ed57b8cfc7e0ad4f528a0b8ceace473c7eb946df195dc9def751f \
-    --hash=sha256:9a6d30e55f8dc63e6052597666112bff0586b95a2474a9deda03afbbf820d37a
+dnspython==2.9.2 \
+    --hash=sha256:8d4d39a513e649d634004ce4d39ade2352efcea472a0247535a5c2d18a9d7ba9 \
+    --hash=sha256:af15f7d385a6ae2fb35a796fde2138004c8c42c7389090e2addc83e3b3340fd8
     # via email-validator
 docstring-parser==0.18.0 \
     --hash=sha256:292510982205c12b1248696f44959db3cdd1740237a968ea1e2e7a900eeb2015 \
@@ -388,9 +388,9 @@ pathable==0.6.0 \
     --hash=sha256:6404b8b82aef5ff0fd478934137128b99b12212ba35afdde5525ca4f8388ea58 \
     --hash=sha256:82c4ca6c98c502ad12e0d4e9779b6210afee93c38990988c8c5d1b49bdcdf566
     # via jsonschema-path
-platformdirs==4.14.3 \
-    --hash=sha256:021add1ab113483edbcd4694f5fbb2d688b893ea30d35e1155bb371cf4be0be8 \
-    --hash=sha256:cba2d05fe5e18b26b1fa6f376b8e6234c012abe1f8696c486fface7d0054e931
+platformdirs==4.14.5 \
+    --hash=sha256:32e9921db7385aa8169bee4fe9501923e5715ba9fb7ea3b9c69b0d8e0639f7a1 \
+    --hash=sha256:8e778c6fa421516f4d3369449f8df3b0e1b72c0e0005fe88e3ec772d0a14e750
     # via fastmcp-slim
 py-key-value-aio==0.4.6 \
     --hash=sha256:267c03c3e24cb99d3097612f8a5cfd8e11785c6a2975e272db0e303ea1850bfd \
@@ -843,16 +843,16 @@ typing-extensions==4.16.0 \
     #   pydantic-core
     #   pydantic-settings
     #   typing-inspection
-typing-inspection==0.4.4 \
-    --hash=sha256:547274fa6b0a561ccf549cc9524b999a578e737d015d8709d021f9d0d13bea47 \
-    --hash=sha256:65b8397ba37ccbce054456aaccddfc91e6e3083c92824df348d96ca832f3f147
+typing-inspection==0.4.5 \
+    --hash=sha256:7f16c411e7930dc79596d42ab44672a3fe5f60eb34b781a1647e7872363120c7 \
+    --hash=sha256:bc210535442b39e1bf2805e0c7a17dfd6a4ace760c84c7f7d16245d23a6b1c39
     # via
     #   mcp
     #   pydantic
     #   pydantic-settings
-uncalled-for==0.4.1 \
-    --hash=sha256:6412b19d1b1e7d431981fee01f8b47be7802f48328a48cbe9603acee757ec553 \
-    --hash=sha256:b611b38879d9fe5088297e7bb28f2ddd12d2d73dad933d93da107fb63eb4058e
+uncalled-for==0.6.0 \
+    --hash=sha256:5872701bf3b4eb0698930f87126d339d56a904c53f052eb0eadad64439fa9b11 \
+    --hash=sha256:5c6932836965b0e6b0a80f9962388922f3bb235431d8f5d3fedc2ad07b581189
     # via fastmcp-slim
 uvicorn==0.54.0 \
     --hash=sha256:505bdb0f318731d45f1f712071fc781a8981f6847a31c902c9f5e652d4f67faf \
