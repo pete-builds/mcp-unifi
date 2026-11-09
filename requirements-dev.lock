@@ -1357,9 +1357,9 @@ truststore==0.10.5 \
     # via
     #   httpcore2
     #   httpx2
-types-pyyaml==6.0.12.20260906 \
-    --hash=sha256:bca893ff0d51df5c9053137d5d0e6ccd36e939a196356f1d5c16372422f5137b \
-    --hash=sha256:f59c1cc05010b833d2d72287bbaa72610106b28d42d89a907313117faba85212
+types-pyyaml==6.0.12.20261030 \
+    --hash=sha256:508cc80546918201026a955356222111224e1f4f7deab0b91f2a95933f764e67 \
+    --hash=sha256:9123d707aa31a3883eeb2cb290537c75246dfcb1c00abed7a70f5419d3bd31ae
     # via -r requirements-dev.in
 typing-extensions==4.16.0 \
     --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8 \
