@@ -113,6 +113,25 @@ twelve mutating tools (`confirm_destructive_action`, `restore_config`,
 others) carry no `create_`/`update_`/`delete_`/`set_` prefix, so a name-based
 gate would leave them callable.
 
+## Response shape
+
+| Variable | Type | Default | Required | Notes |
+|---|---|---|---|---|
+| `MCP_UNIFI_COMPACT_RESPONSES` | bool | `false` | no | When `true`, a client that negotiated MCP `2025-06-18` or later gets a one-line summary as the text block and the data in `structuredContent` only. Saves tokens on a host that feeds `structuredContent` to the model. Leave `false` for Claude Desktop and any host that shows the model only the text block. |
+| `MCP_UNIFI_FORCE_FULL_TEXT_RESPONSES` | bool | `false` | no | When `true`, every client gets the tool's JSON text and no parsed `structuredContent`, whatever it negotiated. Wins over compact mode. The unprefixed `FORCE_FULL_TEXT_RESPONSES` from 0.19.0 still works. |
+
+Every tool returns JSON. By default that JSON is always the text block of the
+result, so any host can read it. A client that negotiated MCP `2025-06-18` or
+later also receives the same payload parsed, as `structuredContent` (a list is
+wrapped as `{"result": [...]}`, because the protocol requires an object).
+
+Compact mode trades that guarantee for tokens. The server cannot tell from the
+handshake whether a host passes `structuredContent` to the model: the
+negotiated revision describes the client library, not what the host does with
+the result. On a host that passes only the text block, compact mode leaves the
+model with a record count and no records. That was the default from 0.19.0
+through 0.27.0; it is opt-in from 0.28.0.
+
 ## Logging
 
 | Variable | Type | Default | Required | Notes |

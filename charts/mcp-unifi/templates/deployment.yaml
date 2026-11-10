@@ -57,6 +57,8 @@ spec:
               value: {{ .Values.auth.required | quote }}
             - name: MCP_UNIFI_READONLY
               value: {{ .Values.readOnly | quote }}
+            - name: MCP_UNIFI_COMPACT_RESPONSES
+              value: {{ .Values.compactResponses | quote }}
             {{- if or .Values.existingSecret .Values.unifi.apiKey }}
             - name: UNIFI_API_KEY
               valueFrom:
