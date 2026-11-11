@@ -5,7 +5,10 @@ tool count or a startup command drifts silently from the code, users hit
 broken commands or wrong numbers, and nothing in CI notices. That's what
 kept the pre-v0.9.0 quick starts broken for seven releases and what left
 "62 Network tools" prose in the README long after Network had grown past
-90 tools.
+90 tools. The same class later hid three more: install commands that start
+the HTTP transport for a stdio client, a ``pip install`` that fetches an
+unrelated PyPI package of the same name, and environment variables the code
+reads that no page lists.
 
 Scope: these are static tests over prose. They do not run the server.
 Whitelisted files are historical (CHANGELOG entries, phase design docs)
@@ -16,9 +19,12 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 from pathlib import Path
 
 import pytest
+
+from mcp_unifi.config import Settings
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MANIFEST_JSON_PATH = REPO_ROOT / "docs" / "site" / "src" / "data" / "tool-manifest.json"
@@ -280,6 +286,303 @@ def test_historical_allowlist_files_exist() -> None:
             "Remove the stale entries from HISTORICAL_ALLOWLIST.\n\n"
             f"{joined}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Test 5: a documented stdio launch of the console script sets the transport
+# ---------------------------------------------------------------------------
+#
+# The default transport is streamable-http, which refuses to start without
+# MCP_UNIFI_AUTH_TOKENS. Nothing sets MCP_TRANSPORT=stdio for the console
+# script, so a uvx / pipx command that omits it exits at startup. The docs said
+# for a long time that it was "set automatically"; it is not.
+
+_FENCE_RE = re.compile(r"^([ \t]*)```([\w-]*)[ \t]*$")
+_SHELL_LANGS = frozenset({"bash", "sh", "shell", "zsh", "console"})
+# A transport is "chosen" when MCP_TRANSPORT is named, or when the command
+# plainly configures the HTTP transport (a token or the explicit opt-out).
+_TRANSPORT_CHOSEN = ("MCP_TRANSPORT", "MCP_UNIFI_AUTH_TOKENS", "MCP_UNIFI_AUTH_REQUIRED")
+
+
+def _code_blocks(text: str) -> list[tuple[str, str]]:
+    """Return ``(language, body)`` for every fenced block, body dedented by its fence."""
+    blocks: list[tuple[str, str]] = []
+    current: list[str] | None = None
+    indent = ""
+    lang = ""
+    for line in text.splitlines():
+        fence = _FENCE_RE.match(line)
+        if fence and current is None:
+            current, indent, lang = [], fence.group(1), fence.group(2).lower()
+        elif fence and current is not None:
+            blocks.append((lang, "\n".join(current)))
+            current = None
+        elif current is not None:
+            current.append(line[len(indent) :] if line.startswith(indent) else line)
+    return blocks
+
+
+def _shell_commands(block: str) -> list[str]:
+    """Join backslash-continued lines, so one command is one string."""
+    return re.sub(r"\\[ \t]*\n[ \t]*", " ", block).splitlines()
+
+
+def _launches_console_script(command: str) -> bool:
+    """True when a shell command starts the ``mcp-unifi`` console script.
+
+    Two shapes launch it: ``uvx ... mcp-unifi`` (the last token is the script
+    name, after ``--from <git url>``) and a bare ``mcp-unifi`` after any
+    ``NAME=value`` assignments, which is the pipx form. ``mcp-unifi-replay``,
+    ``helm install unifi mcp-unifi/mcp-unifi`` and ``--name mcp-unifi`` are not
+    launches.
+    """
+    try:
+        tokens = shlex.split(command, comments=False)
+    except ValueError:
+        return False
+    if "uvx" in tokens:
+        return tokens[-1] == "mcp-unifi" and "git+" in command
+    while tokens and re.fullmatch(r"[A-Z_][A-Z0-9_]*=\S*", tokens[0]):
+        tokens.pop(0)
+    return bool(tokens) and tokens[0] == "mcp-unifi"
+
+
+def _client_config_launches(block: str) -> list[dict[str, object]]:
+    """Return the server entries in a JSON client config that run the script."""
+    try:
+        data = json.loads(block)
+    except ValueError:
+        return []
+    found: list[dict[str, object]] = []
+    servers = data.get("mcpServers") if isinstance(data, dict) else None
+    for entry in (servers or {}).values():
+        if not isinstance(entry, dict):
+            continue
+        args = entry.get("args") or []
+        if entry.get("command") == "mcp-unifi" or (
+            entry.get("command") == "uvx" and args and args[-1] == "mcp-unifi"
+        ):
+            found.append(entry)
+    return found
+
+
+def _stdio_launch_offenders(text: str) -> tuple[int, list[str]]:
+    """Count console-script launches in ``text`` and list those with no transport."""
+    launches = 0
+    offenders: list[str] = []
+    for lang, block in _code_blocks(text):
+        for command in _shell_commands(block) if lang in _SHELL_LANGS else []:
+            if _launches_console_script(command):
+                launches += 1
+                if not any(name in command for name in _TRANSPORT_CHOSEN):
+                    offenders.append(command.strip()[:160])
+        for entry in _client_config_launches(block) if lang == "json" else []:
+            launches += 1
+            env = entry.get("env")
+            if not (isinstance(env, dict) and any(name in env for name in _TRANSPORT_CHOSEN)):
+                offenders.append(json.dumps(entry)[:160])
+    return launches, offenders
+
+
+def test_console_script_launches_choose_a_transport() -> None:
+    """A docs command that launches ``mcp-unifi`` must set ``MCP_TRANSPORT``.
+
+    The console script defaults to Streamable HTTP and exits with "HTTP
+    transport requires MCP_UNIFI_AUTH_TOKENS" when no token is set. uvx, pipx
+    and the Claude Desktop / Cursor / Claude Code stdio configs all launch it
+    as a subprocess, so each one has to say ``MCP_TRANSPORT=stdio`` (a command
+    prefix, a ``--env`` flag, or the ``env`` block of a JSON config).
+    """
+    launches = 0
+    offenders: list[str] = []
+    for path in _user_facing_files():
+        if path.suffix not in {".md", ".mdx"}:
+            continue
+        found, bad = _stdio_launch_offenders(path.read_text(encoding="utf-8"))
+        launches += found
+        offenders.extend(f"  {path.relative_to(REPO_ROOT)}: {cmd}" for cmd in bad)
+    # A positive control: if the detector stopped recognising the install
+    # commands, "no offenders" would mean nothing.
+    assert launches >= 8, f"only {launches} console-script launches found; detector is blind"
+    if offenders:
+        joined = "\n".join(offenders)
+        pytest.fail(
+            "These docs commands launch the mcp-unifi console script without setting "
+            "MCP_TRANSPORT. The default transport is streamable-http, which refuses to "
+            "start without MCP_UNIFI_AUTH_TOKENS, so a stdio client gets a dead server. "
+            "Add MCP_TRANSPORT=stdio.\n\n"
+            f"{joined}"
+        )
+
+
+def test_stdio_launch_detector_flags_a_missing_transport() -> None:
+    """Control for the test above: the detector must be able to fail."""
+    bad_shell = (
+        "```bash\nuvx --from git+https://github.com/pete-builds/mcp-unifi mcp-unifi\n```\n"
+        "```bash\npipx install git+https://github.com/pete-builds/mcp-unifi\nmcp-unifi\n```\n"
+        "```bash\nclaude mcp add --transport stdio unifi \\\n"
+        "  -- uvx --from git+https://github.com/pete-builds/mcp-unifi mcp-unifi\n```\n"
+    )
+    launches, offenders = _stdio_launch_offenders(bad_shell)
+    assert (launches, len(offenders)) == (3, 3)
+
+    bad_json = (
+        '```json\n{"mcpServers": {"unifi": {"command": "uvx", '
+        '"args": ["--from", "git+https://github.com/pete-builds/mcp-unifi", "mcp-unifi"], '
+        '"env": {"STUB_MODE": "true"}}}}\n```\n'
+    )
+    json_launches, json_offenders = _stdio_launch_offenders(bad_json)
+    assert (json_launches, len(json_offenders)) == (1, 1)
+
+    good = (
+        "```bash\nMCP_TRANSPORT=stdio uvx --from git+https://github.com/pete-builds/mcp-unifi"
+        " mcp-unifi\n```\n"
+        "```bash\nclaude mcp add --transport stdio unifi --env MCP_TRANSPORT=stdio \\\n"
+        "  -- uvx --from git+https://github.com/pete-builds/mcp-unifi mcp-unifi\n```\n"
+        '```json\n{"mcpServers": {"unifi": {"command": "uvx", '
+        '"args": ["--from", "git+https://github.com/pete-builds/mcp-unifi", "mcp-unifi"], '
+        '"env": {"MCP_TRANSPORT": "stdio"}}}}\n```\n'
+        "```bash\nmcp-unifi-replay audit.jsonl\nhelm install unifi mcp-unifi/mcp-unifi\n```\n"
+    )
+    assert _stdio_launch_offenders(good) == (3, [])
+
+
+# ---------------------------------------------------------------------------
+# Test 6: nothing tells a user to install the bare name "mcp-unifi" from PyPI
+# ---------------------------------------------------------------------------
+#
+# This project is not published on PyPI. The PyPI project named "mcp-unifi" is
+# an unrelated package by another author, so ``pip install mcp-unifi`` runs a
+# stranger's code. Every install command must name the git URL.
+
+_BARE_PYPI_INSTALL_RE = re.compile(
+    r"""(?:\b(?:pip3?|pipx|uv\s+pip|uv\s+tool)\s+install\s+(?:-\S+\s+)*
+          |\buvx\s+(?:-\S+\s+)*)
+        ['"]?mcp-unifi(?:\[[^\]]*\])?['"]?(?=[\s`.,;:)]|$)(?!\s*@)""",
+    re.VERBOSE,
+)
+
+
+def test_no_install_command_fetches_the_pypi_package_of_the_same_name() -> None:
+    """``pip install mcp-unifi`` and ``uvx mcp-unifi`` install someone else's code."""
+    offenders: list[str] = []
+    candidates = set(_user_facing_files())
+    candidates.update((REPO_ROOT / "docs").glob("*.md"))
+    # Source files carry user-facing install hints too (the tracing warning).
+    # Only the pip-family commands are checked there: a docstring may mention
+    # the console script by name.
+    source = set((REPO_ROOT / "src" / "mcp_unifi").rglob("*.py"))
+    for path in sorted(candidates | source):
+        if path in HISTORICAL_ALLOWLIST or not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        for match in _BARE_PYPI_INSTALL_RE.finditer(text):
+            if path in source and not match.group(0).lstrip().startswith(("pip", "uv pip")):
+                continue
+            line_start = text.rfind("\n", 0, match.start()) + 1
+            line = text[line_start : text.find("\n", match.end())]
+            offenders.append(f"  {path.relative_to(REPO_ROOT)}: {line.strip()[:160]}")
+    if offenders:
+        joined = "\n".join(offenders)
+        pytest.fail(
+            "These install commands name the bare package 'mcp-unifi', which on PyPI is "
+            "an unrelated project. Install from git instead, for example "
+            "'mcp-unifi[extra] @ git+https://github.com/pete-builds/mcp-unifi'.\n\n"
+            f"{joined}"
+        )
+
+
+def test_pypi_install_detector_flags_the_bare_name() -> None:
+    """Control for the test above: the pattern must match the bad forms only."""
+    bad = [
+        "pip install mcp-unifi",
+        "pip install 'mcp-unifi[otel]'",
+        "pip install mcp-unifi[otel]",
+        "pipx install mcp-unifi",
+        "uvx mcp-unifi",
+        "uv pip install -U mcp-unifi",
+        "``pip install mcp-unifi[otel]``, which",
+        "Install them with: pip install 'mcp-unifi[otel]'. The server",
+    ]
+    for text in bad:
+        assert _BARE_PYPI_INSTALL_RE.search(text), text
+    good = [
+        "pip install 'mcp-unifi[otel] @ git+https://github.com/pete-builds/mcp-unifi'",
+        "pipx install git+https://github.com/pete-builds/mcp-unifi",
+        "uvx --from git+https://github.com/pete-builds/mcp-unifi mcp-unifi",
+        "pip install -e .",
+        "helm install unifi mcp-unifi/mcp-unifi",
+    ]
+    for text in good:
+        assert not _BARE_PYPI_INSTALL_RE.search(text), text
+
+
+# ---------------------------------------------------------------------------
+# Test 7: every environment variable the server reads is on the config page
+# ---------------------------------------------------------------------------
+
+CONFIG_REFERENCE = REPO_ROOT / "docs" / "site" / "src" / "content" / "docs" / "reference"
+CONFIG_REFERENCE = CONFIG_REFERENCE / "configuration.md"
+
+# ``os.environ.get("X")`` / ``os.getenv("X")`` with a literal name, and the
+# ``ENV_FOO = "X"`` constants the audit and telemetry modules read through.
+_ENV_LITERAL_RE = re.compile(r"""os\.(?:environ\.get|getenv)\(\s*["']([A-Z][A-Z0-9_]+)["']""")
+_ENV_CONSTANT_RE = re.compile(
+    r"""^ENV_[A-Z_]+(?:\s*:\s*[\w\[\]]+)?\s*=\s*["']([A-Z][A-Z0-9_]+)["']""", re.M
+)
+
+
+def _env_vars_the_server_reads() -> set[str]:
+    """Environment variable names read by ``Settings`` plus the direct readers."""
+    names: set[str] = set()
+    for field_name, field in Settings.model_fields.items():
+        if field_name == "controllers":  # built from the others, not read from the env
+            continue
+        alias = field.validation_alias
+        choices = getattr(alias, "choices", None)
+        if choices:
+            names.update(str(c) for c in choices if str(c).isupper())
+        else:
+            names.add(field_name.upper())
+    for path in (REPO_ROOT / "src" / "mcp_unifi").rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        names.update(_ENV_LITERAL_RE.findall(text))
+        names.update(_ENV_CONSTANT_RE.findall(text))
+    return names
+
+
+def _undocumented(names: set[str], page: str) -> list[str]:
+    return sorted(n for n in names if f"`{n}`" not in page)
+
+
+def test_every_env_var_the_server_reads_is_on_the_configuration_page() -> None:
+    """A variable the code reads but ``reference/configuration.md`` omits is invisible.
+
+    The page had no ``UNIFI_OS_USERNAME`` and no ``MCP_UNIFI_OTEL_*`` for as long
+    as they existed. The names come from the ``Settings`` model and from the
+    modules that read ``os.environ`` directly, so adding a variable to the code
+    without documenting it fails here.
+    """
+    names = _env_vars_the_server_reads()
+    # Sanity: the enumeration must see the three groups it exists to cover.
+    for expected in ("UNIFI_OS_USERNAME", "MCP_UNIFI_OTEL_ENABLED", "MCP_UNIFI_AUDIT_SINK"):
+        assert expected in names, f"{expected} not enumerated; the scan is broken"
+    missing = _undocumented(names, CONFIG_REFERENCE.read_text(encoding="utf-8"))
+    if missing:
+        joined = "\n".join(f"  {n}" for n in missing)
+        pytest.fail(
+            "The server reads these environment variables but "
+            "docs/site/src/content/docs/reference/configuration.md does not list "
+            f"them (as `NAME`):\n\n{joined}"
+        )
+
+
+def test_env_var_coverage_check_can_fail() -> None:
+    """Control for the test above: dropping a variable from the page is caught."""
+    page = CONFIG_REFERENCE.read_text(encoding="utf-8")
+    names = _env_vars_the_server_reads()
+    assert _undocumented(names, page) == []
+    assert _undocumented(names, page.replace("`UNIFI_OS_USERNAME`", "")) == ["UNIFI_OS_USERNAME"]
 
 
 # ---------------------------------------------------------------------------
