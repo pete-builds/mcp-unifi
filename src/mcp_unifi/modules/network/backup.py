@@ -17,8 +17,10 @@ Envelope shape (``schema = "1"``):
       "controller": "default",
       "ts": "2026-05-15T12:34:56+00:00",
       "secrets_stripped": true,
+      "not_included": {"firewall_policies": "...", ...},
       "resources": {
         "networks": [...],
+        "firewall_groups": [...],
         "wlans": [...],
         "firewall_rules": [...],
         "port_profiles": [...],
@@ -26,6 +28,12 @@ Envelope shape (``schema = "1"``):
         "port_forwards": [...]
       }
     }
+
+``not_included`` names every kind of persistent configuration the envelope
+does NOT carry (see :data:`NOT_INCLUDED`), Zone-Based Firewall policies
+first among them. ``restore_config`` repeats the same list as
+``not_restored`` in its plan, so a backup is never mistaken for a whole-site
+snapshot.
 
 Secret handling
 ---------------
@@ -44,11 +52,13 @@ The audit log captures resource counts and the envelope schema/version only —
 never the full backup blob (too large; secrets are sentineled but the flag
 still warrants treating the blob as operator-handled output).
 
-On restore, if ``secrets_stripped: true``, any restored WLAN or network still
-carrying the sentinel is forced ``enabled=False`` so a sentinel-passphrase SSID
-is never broadcast and a VPN tunnel is never stood up on a pre-shared key that
-is a published constant. The operator must reset each secret and re-enable
-manually. A warning is included in the response.
+On restore, any restored WLAN or network still carrying the sentinel is
+forced ``enabled=False`` so a sentinel-passphrase SSID is never broadcast and
+a VPN tunnel is never stood up on a pre-shared key that is a published
+constant. The values themselves are checked, whatever the envelope's
+``secrets_stripped`` flag says: an envelope trimmed or rebuilt by hand can
+carry the sentinel under ``secrets_stripped: false``. The operator must reset
+each secret and re-enable manually. A warning is included in the response.
 
 Identity & ordering
 -------------------
@@ -56,17 +66,36 @@ Resources are matched by ``name`` (case-insensitive, trim) for everything
 except DHCP leases (matched by ``mac``) and port forwards (matched by
 ``name``, falling back to ``(fwd, fwd_port)``).
 
+An identity held by more than one record, on the site or in the backup, while
+the other side also holds it, cannot be matched record to record. Restore
+does not pick one: the plan carries a ``blocked`` action for that identity
+and nothing under it is created or deleted. (An identity only one side holds
+is unambiguous however many records share it: all are created, or all are
+deleted.)
+
 Apply plan order avoids the controller's referential constraints:
 
 * **Deletes** (extras the backup didn't authorize) execute first, in the
   order: firewall_rules -> port_forwards -> wlans -> dhcp_leases ->
   port_profiles -> networks.
+  A record the controller marks ``attr_no_delete`` (the WAN network, for
+  one) is never deleted; the plan reports it as a ``skip``.
+  Firewall groups are never deleted as extras: zone policies and other
+  objects this backup does not cover can reference them, so an extra group
+  is reported as a ``skip``.
 * **Creates** (in the backup but not on the controller) execute next, in the
-  reverse order: networks -> port_profiles -> dhcp_leases -> wlans ->
-  port_forwards -> firewall_rules. WLANs and DHCP leases that reference a
-  network ID are rebound to the matching network on the live controller via
-  the ``name`` index — the saved ``_id`` from the source controller does not
-  survive cross-controller restore.
+  reverse order: networks -> firewall_groups -> port_profiles ->
+  dhcp_leases -> wlans -> port_forwards -> firewall_rules.
+* **References.** A recreated network or group gets a new ``_id``, so every
+  field in a restored record that points at one by id (``networkconf_id``,
+  any ``*_networkconf_id`` / ``*_networkconf_ids``, a lease's
+  ``network_id``, any ``*firewallgroup_id(s)``) is remapped to the id the
+  target has after the restore: the id of the matching record already on
+  the site, or the id the restore just created. Networks and groups keep
+  their source ``_id`` in the envelope for exactly this. A reference the plan
+  cannot resolve (the target is not in the backup, has no name, or shares
+  its name) turns that record's create into a ``blocked`` action in the
+  preview, so it is never written with a dangling id.
 * **Updates** are deliberately not generated in this version. A field that
   drifted on the controller remains; we surface it in dry-run output as
   ``would_apply`` *create* / *delete* / both, never as patch. (The composite
@@ -124,6 +153,7 @@ REDACTED_PASSPHRASE: str = "<redacted-on-backup>"  # noqa: S105 - sentinel liter
 #: Resource types in the order they are created on apply (parents first).
 CREATE_ORDER: tuple[str, ...] = (
     "networks",
+    "firewall_groups",
     "port_profiles",
     "dhcp_leases",
     "wlans",
@@ -134,12 +164,39 @@ CREATE_ORDER: tuple[str, ...] = (
 #: Resource types in the order they are deleted on apply (children first).
 DELETE_ORDER: tuple[str, ...] = tuple(reversed(CREATE_ORDER))
 
+#: Types other records point at by ``_id``. Their records keep the source
+#: ``_id`` in the envelope so restore can remap those pointers.
+_REFERENCED_TYPES: frozenset[str] = frozenset({"networks", "firewall_groups"})
+
+#: Types restore creates when missing but never deletes as extras. A firewall
+#: group can be referenced by Zone-Based Firewall policies and other objects
+#: outside this backup; deleting one the backup does not know would break them.
+_NEVER_DELETED: frozenset[str] = frozenset({"firewall_groups"})
+
+#: Persistent configuration a backup does NOT carry, keyed by what it is, with
+#: what that means for a restore. Written into every envelope as
+#: ``not_included`` and repeated by ``restore_config`` as ``not_restored``.
+NOT_INCLUDED: dict[str, str] = {
+    "firewall_policies": (
+        "Zone-Based Firewall policies. Not backed up and not restored; "
+        "recreate them with create_firewall_policy."
+    ),
+    "firewall_zones": "Zone-Based Firewall zones and which networks sit in each.",
+    "static_routes": "Static routes.",
+    "traffic_rules": "Traffic rules.",
+    "traffic_routes": "Traffic routes (policy-based routing).",
+    "content_filters": "Content filtering profiles.",
+    "dynamic_dns": "Dynamic DNS entries.",
+    "ap_groups": "AP groups.",
+    "site_settings": "Site settings sections, such as threat management (ips) and Teleport.",
+    "devices_and_clients": "Adopted devices and client state (transient, by design).",
+}
+
 #: Fields stripped from every resource record before it lands in the backup
 #: envelope. ``_id`` and ``site_id`` are controller-assigned and would only
 #: confuse a cross-controller restore; we re-derive the network binding by
-#: name during restore. Networks themselves keep their ``_id`` (see
-#: ``_strip_for_backup``) so wlan/lease references can be resolved back to a
-#: name during restore.
+#: name during restore. Networks and firewall groups keep their ``_id`` (see
+#: ``_strip_for_backup``) so references to them can be remapped on restore.
 _DROP_FIELDS: frozenset[str] = frozenset({"_id", "site_id"})
 
 
@@ -183,16 +240,43 @@ def _strip(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def _strip_for_backup(rtype: str, record: dict[str, Any]) -> dict[str, Any]:
-    """Like :func:`_strip`, but preserves ``_id`` on networks.
+    """Like :func:`_strip`, but preserves ``_id`` on referenced types.
 
-    Networks keep their original controller-assigned ``_id`` in the envelope
-    so that WLAN ``networkconf_id`` and DHCP ``network_id`` references can be
-    resolved back to a network name during restore. ``site_id`` is still
-    dropped (it doesn't survive cross-controller restore either).
+    Networks and firewall groups keep their original controller-assigned
+    ``_id`` in the envelope so that references to them (a WLAN's
+    ``networkconf_id``, a rule's ``src_firewallgroup_ids``) can be remapped
+    during restore. ``site_id`` is still dropped (it doesn't survive
+    cross-controller restore either).
     """
-    if rtype == "networks":
+    if rtype in _REFERENCED_TYPES:
         return {k: v for k, v in record.items() if k != "site_id"}
     return _strip(record)
+
+
+def _reference_target(rtype: str, key: str) -> str | None:
+    """Name the resource type a record field points at by ``_id``, if any.
+
+    Matched on the controller's own naming: ``networkconf_id`` and every
+    ``*_networkconf_id`` / ``*_networkconf_ids`` field point at networks (a
+    WLAN's binding, a rule's source and destination, a port profile's native
+    and tagged networks), a DHCP lease's ``network_id`` does too, and every
+    ``*firewallgroup_id`` / ``*firewallgroup_ids`` field points at a firewall
+    group. Matching the suffix rather than a fixed list covers sibling fields
+    a newer controller adds under the same convention.
+    """
+    if key == "networkconf_id" or key.endswith(("_networkconf_id", "_networkconf_ids")):
+        return "networks"
+    if rtype == "dhcp_leases" and key == "network_id":
+        return "networks"
+    if key.endswith(("firewallgroup_id", "firewallgroup_ids")):
+        return "firewall_groups"
+    return None
+
+
+def _reference_values(value: Any) -> list[Any]:
+    """The ids a reference field holds: one string, or a list. Empty means unset."""
+    items = value if isinstance(value, list) else [value]
+    return [v for v in items if v not in ("", None)]
 
 
 def _redact_secrets(records: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
@@ -238,8 +322,10 @@ async def _snapshot(backend: Backend) -> dict[str, list[dict[str, Any]]]:
     profiles_raw = list(await backend.list_port_profiles())
     leases_raw = list(await backend.list_dhcp_leases())
     forwards_raw = list(await backend.list_port_forwards())
+    groups_raw = list(await backend.list_firewall_groups())
     return {
         "networks": [_strip_for_backup("networks", r) for r in networks_raw],
+        "firewall_groups": [_strip_for_backup("firewall_groups", r) for r in groups_raw],
         "wlans": [_strip(r) for r in wlans_raw],
         "firewall_rules": [_strip(r) for r in fw_raw],
         "port_profiles": [_strip(r) for r in profiles_raw],
@@ -253,23 +339,61 @@ async def _snapshot(backend: Backend) -> dict[str, list[dict[str, Any]]]:
 # ---------------------------------------------------------------------------
 
 
+def _group_by_identity(
+    rtype: str, records: list[dict[str, Any]]
+) -> dict[str, list[dict[str, Any]]]:
+    """Group records by identity key, keeping every record. Nameless ones are left out."""
+    out: dict[str, list[dict[str, Any]]] = {}
+    for rec in records:
+        ident = _identity(rtype, rec)
+        if ident:
+            out.setdefault(ident, []).append(rec)
+    return out
+
+
 def _plan(
     *,
     backup_resources: dict[str, list[dict[str, Any]]],
-    current: dict[str, list[dict[str, Any]]],
     current_with_ids: dict[str, list[dict[str, Any]]],
-) -> list[dict[str, Any]]:
-    """Build an ordered action plan to bring ``current`` to ``backup_resources``.
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, str]]]:
+    """Build an ordered action plan to bring the controller to ``backup_resources``.
 
     ``current_with_ids`` holds the controller records WITH their ``_id``
-    fields preserved so deletes can target them. ``current`` is the
-    name-indexed view used for matching.
+    fields preserved so deletes can target them.
+
+    Returns ``(actions, live_ids)``. ``live_ids`` maps, per referenced type,
+    a source ``_id`` from the backup to the id of the matching record already
+    on the site; references to records the plan creates are resolved at
+    apply time from the create response.
+
+    Matching used to index each side by identity in a dict, which kept one
+    record per name: a backup holding two rules called "Block RFC1918"
+    against a site holding one restored neither and said nothing. Every
+    record is now kept, and an identity both sides hold with a duplicate on
+    either becomes a ``blocked`` action instead of a silent pick.
     """
     actions: list[dict[str, Any]] = []
+    backup_groups = {
+        rtype: _group_by_identity(rtype, backup_resources.get(rtype, [])) for rtype in CREATE_ORDER
+    }
+    live_groups = {
+        rtype: _group_by_identity(rtype, current_with_ids.get(rtype, [])) for rtype in CREATE_ORDER
+    }
+    ambiguous: dict[str, set[str]] = {
+        rtype: {
+            ident
+            for ident, held in backup_groups[rtype].items()
+            if ident in live_groups[rtype] and (len(held) > 1 or len(live_groups[rtype][ident]) > 1)
+        }
+        for rtype in CREATE_ORDER
+    }
 
     # Deletes first — children before parents.
     for rtype in DELETE_ORDER:
-        backup_index = {_identity(rtype, r): r for r in backup_resources.get(rtype, [])}
+        if rtype not in backup_resources:
+            # The backup has no section for this type, so it has no opinion
+            # on it: nothing of the type is deleted.
+            continue
         for live in current_with_ids.get(rtype, []):
             ident = _identity(rtype, live)
             if not ident:
@@ -286,19 +410,100 @@ def _plan(
                     }
                 )
                 continue
-            if ident not in backup_index:
+            if ident in backup_groups[rtype]:
+                continue
+            if live.get("attr_no_delete"):
+                # The controller marks this record undeletable (the WAN
+                # network, built-in profiles). A backup that lacks it, such
+                # as one hand-built for a single network, used to plan its
+                # delete; a real console refuses that mid-plan, after earlier
+                # deletes have already run and cannot be undone.
                 actions.append(
                     {
-                        "action": "delete",
+                        "action": "skip",
                         "type": rtype,
-                        "id": live.get("_id"),
                         "name": live.get("name") or ident,
+                        "reason": "not in the backup, but the controller marks it attr_no_delete",
                     }
                 )
+                continue
+            if rtype in _NEVER_DELETED:
+                actions.append(
+                    {
+                        "action": "skip",
+                        "type": rtype,
+                        "name": live.get("name") or ident,
+                        "reason": (
+                            "not in the backup, but firewall groups are never deleted by "
+                            "restore: zone policies and other objects outside the backup "
+                            "can reference them"
+                        ),
+                    }
+                )
+                continue
+            actions.append(
+                {
+                    "action": "delete",
+                    "type": rtype,
+                    "id": live.get("_id"),
+                    "name": live.get("name") or ident,
+                }
+            )
+
+    # Where every source ``_id`` of a referenced type will point after the
+    # restore. ``None`` means "the record this plan creates"; a source id
+    # missing from ``targets`` cannot be resolved, for the reason in
+    # ``problems`` (or because no record in the backup carries it at all).
+    targets: dict[str, dict[str, str | None]] = {t: {} for t in _REFERENCED_TYPES}
+    problems: dict[str, dict[str, str]] = {t: {} for t in _REFERENCED_TYPES}
+    for rtype in _REFERENCED_TYPES:
+        for spec in backup_resources.get(rtype, []):
+            old_id = spec.get("_id")
+            if not isinstance(old_id, str) or not old_id:
+                continue
+            ident = _identity(rtype, spec)
+            reason: str | None = None
+            target: str | None = None
+            if old_id in targets[rtype] or old_id in problems[rtype]:
+                reason = "more than one record in the backup carries this _id"
+            elif not ident:
+                reason = "the record it points at has no name in the backup"
+            elif ident in ambiguous[rtype]:
+                reason = f"the record it points at shares the name {ident!r} with another"
+            elif ident in live_groups[rtype]:
+                live_id = live_groups[rtype][ident][0].get("_id")
+                if isinstance(live_id, str) and live_id:
+                    target = live_id
+                else:
+                    reason = f"the site's record named {ident!r} has no _id"
+            if reason is not None:
+                targets[rtype].pop(old_id, None)
+                problems[rtype][old_id] = reason
+            else:
+                targets[rtype][old_id] = target
+
+    def _unresolved(rtype: str, spec: dict[str, Any]) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for key, value in spec.items():
+            target_type = _reference_target(rtype, key)
+            if target_type is None:
+                continue
+            for ref in _reference_values(value):
+                if isinstance(ref, str) and ref in targets[target_type]:
+                    continue
+                out.append(
+                    {
+                        "field": key,
+                        "id": ref,
+                        "reason": problems[target_type].get(str(ref))
+                        or f"no record in the backup's {target_type} carries this _id",
+                    }
+                )
+        return out
 
     # Creates next — parents before children.
     for rtype in CREATE_ORDER:
-        live_index = {_identity(rtype, r): r for r in current.get(rtype, [])}
+        reported: set[str] = set()
         for spec in backup_resources.get(rtype, []):
             ident = _identity(rtype, spec)
             if not ident:
@@ -311,17 +516,87 @@ def _plan(
                     }
                 )
                 continue
-            if ident not in live_index:
+            if ident in ambiguous[rtype]:
+                if ident not in reported:
+                    reported.add(ident)
+                    actions.append(
+                        {
+                            "action": "blocked",
+                            "type": rtype,
+                            "name": spec.get("name") or ident,
+                            "reason": (
+                                f"duplicate identity: {len(backup_groups[rtype][ident])} "
+                                f"in the backup, {len(live_groups[rtype][ident])} on the "
+                                "site; restore cannot tell which is which, so it creates "
+                                "and deletes none of them"
+                            ),
+                        }
+                    )
+                continue
+            if ident in live_groups[rtype]:
+                continue
+            unresolved = [] if rtype in _REFERENCED_TYPES else _unresolved(rtype, spec)
+            if unresolved:
                 actions.append(
                     {
-                        "action": "create",
+                        "action": "blocked",
                         "type": rtype,
                         "name": spec.get("name") or ident,
-                        "payload": spec,
+                        "reason": (
+                            "points at a record restore cannot resolve; writing it would "
+                            "leave a dangling id"
+                        ),
+                        "unresolved": unresolved,
+                        "record": spec,
                     }
                 )
+                continue
+            actions.append(
+                {
+                    "action": "create",
+                    "type": rtype,
+                    "name": spec.get("name") or ident,
+                    "payload": spec,
+                }
+            )
 
-    return actions
+    live_ids = {
+        rtype: {old: new for old, new in mapping.items() if new is not None}
+        for rtype, mapping in targets.items()
+    }
+    return actions, live_ids
+
+
+def _remap_references(
+    rtype: str, payload: dict[str, Any], id_maps: dict[str, dict[str, str]]
+) -> dict[str, Any]:
+    """Rewrite every reference field in ``payload`` to the target's id after restore.
+
+    The plan has already blocked any record with a reference it could not
+    resolve, so a miss here means the target's create returned no ``_id``.
+    That raises, which rolls the restore back, rather than writing the
+    source controller's id.
+    """
+    out = dict(payload)
+    for key, value in payload.items():
+        target_type = _reference_target(rtype, key)
+        if target_type is None:
+            continue
+        mapping = id_maps.get(target_type, {})
+
+        def _one(ref: Any, _key: str = key, _mapping: dict[str, str] = mapping) -> Any:
+            if ref in ("", None):
+                return ref
+            new = _mapping.get(ref) if isinstance(ref, str) else None
+            if new is None:
+                raise UniFiError(
+                    f"restore_config: {rtype} field {_key}={ref!r} has no restored "
+                    "record to point at"
+                )
+            return new
+
+        out[key] = [_one(r) for r in value] if isinstance(value, list) else _one(value)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -343,6 +618,9 @@ async def _delete_by_type(backend: Backend, rtype: str, resource_id: str) -> boo
         return await backend.delete_dhcp_lease(resource_id)
     if rtype == "port_forwards":
         return await backend.delete_port_forward(resource_id)
+    if rtype == "firewall_groups":
+        # Reached only by rollback of a group this restore created.
+        return await backend.delete_firewall_group(resource_id)
     raise ValueError(f"unknown resource type for delete: {rtype}")
 
 
@@ -363,6 +641,8 @@ async def _create_by_type(backend: Backend, rtype: str, payload: dict[str, Any])
         return await upsert_dhcp_lease(backend, payload)
     if rtype == "port_forwards":
         return await backend.create_port_forward(payload)
+    if rtype == "firewall_groups":
+        return await backend.create_firewall_group(payload)
     raise ValueError(f"unknown resource type for create: {rtype}")
 
 
@@ -386,7 +666,7 @@ def _carries_sentinel(value: Any) -> bool:
     return False
 
 
-def _force_disable_if_redacted(payload: dict[str, Any], secrets_stripped: bool) -> dict[str, Any]:
+def _force_disable_if_redacted(payload: dict[str, Any]) -> dict[str, Any]:
     """If the payload still carries a redaction sentinel, force disable.
 
     Protects against broadcasting a sentinel-passphrase SSID on the wire, and
@@ -400,9 +680,13 @@ def _force_disable_if_redacted(payload: dict[str, Any], secrets_stripped: bool) 
     All three sentinel spellings count (see :data:`_REDACTION_SENTINELS`),
     and nested values are walked: the response serialiser redacts at every
     depth, so a peer list inside a network record can carry one too.
+
+    The envelope's ``secrets_stripped`` flag is deliberately not consulted.
+    It used to gate this check, so an envelope saying ``false`` (trimmed or
+    rebuilt by hand) had its sentinel written to the controller as a real
+    passphrase on an enabled SSID. The values are the evidence; the flag is
+    only a claim about them.
     """
-    if not secrets_stripped:
-        return payload
     if not _carries_sentinel(payload):
         return payload
     out = dict(payload)
@@ -430,10 +714,14 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
 
         Side effects: None (read-only).
 
-        Captures networks/VLANs, WLANs, firewall rules, port profiles,
-        static DHCP reservations, and port forwards into one versioned JSON
-        envelope. Transient state (clients, devices, observability) is
-        excluded.
+        Captures networks/VLANs, firewall groups, WLANs, legacy firewall
+        rules, port profiles, static DHCP reservations, and port forwards
+        into one versioned JSON envelope. It does NOT capture Zone-Based
+        Firewall policies or zones, static routes, traffic rules and
+        routes, content filters, dynamic DNS, AP groups, or site settings;
+        the envelope's ``not_included`` field lists each, so a backup is
+        never mistaken for a whole-site snapshot. Transient state (clients,
+        devices, observability) is excluded by design.
 
         Secret handling: every sensitive field on a WLAN or network record
         is replaced with the sentinel ``<redacted-on-backup>`` — WLAN
@@ -444,7 +732,8 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         carrying the sentinel to ``enabled=False``.
 
         Returns the JSON envelope ``{"schema": "1", "controller": str,
-        "ts": iso8601, "secrets_stripped": bool, "resources": {...}}``.
+        "ts": iso8601, "secrets_stripped": bool, "not_included": {...},
+        "resources": {...}}``.
 
         Example: backup_config(controller="default")
 
@@ -477,6 +766,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             "controller": controller,
             "ts": datetime.now(tz=UTC).isoformat(),
             "secrets_stripped": secrets_stripped,
+            "not_included": dict(NOT_INCLUDED),
             "resources": resources,
         }
         # Audit emits the wrapped result, which is the envelope. To avoid
@@ -510,17 +800,28 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         - Diffs the envelope against current controller state and applies
           an ordered create/delete plan. Deletes run first (firewall_rules,
           port_forwards, wlans, dhcp_leases, port_profiles, networks);
-          creates run second in the reverse order. No update path in this
-          version: drifted fields show up as a delete + create pair (or
-          stay put when names match).
+          creates run second in the reverse order, with firewall groups
+          after networks. No update path in this version: drifted fields
+          show up as a delete + create pair (or stay put when names match).
+          Extra firewall groups are never deleted.
+        - References: a recreated network or group gets a new id, and every
+          restored record pointing at one (WLAN, lease, port profile,
+          firewall rule) is remapped to it. A record whose reference cannot
+          be resolved, and any name both sides hold with a duplicate on
+          either, appears as a ``blocked`` action and is not written.
+        - Not covered: Zone-Based Firewall policies and zones, routes,
+          traffic rules, content filters, dynamic DNS, AP groups and site
+          settings are not in a backup and are left as they are; the plan
+          lists them under ``not_restored``.
         - Cross-controller restore: if the envelope's ``controller``
           differs from the target, the restore proceeds and the response
           includes a warning.
-        - Stripped secrets: if ``secrets_stripped: true``, every restored
-          WLAN or network still carrying the sentinel in any field is forced
-          to ``enabled=False`` so a known-string SSID is never broadcast and
-          a VPN tunnel is never stood up on a public pre-shared key. The
-          operator must reset each secret and re-enable manually.
+        - Stripped secrets: every restored WLAN or network still carrying
+          a redaction sentinel in any field is forced to ``enabled=False``,
+          whatever the envelope's ``secrets_stripped`` flag says, so a
+          known-string SSID is never broadcast and a VPN tunnel is never
+          stood up on a public pre-shared key. The operator must reset each
+          secret and re-enable manually.
         - Mutates controller state. Use dry_run=True to preview the change
           without applying.
         - Rollback: if any sub-step fails, all prior creates are reverted
@@ -565,10 +866,19 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         if not isinstance(backup_resources_raw, dict):
             return err("backup envelope is missing the 'resources' object")
 
-        # Coerce each section to a list of dicts; missing sections become [].
+        # Coerce each section to a list of dicts. A section the envelope does
+        # not have means "not in this backup", not "the site should have
+        # none": the plan leaves that type out entirely. It used to read as
+        # an empty list, so an envelope trimmed by hand to one section
+        # planned the delete of every record of every other type. An explicit
+        # empty list still means "the site should have none".
         backup_resources: dict[str, list[dict[str, Any]]] = {}
+        missing_sections: list[str] = []
         for rtype in CREATE_ORDER:
-            section = backup_resources_raw.get(rtype, [])
+            if rtype not in backup_resources_raw:
+                missing_sections.append(rtype)
+                continue
+            section = backup_resources_raw[rtype]
             if not isinstance(section, list):
                 return err(f"backup resources.{rtype} must be a list")
             cleaned: list[dict[str, Any]] = []
@@ -587,12 +897,42 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             )
 
         secrets_stripped = bool(envelope.get("secrets_stripped"))
-        if secrets_stripped:
+        carries_sentinel = any(
+            _carries_sentinel(rec)
+            for rtype in ("wlans", "networks")
+            for rec in backup_resources.get(rtype, [])
+        )
+        if secrets_stripped or carries_sentinel:
+            if not secrets_stripped:
+                warnings.append(
+                    "The envelope says secrets_stripped is false, but records in it "
+                    "carry a redaction placeholder in place of a secret."
+                )
             warnings.append(
                 "Secrets were stripped from this backup. Any restored WLAN or "
                 "network carrying a stripped secret will be force-disabled — "
                 "that includes VPN networks, whose pre-shared key is not in "
                 "the envelope. Reset each secret and re-enable manually."
+            )
+
+        warnings.append(
+            "A backup does not contain Zone-Based Firewall policies or zones, "
+            "routes, traffic rules, content filters, dynamic DNS, AP groups or "
+            "site settings; restore leaves those as they are (see not_restored)."
+        )
+        if "firewall_groups" not in backup_resources_raw:
+            warnings.append(
+                "This backup has no firewall_groups section (taken before groups "
+                "were backed up). Groups on the site are left as they are, and any "
+                "rule that references a group is blocked."
+            )
+        other_missing = [s for s in missing_sections if s != "firewall_groups"]
+        if other_missing:
+            warnings.append(
+                f"This backup has no section for: {', '.join(other_missing)}. Records "
+                "of those types on the site are left as they are: nothing is created "
+                "or deleted. An empty list for a section says the site should have "
+                "none."
             )
 
         try:
@@ -609,17 +949,14 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 "port_profiles": list(await backend.list_port_profiles()),
                 "dhcp_leases": list(await backend.list_dhcp_leases()),
                 "port_forwards": list(await backend.list_port_forwards()),
+                "firewall_groups": list(await backend.list_firewall_groups()),
             }
         except UniFiError as exc:
             logger.exception("restore_config: live snapshot failed")
             return err(str(exc))
 
-        # Strip ids for matching.
-        current = {k: [_strip(r) for r in v] for k, v in current_with_ids.items()}
-
-        plan = _plan(
+        plan, live_ids = _plan(
             backup_resources=backup_resources,
-            current=current,
             current_with_ids=current_with_ids,
         )
 
@@ -634,12 +971,15 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         if zone_based:
             skipped_rules = 0
             for i, action in enumerate(plan):
-                if action["type"] == "firewall_rules" and action["action"] == "create":
+                if action["type"] == "firewall_rules" and action["action"] in (
+                    "create",
+                    "blocked",
+                ):
                     plan[i] = {
                         "action": "skip",
                         "type": "firewall_rules",
                         "reason": "legacy firewall rule; this site uses zone policies",
-                        "record": action["payload"],
+                        "record": action.get("payload", action.get("record")),
                     }
                     skipped_rules += 1
             if skipped_rules:
@@ -649,18 +989,27 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                     "still need with create_firewall_policy."
                 )
 
+        blocked = [a for a in plan if a["action"] == "blocked"]
+        if blocked:
+            listed = "; ".join(f"{a['type']} {a['name']!r}: {a['reason']}" for a in blocked)
+            warnings.append(
+                f"{len(blocked)} record(s) are blocked and will not be written. "
+                f"Fix them in the envelope or on the site and run again. {listed}"
+            )
+
         if dry_run:
             return format_json(
                 {
                     "dry_run": True,
                     "controller": controller,
                     "warnings": warnings,
+                    "not_restored": dict(NOT_INCLUDED),
                     "would_apply": plan,
                     "summary": (
                         f"{sum(1 for a in plan if a['action'] == 'create')} "
                         "create(s), "
                         f"{sum(1 for a in plan if a['action'] == 'delete')} "
-                        "delete(s)"
+                        f"delete(s), {len(blocked)} blocked"
                     ),
                 }
             )
@@ -679,15 +1028,34 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         # token, and the plan captured HERE is the plan the token commits -- so a
         # preview cannot be swapped for a different change between the two calls.
         async def _execute() -> str:
-            # Build the old-id -> network-name map from the backup. Networks in
-            # the envelope keep their original ``_id`` so wlan/lease references
-            # can be resolved back to a name and then to a live id at apply time.
-            backup_netid_to_name: dict[str, str] = {}
-            for net in backup_resources["networks"]:
-                old_id = net.get("_id")
-                name = _norm(net.get("name"))
-                if isinstance(old_id, str) and name:
-                    backup_netid_to_name[old_id] = name
+            # Source id -> id after restore, per referenced type. Seeded with
+            # the records the plan matched on the site; each network or group
+            # this restore creates adds its own entry as it lands.
+            id_maps: dict[str, dict[str, str]] = {t: dict(m) for t, m in live_ids.items()}
+
+            # The plan was captured at preview time. A matched network or
+            # group deleted since then would leave every remapped reference
+            # to it dangling, so check before changing anything.
+            try:
+                still_there = {
+                    "networks": {n.get("_id") for n in await backend.list_networks()},
+                    "firewall_groups": {g.get("_id") for g in await backend.list_firewall_groups()},
+                }
+            except UniFiError as exc:
+                logger.exception("restore_config: pre-apply check failed")
+                return err(str(exc))
+            gone = sorted(
+                f"{rtype} {live_id}"
+                for rtype, mapping in id_maps.items()
+                for live_id in mapping.values()
+                if live_id not in still_there[rtype]
+            )
+            if gone:
+                return err(
+                    "the site changed since the preview: "
+                    + ", ".join(gone)
+                    + " no longer exist. Nothing was applied; run restore_config again."
+                )
 
             # Apply. Track creates so rollback can undo them. Track executed
             # deletes for honest reporting (no undo path — no copy was kept).
@@ -727,17 +1095,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 )
                 return actions
 
-            # Build the post-delete network-name-to-id index lazily; we refresh
-            # it after creates so WLAN/lease bindings resolve correctly.
-            async def _network_name_to_id() -> dict[str, str]:
-                nets = list(await backend.list_networks())
-                return {
-                    _norm(n.get("name")): n["_id"] for n in nets if isinstance(n.get("_id"), str)
-                }
-
             try:
                 for action in plan:
-                    if action["action"] == "skip":
+                    if action["action"] in ("skip", "blocked"):
                         applied.append(action)
                         continue
 
@@ -755,41 +1115,30 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                         rtype = action["type"]
                         payload = dict(action["payload"])
 
-                        # Networks kept their source ``_id`` in the envelope so
-                        # we could rebuild the old-id -> name map. Drop ``_id``
-                        # before sending the payload to the controller so we
-                        # don't try to dictate the new id.
-                        if rtype == "networks":
-                            payload.pop("_id", None)
-
-                        # Resolve wlan -> network and lease -> network refs from
-                        # the saved old id back to a name, then to the live id.
-                        # Falls back to leaving the field alone if the linked
-                        # network isn't in the backup (operator-edited envelope
-                        # or referential drift); the controller will surface
-                        # the broken link via its own error path.
-                        if rtype == "wlans" and "networkconf_id" in payload:
-                            old_id = str(payload["networkconf_id"])
-                            net_name = backup_netid_to_name.get(old_id)
-                            if net_name:
-                                live = await _network_name_to_id()
-                                target = live.get(net_name)
-                                if target:
-                                    payload["networkconf_id"] = target
-                        elif rtype == "dhcp_leases" and "network_id" in payload:
-                            old_id = str(payload["network_id"])
-                            net_name = backup_netid_to_name.get(old_id)
-                            if net_name:
-                                live = await _network_name_to_id()
-                                target = live.get(net_name)
-                                if target:
-                                    payload["network_id"] = target
+                        # Networks and groups kept their source ``_id`` in the
+                        # envelope so references to them can be remapped. Drop
+                        # it before sending the payload so we don't try to
+                        # dictate the new id; keep it to record the mapping.
+                        source_id: Any = None
+                        if rtype in _REFERENCED_TYPES:
+                            source_id = payload.pop("_id", None)
+                        else:
+                            # Every network or group reference is rewritten to
+                            # the id its target has now. This used to cover a
+                            # WLAN's networkconf_id and a lease's network_id
+                            # only, so a restored firewall rule or port profile
+                            # kept the source network's id: a rule that matched
+                            # nothing and a profile pointing at no VLAN.
+                            payload = _remap_references(rtype, payload, id_maps)
 
                         if rtype in ("wlans", "networks"):
-                            payload = _force_disable_if_redacted(payload, secrets_stripped)
+                            payload = _force_disable_if_redacted(payload)
 
                         record = await _create_by_type(backend, rtype, payload)
                         created_for_rollback.append((rtype, record))
+                        new_id = record.get("_id")
+                        if isinstance(source_id, str) and isinstance(new_id, str):
+                            id_maps.setdefault(rtype, {})[source_id] = new_id
                         applied.append({**action, "result": "created", "id": record.get("_id")})
                         continue
 
@@ -831,7 +1180,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             resource={
                 "creates": sum(1 for a in plan if a["action"] == "create"),
                 "deletes": sum(1 for a in plan if a["action"] == "delete"),
+                "blocked": len(blocked),
                 "warnings": warnings,
+                "not_restored": dict(NOT_INCLUDED),
                 "plan": plan,
             },
             executor=_execute,
@@ -839,4 +1190,4 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         return format_preview_envelope(pending)
 
 
-__all__ = ["BACKUP_SCHEMA", "REDACTED_PASSPHRASE", "register"]
+__all__ = ["BACKUP_SCHEMA", "NOT_INCLUDED", "REDACTED_PASSPHRASE", "register"]

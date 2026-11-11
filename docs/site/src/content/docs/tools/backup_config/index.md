@@ -10,10 +10,14 @@ Snapshot every persistent resource on the controller into one envelope.
 
 Side effects: None (read-only).
 
-Captures networks/VLANs, WLANs, firewall rules, port profiles,
-static DHCP reservations, and port forwards into one versioned JSON
-envelope. Transient state (clients, devices, observability) is
-excluded.
+Captures networks/VLANs, firewall groups, WLANs, legacy firewall
+rules, port profiles, static DHCP reservations, and port forwards
+into one versioned JSON envelope. It does NOT capture Zone-Based
+Firewall policies or zones, static routes, traffic rules and
+routes, content filters, dynamic DNS, AP groups, or site settings;
+the envelope's ``not_included`` field lists each, so a backup is
+never mistaken for a whole-site snapshot. Transient state (clients,
+devices, observability) is excluded by design.
 
 Secret handling: every sensitive field on a WLAN or network record
 is replaced with the sentinel ``<redacted-on-backup>`` — WLAN
@@ -24,7 +28,8 @@ warns ``restore_config`` to force any restored WLAN or network still
 carrying the sentinel to ``enabled=False``.
 
 Returns the JSON envelope ``{"schema": "1", "controller": str,
-"ts": iso8601, "secrets_stripped": bool, "resources": {...}}``.
+"ts": iso8601, "secrets_stripped": bool, "not_included": {...},
+"resources": {...}}``.
 
 ## Example
 
