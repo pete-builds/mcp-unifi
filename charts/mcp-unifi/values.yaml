@@ -12,18 +12,85 @@ fullnameOverride: ""
 
 # UniFi controller configuration
 # Option A: single controller via env vars (simple)
+#
+# stubMode false (the default) is real mode: the server refuses to start unless
+# it has controller config, either unifi.host plus an API key here, or a
+# controllers file (Option B). Set stubMode true to run on mock data with no
+# gateway.
+#
+# verifySSL: leave it null (unset) and the server picks: off for an API key
+# given as a value, on for a key read from a file (UNIFI_API_KEY_FILE) or a
+# pinned certificate (UNIFI_PINNED_CERT). Set true or false to force it. An
+# explicit false together with UNIFI_PINNED_CERT stops the server at startup,
+# so leave it unset when you pin.
 unifi:
   host: ""
   apiKey: ""
   port: 443
   site: default
-  verifySSL: false
+  verifySSL: null
   stubMode: false
 
-# Option B: multi-controller via existing Secret (advanced).
-# When set, the chart will NOT render its own Secret. The referenced Secret
-# must expose at least the UNIFI_API_KEY key.
+# Secret that holds credentials instead of the values above. When set, the
+# chart does NOT render its own Secret. The Secret supplies UNIFI_API_KEY
+# (required when unifi.host is set in real mode, optional otherwise) and may
+# supply MCP_UNIFI_AUTH_TOKENS.
 existingSecret: ""
+
+# Option B: several controllers, Access, certificate pinning, file-backed
+# secrets, and every other setting the chart has no value for. Use extraEnv,
+# extraEnvFrom, extraVolumes and extraVolumeMounts below. A multi-controller
+# install is a Secret holding the controllers YAML, mounted into the pod, with
+# MCP_UNIFI_CONTROLLERS_FILE pointing at it:
+#
+#   kubectl create secret generic unifi-controllers \
+#     --from-file=controllers.yaml=./controllers.yaml
+#
+#   extraEnv:
+#     - name: MCP_UNIFI_CONTROLLERS_FILE
+#       value: /etc/mcp-unifi/controllers/controllers.yaml
+#   extraVolumes:
+#     - name: controllers
+#       secret:
+#         secretName: unifi-controllers
+#   extraVolumeMounts:
+#     - name: controllers
+#       mountPath: /etc/mcp-unifi/controllers
+#       readOnly: true
+#
+# The file format is in the Multi-Site Setup guide. When the controllers file is
+# set it wins over unifi.host and unifi.apiKey.
+#
+# UniFi Access (also set modulesEnabled to include "access"):
+#
+#   extraEnv:
+#     - name: UNIFI_ACCESS_HOST
+#       value: 192.168.1.20
+#     - name: UNIFI_ACCESS_API_KEY
+#       valueFrom:
+#         secretKeyRef:
+#           name: unifi-access
+#           key: UNIFI_ACCESS_API_KEY
+#
+# Variables the chart already sets from its own values (STUB_MODE, UNIFI_HOST,
+# UNIFI_PORT, UNIFI_SITE, UNIFI_VERIFY_SSL, MCP_UNIFI_MODULES_ENABLED,
+# MCP_UNIFI_AUTH_REQUIRED, MCP_UNIFI_READONLY, MCP_UNIFI_COMPACT_RESPONSES,
+# MCP_UNIFI_AUDIT_SINK, MCP_PORT) are set through those values, not here: a
+# second entry with the same name is a duplicate and which one wins is not
+# something to rely on.
+#
+# Extra environment variables for the container, as a list of Kubernetes
+# EnvVar entries. Rendered after the chart's own.
+extraEnv: []
+# Extra envFrom entries (a ConfigMap or Secret whose keys all become
+# variables). Kubernetes lets an explicit env entry beat envFrom.
+extraEnvFrom: []
+# Extra pod volumes and container mounts, as Kubernetes volume and
+# volumeMount entries. The root filesystem is read-only, so anything the server
+# must read from a path (a controllers file, a pinned certificate, a *_FILE
+# secret) is mounted here.
+extraVolumes: []
+extraVolumeMounts: []
 
 modulesEnabled: "network"
 
@@ -53,6 +120,24 @@ auth:
   tokens: ""
   required: true
 
+# Audit log (MCP_UNIFI_AUDIT_SINK). The pod's root filesystem is read-only, so
+# the server's own default, a file at ./audit.jsonl under /app, cannot be
+# written and every audit line would be dropped. The chart therefore defaults
+# to stdout: audit lines go to the container log, readable with
+# `kubectl logs`, and are collected by whatever collects pod logs.
+#   stdout  JSON lines on the container's standard output (default).
+#   file    A file at `path`. The path must be on a writable mount. /tmp is an
+#           emptyDir that is deleted with the pod; for anything that lasts,
+#           mount a volume with extraVolumes and extraVolumeMounts, writable
+#           by UID 1000.
+#   syslog  Syslog. Its address comes from MCP_UNIFI_AUDIT_SYSLOG_ADDRESS,
+#           which you set with extraEnv.
+audit:
+  sink: stdout
+  # Only used when sink is file (MCP_UNIFI_AUDIT_PATH). Empty keeps the
+  # server's own default.
+  path: ""
+
 service:
   type: ClusterIP
   port: 3714
@@ -60,30 +145,35 @@ service:
 resources:
   limits:
     cpu: 200m
-    memory: 128Mi
+    # The server measured about 89 MiB at idle with every module loaded and no
+    # traffic, so the old 128Mi limit left almost no headroom for requests.
+    memory: 256Mi
   requests:
     cpu: 50m
     memory: 64Mi
 
+# Probes target the named container port ("http"), which follows service.port,
+# so changing service.port does not break them. If you override a probe with a
+# number, keep it equal to service.port.
 livenessProbe:
   httpGet:
     path: /health
-    port: 3714
+    port: http
   initialDelaySeconds: 10
   periodSeconds: 30
 
 readinessProbe:
   httpGet:
     path: /health
-    port: 3714
+    port: http
   initialDelaySeconds: 5
   periodSeconds: 10
 
-# Prometheus scraping. Off by default; flip prometheus.io/scrape to "true"
-# to opt in once a /metrics endpoint is exposed.
-podAnnotations:
-  prometheus.io/scrape: "false"
-  prometheus.io/port: "3714"
+# Extra annotations for the pod. The server exposes no metrics endpoint, so
+# there is nothing for Prometheus to scrape. The chart adds a checksum/secret
+# annotation itself whenever it renders its own Secret, so a change to
+# unifi.apiKey or auth.tokens restarts the pod.
+podAnnotations: {}
 
 ingress:
   enabled: false
@@ -96,6 +186,41 @@ ingress:
           pathType: Prefix
   tls: []
 
+# Enabling this with empty rule lists is a deny-all policy, ingress and egress.
+# Nothing can reach the pod, and the pod cannot reach DNS, so it cannot resolve
+# or contact the controller either. Fill in both lists. This example allows
+# the ingress controller in, and DNS plus the controller out (the label on the
+# DNS pods and on the ingress namespace can differ by cluster; the controller
+# address and port are yours, and an Access hub on its own port needs its own
+# entry, 12445 by default):
+#
+#   ingressRules:
+#     - from:
+#         - namespaceSelector:
+#             matchLabels:
+#               kubernetes.io/metadata.name: ingress-nginx
+#       ports:
+#         - protocol: TCP
+#           port: 3714
+#   egressRules:
+#     - to:
+#         - namespaceSelector:
+#             matchLabels:
+#               kubernetes.io/metadata.name: kube-system
+#           podSelector:
+#             matchLabels:
+#               k8s-app: kube-dns
+#       ports:
+#         - protocol: UDP
+#           port: 53
+#         - protocol: TCP
+#           port: 53
+#     - to:
+#         - ipBlock:
+#             cidr: 192.168.1.1/32
+#       ports:
+#         - protocol: TCP
+#           port: 443
 networkPolicy:
   enabled: false
   ingressRules: []

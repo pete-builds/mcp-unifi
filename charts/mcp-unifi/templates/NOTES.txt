@@ -23,9 +23,17 @@ and supply unifi.host plus unifi.apiKey (or existingSecret) to manage a real
 UniFi gateway.
 {{- end }}
 
-{{- if and (not .Values.existingSecret) (not .Values.unifi.apiKey) (not .Values.unifi.stubMode) }}
+{{- if and (not .Values.existingSecret) (not .Values.unifi.apiKey) (not .Values.unifi.stubMode) (not .Values.extraEnv) (not .Values.extraEnvFrom) }}
 
 WARNING: Real mode is enabled but no API key was provided. Set unifi.apiKey
 in values, or set existingSecret to the name of a Secret containing
-UNIFI_API_KEY.
+UNIFI_API_KEY, or point MCP_UNIFI_CONTROLLERS_FILE at a mounted controllers
+file with extraEnv, extraVolumes and extraVolumeMounts.
+{{- end }}
+
+{{- if eq .Values.audit.sink "stdout" }}
+
+The audit log goes to the container log:
+
+   kubectl --namespace {{ .Release.Namespace }} logs deploy/{{ include "mcp-unifi.fullname" . }}
 {{- end }}

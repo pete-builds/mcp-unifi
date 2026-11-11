@@ -11,9 +11,15 @@ spec:
       {{- include "mcp-unifi.selectorLabels" . | nindent 6 }}
   template:
     metadata:
-      {{- with .Values.podAnnotations }}
+      {{- $chartSecret := and (not .Values.existingSecret) (or .Values.unifi.apiKey .Values.auth.tokens) }}
+      {{- if or $chartSecret .Values.podAnnotations }}
       annotations:
+        {{- if $chartSecret }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
+        {{- end }}
       {{- end }}
       labels:
         {{- include "mcp-unifi.selectorLabels" . | nindent 8 }}
@@ -49,8 +55,10 @@ spec:
               value: {{ .Values.unifi.port | quote }}
             - name: UNIFI_SITE
               value: {{ .Values.unifi.site | quote }}
+            {{- if not (kindIs "invalid" .Values.unifi.verifySSL) }}
             - name: UNIFI_VERIFY_SSL
               value: {{ .Values.unifi.verifySSL | quote }}
+            {{- end }}
             - name: MCP_UNIFI_MODULES_ENABLED
               value: {{ .Values.modulesEnabled | quote }}
             - name: MCP_UNIFI_AUTH_REQUIRED
@@ -59,12 +67,21 @@ spec:
               value: {{ .Values.readOnly | quote }}
             - name: MCP_UNIFI_COMPACT_RESPONSES
               value: {{ .Values.compactResponses | quote }}
+            - name: MCP_UNIFI_AUDIT_SINK
+              value: {{ .Values.audit.sink | quote }}
+            {{- if .Values.audit.path }}
+            - name: MCP_UNIFI_AUDIT_PATH
+              value: {{ .Values.audit.path | quote }}
+            {{- end }}
             {{- if or .Values.existingSecret .Values.unifi.apiKey }}
             - name: UNIFI_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ include "mcp-unifi.secretName" . }}
                   key: UNIFI_API_KEY
+                  {{- if or .Values.unifi.stubMode (not .Values.unifi.host) }}
+                  optional: true
+                  {{- end }}
             {{- end }}
             {{- if or .Values.existingSecret .Values.auth.tokens }}
             - name: MCP_UNIFI_AUTH_TOKENS
@@ -74,6 +91,13 @@ spec:
                   key: MCP_UNIFI_AUTH_TOKENS
                   optional: {{ ternary "true" "false" (not .Values.auth.tokens) }}
             {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           {{- with .Values.livenessProbe }}
           livenessProbe:
             {{- toYaml . | nindent 12 }}
@@ -87,7 +111,13 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir:
             sizeLimit: 16Mi
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
