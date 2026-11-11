@@ -38,6 +38,12 @@ Matching rules
 * Controller resources missing from the spec surface a drift entry with
   ``expected: null`` (extra resources that the spec did not authorize).
 * Field-level drift surfaces one entry per mismatched field.
+* A name the controller holds more than once surfaces a ``_duplicate`` entry,
+  and a controller record with no name surfaces as an extra named
+  ``<unnamed>``. Neither can be matched to a spec item, so neither is in sync.
+* A spec key with no comparison behind it (an unknown section, or an item key
+  outside the section's field map) is listed under ``not_compared``. It is
+  never dropped, and it holds ``in_sync`` false.
 
 Return shape
 ------------
@@ -50,7 +56,8 @@ Return shape
       "drifts": [
         {"resource_type": "vlan", "name": "iot",
          "field": "subnet", "expected": "10.50.0.0/24", "actual": "10.50.0.0/16"}
-      ]
+      ],
+      "not_compared": []
     }
 """
 
@@ -89,6 +96,7 @@ NETWORK_FIELDS: dict[str, str] = {
 }
 
 WLAN_FIELDS: dict[str, str] = {
+    "enabled": "enabled",
     "security": "security",
     "wpa_mode": "wpa_mode",
     "is_guest": "is_guest",
@@ -103,6 +111,8 @@ FIREWALL_FIELDS: dict[str, str] = {
     "protocol": "protocol",
     "src": "src_address",
     "dst": "dst_address",
+    "src_port": "src_port",
+    "dst_port": "dst_port",
     "enabled": "enabled",
 }
 
@@ -126,21 +136,128 @@ def _norm_name(value: object) -> str:
     return str(value).strip().lower()
 
 
-def _index_by_name(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    """Index a list of controller records by lowercase ``name``.
+#: Spec keys each section understands, beyond its field map. Anything else a
+#: spec item carries is reported under ``not_compared`` rather than dropped.
+_SECTION_KEYS: dict[str, tuple[str, frozenset[str]]] = {
+    "networks": ("vlan", frozenset({"name", *NETWORK_FIELDS})),
+    "wlans": ("wlan", frozenset({"name", "network", *WLAN_FIELDS})),
+    "firewall_rules": ("firewall_rule", frozenset({"name", *FIREWALL_FIELDS})),
+    "firewall_policies": ("firewall_policy", frozenset({"name", *FIREWALL_POLICY_FIELDS})),
+}
 
-    Records without a ``name`` are skipped (controller boilerplate sometimes
-    surfaces nameless rules; they aren't matchable by spec anyway).
+
+def _group_by_name(
+    records: list[dict[str, Any]],
+) -> tuple[dict[str, list[dict[str, Any]]], list[dict[str, Any]]]:
+    """Group controller records by lowercase ``name``.
+
+    Returns ``(groups, nameless)``. Every record lands somewhere: a name the
+    controller holds twice keeps both records, and a record with no name is
+    returned separately so the caller can report it. This used to be a dict
+    keyed by name that kept the last duplicate and skipped nameless records,
+    so an unauthorised second rule sharing a declared rule's name, or a rule
+    with no name at all, left the audit reporting ``in_sync: true``.
     """
-    out: dict[str, dict[str, Any]] = {}
+    groups: dict[str, list[dict[str, Any]]] = {}
+    nameless: list[dict[str, Any]] = []
     for rec in records:
         key = _norm_name(rec.get("name"))
         if not key:
+            nameless.append(rec)
             continue
-        # Last-write wins for duplicate names; in practice the controller
-        # rejects duplicate network/WLAN names, so this only matters in
-        # malformed test data.
-        out[key] = rec
+        groups.setdefault(key, []).append(rec)
+    return groups, nameless
+
+
+def _presence_drifts(
+    *,
+    resource_type: str,
+    groups: dict[str, list[dict[str, Any]]],
+    nameless: list[dict[str, Any]],
+    spec_names: set[str],
+) -> list[dict[str, Any]]:
+    """Report controller records the spec did not authorise.
+
+    Three shapes count: a name the spec does not declare (``_resource`` with
+    ``expected: null``), a name the controller holds more than once
+    (``_duplicate``, expected 1, actual the count, whether or not the spec
+    declares it), and a record with no name at all (``_resource`` under the
+    name ``<unnamed>``, with its ``id`` so it can be found). Only called for
+    a section the spec includes.
+    """
+    drifts: list[dict[str, Any]] = []
+    for actual_name, matches in groups.items():
+        if actual_name not in spec_names:
+            drifts.append(
+                {
+                    "resource_type": resource_type,
+                    "name": actual_name,
+                    "field": "_resource",
+                    "expected": None,
+                    "actual": "present",
+                }
+            )
+        if len(matches) > 1:
+            drifts.append(
+                {
+                    "resource_type": resource_type,
+                    "name": actual_name,
+                    "field": "_duplicate",
+                    "expected": 1,
+                    "actual": len(matches),
+                }
+            )
+    for rec in nameless:
+        drifts.append(
+            {
+                "resource_type": resource_type,
+                "name": "<unnamed>",
+                "field": "_resource",
+                "expected": None,
+                "actual": "present",
+                "id": rec.get("_id"),
+            }
+        )
+    return drifts
+
+
+def _not_compared(spec: dict[str, Any]) -> list[dict[str, Any]]:
+    """List every spec section and item key the audit has no comparison for.
+
+    A key with no mapping used to be skipped without a word, so a spec that
+    pinned ``dst_port`` or a misspelt ``subnett`` came back ``in_sync: true``
+    having checked nothing. Each one is now named here instead.
+    """
+    out: list[dict[str, Any]] = []
+    for section, items in spec.items():
+        known = _SECTION_KEYS.get(str(section))
+        if known is None:
+            out.append(
+                {
+                    "resource_type": str(section),
+                    "name": None,
+                    "field": "_section",
+                    "expected": items,
+                }
+            )
+            continue
+        resource_type, keys = known
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            name = _norm_name(item.get("name")) or "<unnamed>"
+            for key, value in item.items():
+                if key not in keys:
+                    out.append(
+                        {
+                            "resource_type": resource_type,
+                            "name": name,
+                            "field": str(key),
+                            "expected": value,
+                        }
+                    )
     return out
 
 
@@ -177,7 +294,7 @@ def _diff_networks(
     actual_networks: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     drifts: list[dict[str, Any]] = []
-    actual_index = _index_by_name(actual_networks)
+    actual_groups, nameless = _group_by_name(actual_networks)
     spec_names: set[str] = set()
 
     for spec_item in spec_networks:
@@ -206,8 +323,8 @@ def _diff_networks(
             continue
         spec_names.add(name)
 
-        actual = actual_index.get(name)
-        if actual is None:
+        matches = actual_groups.get(name)
+        if not matches:
             drifts.append(
                 {
                     "resource_type": "vlan",
@@ -219,31 +336,25 @@ def _diff_networks(
             )
             continue
 
-        drifts.extend(
-            _diff_fields(
-                resource_type="vlan",
-                name=name,
-                spec_item=spec_item,
-                actual=actual,
-                field_map=NETWORK_FIELDS,
+        for actual in matches:
+            drifts.extend(
+                _diff_fields(
+                    resource_type="vlan",
+                    name=name,
+                    spec_item=spec_item,
+                    actual=actual,
+                    field_map=NETWORK_FIELDS,
+                )
             )
-        )
 
     # Extra controller-side resources that the spec did not authorize. Only
     # flagged when the spec includes the section at all (an empty/missing
     # section means "I'm not auditing networks").
-    for actual_name, _ in actual_index.items():
-        if actual_name not in spec_names:
-            drifts.append(
-                {
-                    "resource_type": "vlan",
-                    "name": actual_name,
-                    "field": "_resource",
-                    "expected": None,
-                    "actual": "present",
-                }
-            )
-
+    drifts.extend(
+        _presence_drifts(
+            resource_type="vlan", groups=actual_groups, nameless=nameless, spec_names=spec_names
+        )
+    )
     return drifts
 
 
@@ -253,17 +364,19 @@ def _diff_wlans(
     actual_networks: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     drifts: list[dict[str, Any]] = []
-    actual_index = _index_by_name(actual_wlans)
+    actual_groups, nameless = _group_by_name(actual_wlans)
 
     # ``wlan.network`` in the spec is a network *name*; the controller stores
     # the network ``_id`` on the WLAN record as ``networkconf_id``. Build a
-    # name -> _id index so we can resolve spec.network to the expected id.
-    network_name_to_id: dict[str, str] = {}
+    # name -> ids index so we can resolve spec.network to the expected id. A
+    # name two networks share resolves to no single id, so the binding cannot
+    # be confirmed and is reported.
+    network_name_to_ids: dict[str, list[str]] = {}
     for net in actual_networks:
         n = _norm_name(net.get("name"))
         nid = net.get("_id")
         if n and isinstance(nid, str):
-            network_name_to_id[n] = nid
+            network_name_to_ids.setdefault(n, []).append(nid)
 
     spec_names: set[str] = set()
 
@@ -293,8 +406,8 @@ def _diff_wlans(
             continue
         spec_names.add(name)
 
-        actual = actual_index.get(name)
-        if actual is None:
+        matches = actual_groups.get(name)
+        if not matches:
             drifts.append(
                 {
                     "resource_type": "wlan",
@@ -306,44 +419,38 @@ def _diff_wlans(
             )
             continue
 
-        drifts.extend(
-            _diff_fields(
-                resource_type="wlan",
-                name=name,
-                spec_item=spec_item,
-                actual=actual,
-                field_map=WLAN_FIELDS,
-            )
-        )
-
-        # Network binding check (resolve name -> id).
-        if "network" in spec_item:
-            spec_network_name = _norm_name(spec_item["network"])
-            expected_id = network_name_to_id.get(spec_network_name)
-            actual_id = actual.get("networkconf_id")
-            if expected_id is None or expected_id != actual_id:
-                drifts.append(
-                    {
-                        "resource_type": "wlan",
-                        "name": name,
-                        "field": "network",
-                        "expected": spec_item["network"],
-                        "actual": actual_id,
-                    }
+        for actual in matches:
+            drifts.extend(
+                _diff_fields(
+                    resource_type="wlan",
+                    name=name,
+                    spec_item=spec_item,
+                    actual=actual,
+                    field_map=WLAN_FIELDS,
                 )
-
-    for actual_name in actual_index:
-        if actual_name not in spec_names:
-            drifts.append(
-                {
-                    "resource_type": "wlan",
-                    "name": actual_name,
-                    "field": "_resource",
-                    "expected": None,
-                    "actual": "present",
-                }
             )
 
+            # Network binding check (resolve name -> id).
+            if "network" in spec_item:
+                spec_network_name = _norm_name(spec_item["network"])
+                expected_ids = network_name_to_ids.get(spec_network_name, [])
+                actual_id = actual.get("networkconf_id")
+                if len(expected_ids) != 1 or expected_ids[0] != actual_id:
+                    drifts.append(
+                        {
+                            "resource_type": "wlan",
+                            "name": name,
+                            "field": "network",
+                            "expected": spec_item["network"],
+                            "actual": actual_id,
+                        }
+                    )
+
+    drifts.extend(
+        _presence_drifts(
+            resource_type="wlan", groups=actual_groups, nameless=nameless, spec_names=spec_names
+        )
+    )
     return drifts
 
 
@@ -356,7 +463,7 @@ def _diff_named_resources(
 ) -> list[dict[str, Any]]:
     """Diff a name-keyed resource list both ways (missing, extra, field drift)."""
     drifts: list[dict[str, Any]] = []
-    actual_index = _index_by_name(actual_items)
+    actual_groups, nameless = _group_by_name(actual_items)
     spec_names: set[str] = set()
 
     for spec_item in spec_items:
@@ -385,8 +492,8 @@ def _diff_named_resources(
             continue
         spec_names.add(name)
 
-        actual = actual_index.get(name)
-        if actual is None:
+        matches = actual_groups.get(name)
+        if not matches:
             drifts.append(
                 {
                     "resource_type": resource_type,
@@ -398,28 +505,25 @@ def _diff_named_resources(
             )
             continue
 
-        drifts.extend(
-            _diff_fields(
-                resource_type=resource_type,
-                name=name,
-                spec_item=spec_item,
-                actual=actual,
-                field_map=field_map,
+        for actual in matches:
+            drifts.extend(
+                _diff_fields(
+                    resource_type=resource_type,
+                    name=name,
+                    spec_item=spec_item,
+                    actual=actual,
+                    field_map=field_map,
+                )
             )
+
+    drifts.extend(
+        _presence_drifts(
+            resource_type=resource_type,
+            groups=actual_groups,
+            nameless=nameless,
+            spec_names=spec_names,
         )
-
-    for actual_name in actual_index:
-        if actual_name not in spec_names:
-            drifts.append(
-                {
-                    "resource_type": resource_type,
-                    "name": actual_name,
-                    "field": "_resource",
-                    "expected": None,
-                    "actual": "present",
-                }
-            )
-
+    )
     return drifts
 
 
@@ -530,10 +634,21 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         and use ``audit_open_ports`` or other read-only tools instead.
 
         Returns ``{"in_sync": bool, "controller": str, "summary": str,
-        "drifts": [...]}``. Each drift is ``{"resource_type", "name",
-        "field", "expected", "actual"}``. The synthetic field ``_resource``
-        flags presence/absence of an entire resource (``expected=null`` =
-        extra; ``actual=null`` = missing).
+        "drifts": [...], "not_compared": [...]}``. Each drift is
+        ``{"resource_type", "name", "field", "expected", "actual"}``. The
+        synthetic field ``_resource`` flags presence/absence of an entire
+        resource (``expected=null`` = extra; ``actual=null`` = missing); a
+        controller record with no name is an extra named ``<unnamed>``.
+        ``_duplicate`` flags a name the controller holds more than once.
+        ``not_compared`` lists every spec section or key this tool has no
+        comparison for (compared keys: networks ``vlan``/``subnet``/
+        ``purpose``; wlans ``network``/``enabled``/``security``/
+        ``wpa_mode``/``is_guest``/``hide_ssid``/``wlan_band``;
+        firewall_rules ``action``/``ruleset``/``protocol``/``src``/``dst``/
+        ``src_port``/``dst_port``/``enabled``; firewall_policies ``action``/
+        ``enabled``/``protocol``/``index``/``source_zone``/
+        ``destination_zone``). ``in_sync`` is true only when there are no
+        drifts AND nothing went uncompared.
 
         Example: audit_network_drift(spec_yaml="networks:\\n  - name: iot\\n    vlan: 50\\n")
 
@@ -607,20 +722,28 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 return err(str(exc))
             drifts.extend(_diff_firewall_policies(spec_policies, actual_policies, zones))
 
-        in_sync = len(drifts) == 0
+        not_compared = _not_compared(spec)
+        # A key the audit could not compare is not evidence of sync, so it
+        # holds ``in_sync`` false just as a drift does.
+        in_sync = not drifts and not not_compared
         resource_types = sorted({d["resource_type"] for d in drifts})
-        summary = (
-            "in sync"
-            if in_sync
-            else f"{len(drifts)} drift(s) across {len(resource_types)} "
-            f"resource type(s): {', '.join(resource_types)}"
-        )
+        parts: list[str] = []
+        if drifts:
+            parts.append(
+                f"{len(drifts)} drift(s) across {len(resource_types)} "
+                f"resource type(s): {', '.join(resource_types)}"
+            )
+        if not_compared:
+            fields = ", ".join(f"{n['resource_type']}.{n['field']}" for n in not_compared)
+            parts.append(f"{len(not_compared)} spec key(s) not compared: {fields}")
+        summary = "in sync" if in_sync else "; ".join(parts)
         return format_json(
             {
                 "in_sync": in_sync,
                 "controller": controller,
                 "summary": summary,
                 "drifts": drifts,
+                "not_compared": not_compared,
             }
         )
 

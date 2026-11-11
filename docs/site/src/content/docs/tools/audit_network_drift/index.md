@@ -46,10 +46,21 @@ explicitly. To audit as "at least these resources", omit the section
 and use ``audit_open_ports`` or other read-only tools instead.
 
 Returns ``{"in_sync": bool, "controller": str, "summary": str,
-"drifts": [...]}``. Each drift is ``{"resource_type", "name",
-"field", "expected", "actual"}``. The synthetic field ``_resource``
-flags presence/absence of an entire resource (``expected=null`` =
-extra; ``actual=null`` = missing).
+"drifts": [...], "not_compared": [...]}``. Each drift is
+``{"resource_type", "name", "field", "expected", "actual"}``. The
+synthetic field ``_resource`` flags presence/absence of an entire
+resource (``expected=null`` = extra; ``actual=null`` = missing); a
+controller record with no name is an extra named ``<unnamed>``.
+``_duplicate`` flags a name the controller holds more than once.
+``not_compared`` lists every spec section or key this tool has no
+comparison for (compared keys: networks ``vlan``/``subnet``/
+``purpose``; wlans ``network``/``enabled``/``security``/
+``wpa_mode``/``is_guest``/``hide_ssid``/``wlan_band``;
+firewall_rules ``action``/``ruleset``/``protocol``/``src``/``dst``/
+``src_port``/``dst_port``/``enabled``; firewall_policies ``action``/
+``enabled``/``protocol``/``index``/``source_zone``/
+``destination_zone``). ``in_sync`` is true only when there are no
+drifts AND nothing went uncompared.
 
 ## Example
 

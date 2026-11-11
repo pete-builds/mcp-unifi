@@ -432,3 +432,158 @@ async def test_drift_firewall_policies_must_be_a_list(stub_server: FastMCP) -> N
         stub_server, "audit_network_drift", {"spec_yaml": "firewall_policies: 1\n"}
     )
     assert "firewall_policies must be a list" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# Blind spots: duplicates, nameless extras, keys with no comparison
+#
+# The controller index used to be a dict keyed by name that kept the last
+# duplicate and skipped nameless records, and spec keys outside a section's
+# field map were skipped without a word. Each of these left the audit
+# answering ``in_sync: true`` on a site that did not match the spec.
+# ---------------------------------------------------------------------------
+
+
+async def test_drift_duplicate_name_on_controller_is_drift(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    stub_state.firewall_rules.clear()
+    base = {"ruleset": "LAN_IN", "action": "accept", "protocol": "tcp"}
+    stub_state.create_firewall_rule(
+        {**base, "name": "Allow Plex", "dst_address": "192.168.1.20/32", "dst_port": "32400"}
+    )
+    # An unauthorised second rule under the same name, open on every port.
+    stub_state.create_firewall_rule(
+        {**base, "name": "Allow Plex", "dst_address": "192.168.1.20/32"}
+    )
+    spec = textwrap.dedent(
+        """
+        firewall_rules:
+          - name: "Allow Plex"
+            action: "accept"
+            protocol: "tcp"
+            dst: "192.168.1.20/32"
+            dst_port: "32400"
+        """
+    )
+    result = await _call(stub_server, "audit_network_drift", {"spec_yaml": spec})
+    assert result["in_sync"] is False
+    dup = [d for d in result["drifts"] if d["field"] == "_duplicate"]
+    assert dup == [
+        {
+            "resource_type": "firewall_rule",
+            "name": "allow plex",
+            "field": "_duplicate",
+            "expected": 1,
+            "actual": 2,
+        }
+    ]
+    # Both copies are compared, so the open one shows its port drift too.
+    port = [d for d in result["drifts"] if d["field"] == "dst_port"]
+    assert len(port) == 1
+    assert port[0]["expected"] == "32400"
+    assert port[0]["actual"] is None
+    assert result["not_compared"] == []
+
+
+async def test_drift_nameless_extra_on_controller_is_drift(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    stub_state.create_network({"purpose": "corporate", "vlan": 66, "ip_subnet": "10.66.0.0/24"})
+    nameless_id = stub_state.networks[-1]["_id"]
+    spec = textwrap.dedent(
+        """
+        networks:
+          - name: "Default"
+          - name: "Internet 1"
+        """
+    )
+    result = await _call(stub_server, "audit_network_drift", {"spec_yaml": spec})
+    assert result["in_sync"] is False
+    extras = [d for d in result["drifts"] if d["name"] == "<unnamed>"]
+    assert len(extras) == 1
+    assert extras[0]["field"] == "_resource"
+    assert extras[0]["expected"] is None
+    assert extras[0]["id"] == nameless_id
+
+
+async def test_drift_duplicate_extra_network_counts_both(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    for vlan in (70, 71):
+        stub_state.create_network({"name": "Lab", "purpose": "corporate", "vlan": vlan})
+    spec = textwrap.dedent(
+        """
+        networks:
+          - name: "Default"
+          - name: "Internet 1"
+        """
+    )
+    result = await _call(stub_server, "audit_network_drift", {"spec_yaml": spec})
+    lab = {d["field"]: d for d in result["drifts"] if d["name"] == "lab"}
+    assert lab["_resource"]["expected"] is None
+    assert lab["_duplicate"]["actual"] == 2
+
+
+async def test_drift_unmapped_spec_key_is_reported_not_dropped(stub_server: FastMCP) -> None:
+    # ``subnett`` is a typo. It used to be skipped, and the audit said in sync.
+    spec = textwrap.dedent(
+        """
+        networks:
+          - name: "Default"
+            subnett: "10.99.0.0/24"
+          - name: "Internet 1"
+        """
+    )
+    result = await _call(stub_server, "audit_network_drift", {"spec_yaml": spec})
+    assert result["drifts"] == []
+    assert result["not_compared"] == [
+        {"resource_type": "vlan", "name": "default", "field": "subnett", "expected": "10.99.0.0/24"}
+    ]
+    assert result["in_sync"] is False
+    assert "not compared" in result["summary"]
+    assert "vlan.subnett" in result["summary"]
+
+
+async def test_drift_unknown_section_is_reported_not_dropped(stub_server: FastMCP) -> None:
+    spec = textwrap.dedent(
+        """
+        port_forwards:
+          - name: "HTTPS to NAS"
+        """
+    )
+    result = await _call(stub_server, "audit_network_drift", {"spec_yaml": spec})
+    assert result["in_sync"] is False
+    assert [(n["resource_type"], n["field"]) for n in result["not_compared"]] == [
+        ("port_forwards", "_section")
+    ]
+
+
+async def test_drift_wlan_enabled_is_compared(stub_server: FastMCP, stub_state: StubState) -> None:
+    wlan = stub_state.list_wlans()[0]
+    wlan["enabled"] = True
+    spec = f'wlans:\n  - name: "{wlan["name"]}"\n    enabled: false\n'
+    result = await _call(stub_server, "audit_network_drift", {"spec_yaml": spec})
+    assert result["in_sync"] is False
+    enabled = [d for d in result["drifts"] if d["field"] == "enabled"]
+    assert len(enabled) == 1
+    assert enabled[0]["expected"] is False
+    assert enabled[0]["actual"] is True
+    assert result["not_compared"] == []
+
+
+async def test_drift_wlan_binding_to_a_shared_network_name_is_drift(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """A WLAN bound to one of two networks named alike cannot be confirmed."""
+    stub_state.create_network({"name": "IoT", "purpose": "corporate", "vlan": 50})
+    # Bound to the second: the old name index kept the last duplicate, so
+    # this binding used to pass as confirmed.
+    second = stub_state.create_network({"name": "IoT", "purpose": "corporate", "vlan": 51})
+    stub_state.create_wlan({"name": "Cams", "security": "wpapsk", "networkconf_id": second["_id"]})
+    spec = 'wlans:\n  - name: "Cams"\n    network: "IoT"\n  - name: "Home"\n'
+    result = await _call(stub_server, "audit_network_drift", {"spec_yaml": spec})
+    binding = [d for d in result["drifts"] if d["field"] == "network"]
+    assert len(binding) == 1
+    assert binding[0]["actual"] == second["_id"]
+    assert result["in_sync"] is False
