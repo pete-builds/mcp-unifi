@@ -93,7 +93,7 @@ async def test_provision_camera_not_found(protect_registry: FastMCP) -> None:
     result = await _call(
         protect_registry,
         "provision_camera",
-        {"camera_id": "ghost-camera-id"},
+        {"camera_id": "ghost-camera-id", "sensitivity": 50},
     )
     assert "error" in result
     assert "not found" in result["error"]
@@ -253,7 +253,9 @@ async def test_provision_camera_snapshot_fetch_failure(
 
     stub_protect_state.get_camera = boom  # type: ignore[method-assign]
 
-    result = await _call(protect_registry, "provision_camera", {"camera_id": cam_id})
+    result = await _call(
+        protect_registry, "provision_camera", {"camera_id": cam_id, "sensitivity": 50}
+    )
     assert "error" in result
     assert "snapshot fetch" in result["error"]
 
@@ -359,3 +361,251 @@ async def test_provision_camera_rollback_sensitivity_restore_fails(
         isinstance(entry, dict) and "restore_failed" in str(entry.get("sensitivity", ""))
         for entry in rolled
     )
+
+
+# ---------------------------------------------------------------------------
+# Settings the caller did not pass are left alone
+# ---------------------------------------------------------------------------
+
+
+def _customise_camera(state: ProtectStubState) -> dict[str, Any]:
+    """Give camera 0 non-default settings and return its pre-call snapshot."""
+    cam = state.cameras[0]
+    cam["recordingSettings"]["mode"] = "always"
+    cam["recordingSettings"]["retentionDurationMs"] = 30 * 86_400 * 1000
+    cam["motionSettings"]["sensitivity"] = 85
+    cam["privacyMask"]["enabled"] = True
+    return _camera_snapshot(state, cam["id"])
+
+
+async def test_provision_camera_leaves_unpassed_settings_alone(
+    protect_registry: FastMCP, stub_protect_state: ProtectStubState
+) -> None:
+    """Passing one setting must not overwrite the others with defaults."""
+    pre = _customise_camera(stub_protect_state)
+
+    result = await _call(
+        protect_registry,
+        "provision_camera",
+        {"camera_id": pre["id"], "recording_mode": "motion"},
+    )
+
+    assert "error" not in result
+    cam = stub_protect_state.cameras[0]
+    assert cam["recordingSettings"]["mode"] == "motion"
+    # None of these were passed, so none may change.
+    assert cam["recordingSettings"]["retentionDurationMs"] == 30 * 86_400 * 1000
+    assert cam["motionSettings"]["sensitivity"] == 85
+    assert cam["privacyMask"]["enabled"] is True
+    assert result["sensitivity"] is None
+    assert result["privacy"] is None
+
+
+async def test_provision_camera_sensitivity_only_touches_only_sensitivity(
+    protect_registry: FastMCP, stub_protect_state: ProtectStubState
+) -> None:
+    pre = _customise_camera(stub_protect_state)
+    calls: list[dict[str, Any]] = []
+    real_update = stub_protect_state.update_camera
+
+    def spy(camera_id: str, patch: dict[str, Any]) -> Any:
+        calls.append(patch)
+        return real_update(camera_id, patch)
+
+    stub_protect_state.update_camera = spy  # type: ignore[method-assign]
+
+    result = await _call(
+        protect_registry, "provision_camera", {"camera_id": pre["id"], "sensitivity": 20}
+    )
+
+    assert "error" not in result
+    assert calls == [{"motionSettings": {"sensitivity": 20}}]
+    post = _camera_snapshot(stub_protect_state, pre["id"])
+    assert post["motionSettings"]["sensitivity"] == 20
+    post["motionSettings"]["sensitivity"] = 85
+    assert post == pre
+
+
+async def test_provision_camera_requires_at_least_one_setting(
+    protect_registry: FastMCP, stub_protect_state: ProtectStubState
+) -> None:
+    pre = _customise_camera(stub_protect_state)
+
+    result = await _call(protect_registry, "provision_camera", {"camera_id": pre["id"]})
+
+    assert "error" in result
+    assert "at least one" in result["error"]
+    assert stub_protect_state.cameras[0] == pre
+
+
+async def test_provision_camera_dry_run_shows_before_and_after(
+    protect_registry: FastMCP, stub_protect_state: ProtectStubState
+) -> None:
+    pre = _customise_camera(stub_protect_state)
+
+    result = await _call(
+        protect_registry,
+        "provision_camera",
+        {"camera_id": pre["id"], "recording_mode": "motion", "sensitivity": 40, "dry_run": True},
+    )
+
+    assert result["dry_run"] is True
+    by_setting = {c["setting"]: c for c in result["changes"]}
+    assert set(by_setting) == {"recordingSettings.mode", "motionSettings.sensitivity"}
+    assert by_setting["recordingSettings.mode"]["before"] == "always"
+    assert by_setting["recordingSettings.mode"]["after"] == "motion"
+    assert by_setting["motionSettings.sensitivity"]["before"] == 85
+    assert by_setting["motionSettings.sensitivity"]["after"] == 40
+    # Nothing was passed for retention or privacy, so they are not in the preview.
+    assert "privacy" not in result["would_update"]
+    assert stub_protect_state.cameras[0] == pre
+
+
+async def test_provision_camera_dry_run_unknown_camera(protect_registry: FastMCP) -> None:
+    result = await _call(
+        protect_registry,
+        "provision_camera",
+        {"camera_id": "ghost-camera-id", "sensitivity": 40, "dry_run": True},
+    )
+    assert "not found" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# A step that returns no record is a failed step
+# ---------------------------------------------------------------------------
+
+
+def _none_on_call(state: ProtectStubState, none_call: int, *, apply: bool) -> None:
+    """Make the ``none_call``-th update_camera call (1-based) return ``None``.
+
+    ``apply=True`` still applies the patch first, as a real controller does
+    when it accepts a PATCH and replies with an empty body.
+    """
+    real_update = state.update_camera
+    n = {"i": 0}
+
+    def fake(camera_id: str, patch: dict[str, Any]) -> Any:
+        n["i"] += 1
+        if n["i"] == none_call:
+            if apply:
+                real_update(camera_id, patch)
+            return None
+        return real_update(camera_id, patch)
+
+    state.update_camera = fake  # type: ignore[method-assign]
+
+
+async def test_provision_camera_none_from_a_step_fails_and_rolls_back(
+    protect_registry: FastMCP, stub_protect_state: ProtectStubState
+) -> None:
+    """Step 2 applies but replies with no record: stop, restore, name the step."""
+    cam_id = stub_protect_state.cameras[0]["id"]
+    pre = _camera_snapshot(stub_protect_state, cam_id)
+    _none_on_call(stub_protect_state, 2, apply=True)
+
+    result = await _call(
+        protect_registry,
+        "provision_camera",
+        {
+            "camera_id": cam_id,
+            "recording_mode": "never",
+            "sensitivity": 90,
+            "privacy_enabled": True,
+        },
+    )
+
+    assert "error" in result
+    assert result["failed_step"] == "sensitivity"
+    assert "sensitivity" in result["error"]
+    # Step 3 never ran, and both earlier steps were put back.
+    assert result["partial"]["privacy"] is None
+    restored = {k for entry in result["rolled_back"] for k in entry}
+    assert restored == {"recording", "sensitivity"}
+    assert _camera_snapshot(stub_protect_state, cam_id) == pre
+
+
+async def test_provision_camera_none_from_the_last_step_is_restored(
+    protect_registry: FastMCP, stub_protect_state: ProtectStubState
+) -> None:
+    """The privacy step may have applied even though no record came back."""
+    cam_id = stub_protect_state.cameras[0]["id"]
+    pre = _camera_snapshot(stub_protect_state, cam_id)
+    _none_on_call(stub_protect_state, 3, apply=True)
+
+    result = await _call(
+        protect_registry,
+        "provision_camera",
+        {
+            "camera_id": cam_id,
+            "recording_mode": "never",
+            "sensitivity": 90,
+            "privacy_enabled": True,
+        },
+    )
+
+    assert result["failed_step"] == "privacy"
+    assert {k for entry in result["rolled_back"] for k in entry} == {
+        "privacy",
+        "sensitivity",
+        "recording",
+    }
+    assert _camera_snapshot(stub_protect_state, cam_id) == pre
+
+
+async def test_provision_camera_none_from_the_first_step_stops_the_run(
+    protect_registry: FastMCP, stub_protect_state: ProtectStubState
+) -> None:
+    cam_id = stub_protect_state.cameras[0]["id"]
+    pre = _camera_snapshot(stub_protect_state, cam_id)
+    _none_on_call(stub_protect_state, 1, apply=False)
+    seen: list[dict[str, Any]] = []
+    inner = stub_protect_state.update_camera
+
+    def spy(camera_id: str, patch: dict[str, Any]) -> Any:
+        seen.append(patch)
+        return inner(camera_id, patch)
+
+    stub_protect_state.update_camera = spy  # type: ignore[method-assign]
+
+    result = await _call(
+        protect_registry,
+        "provision_camera",
+        {"camera_id": cam_id, "recording_mode": "never", "sensitivity": 90},
+    )
+
+    assert result["failed_step"] == "recording"
+    # The sensitivity step must not have been attempted after the failure.
+    assert not any("motionSettings" in patch for patch in seen)
+    assert _camera_snapshot(stub_protect_state, cam_id) == pre
+
+
+async def test_provision_camera_partial_reports_each_step_as_applied(
+    protect_registry: FastMCP, stub_protect_state: ProtectStubState
+) -> None:
+    """``partial`` is a copy of what each step returned, not the live camera."""
+    cam_id = stub_protect_state.cameras[0]["id"]
+    real_update = stub_protect_state.update_camera
+    n = {"i": 0}
+
+    def fake(camera_id: str, patch: dict[str, Any]) -> Any:
+        n["i"] += 1
+        if n["i"] == 3:
+            raise UniFiError("privacy boom")
+        return real_update(camera_id, patch)
+
+    stub_protect_state.update_camera = fake  # type: ignore[method-assign]
+
+    result = await _call(
+        protect_registry,
+        "provision_camera",
+        {
+            "camera_id": cam_id,
+            "recording_mode": "never",
+            "sensitivity": 10,
+            "privacy_enabled": True,
+        },
+    )
+
+    # Step 1 set "never"; the later rollback restored "motion" on the stub, but
+    # the record step 1 returned must still show what it applied.
+    assert result["partial"]["recording"]["recordingSettings"]["mode"] == "never"

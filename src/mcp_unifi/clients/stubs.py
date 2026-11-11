@@ -875,6 +875,7 @@ class StubState:
 
     def update_device(self, device_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
         """Merge ``patch`` into the device record matching ``device_id``."""
+        self._check_failure("update_device")
         for dev in self.devices:
             if dev.get("_id") == device_id:
                 dev.update(patch)
@@ -890,6 +891,7 @@ class StubState:
         return None
 
     def restart_device(self, mac: str) -> bool:
+        self._check_failure("restart_device")
         dev = self.find_device_by_mac(mac)
         if dev is None:
             return False
@@ -898,6 +900,7 @@ class StubState:
         return True
 
     def locate_device(self, mac: str, on: bool) -> bool:
+        self._check_failure("locate_device")
         dev = self.find_device_by_mac(mac)
         if dev is None:
             return False
@@ -914,6 +917,7 @@ class StubState:
         poe_mode: str | None = None,
         portconf_id: str | None = None,
     ) -> UniFiRecord | None:
+        self._check_failure("set_port_state")
         dev = self.find_device_by_mac(device_mac)
         if dev is None:
             return None
@@ -953,6 +957,7 @@ class StubState:
         return record
 
     def update_network(self, network_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        self._check_failure("update_network")
         for net in self.networks:
             if net.get("_id") == network_id:
                 net.update(patch)
@@ -979,6 +984,7 @@ class StubState:
         return record
 
     def update_wlan(self, wlan_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        self._check_failure("update_wlan")
         for wlan in self.wlans:
             if wlan.get("_id") == wlan_id:
                 wlan.update(patch)
@@ -1011,6 +1017,7 @@ class StubState:
         return record
 
     def update_firewall_rule(self, rule_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        self._check_failure("update_firewall_rule")
         for rule in self.firewall_rules:
             if rule.get("_id") == rule_id:
                 rule.update(patch)
@@ -1034,6 +1041,7 @@ class StubState:
         return record
 
     def update_firewall_group(self, group_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        self._check_failure("update_firewall_group")
         for group in self.firewall_groups:
             if group.get("_id") == group_id:
                 group.update(patch)
@@ -1057,6 +1065,7 @@ class StubState:
         return record
 
     def update_route(self, route_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        self._check_failure("update_route")
         for route in self.routes:
             if route.get("_id") == route_id:
                 route.update(patch)
@@ -1080,6 +1089,7 @@ class StubState:
         return record
 
     def update_traffic_rule(self, rule_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        self._check_failure("update_traffic_rule")
         for rule in self.traffic_rules:
             if rule.get("_id") == rule_id:
                 rule.update(patch)
@@ -1091,6 +1101,7 @@ class StubState:
         return self.traffic_routes
 
     def update_traffic_route(self, route_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        self._check_failure("update_traffic_route")
         for route in self.traffic_routes:
             if route.get("_id") == route_id:
                 route.update(patch)
@@ -1102,6 +1113,7 @@ class StubState:
         return self.content_filters
 
     def update_content_filter(self, filter_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        self._check_failure("update_content_filter")
         for prof in self.content_filters:
             if prof.get("_id") == filter_id:
                 prof.update(patch)
@@ -1125,6 +1137,7 @@ class StubState:
         return record
 
     def update_dynamic_dns(self, ddns_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        self._check_failure("update_dynamic_dns")
         for entry in self.dynamic_dns:
             if entry.get("_id") == ddns_id:
                 entry.update(patch)
@@ -1142,11 +1155,13 @@ class StubState:
         return self.port_profiles
 
     def create_port_profile(self, payload: dict[str, Any]) -> UniFiRecord:
+        self._check_failure("create_port_profile")
         record: UniFiRecord = {"_id": _oid(), "site_id": "default", **payload}
         self.port_profiles.append(record)
         return record
 
     def update_port_profile(self, profile_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        self._check_failure("update_port_profile")
         for profile in self.port_profiles:
             if profile.get("_id") == profile_id:
                 profile.update(patch)
@@ -1154,6 +1169,7 @@ class StubState:
         return None
 
     def delete_port_profile(self, profile_id: str) -> bool:
+        self._check_failure("delete_port_profile")
         before = len(self.port_profiles)
         self.port_profiles = [p for p in self.port_profiles if p.get("_id") != profile_id]
         return len(self.port_profiles) < before
@@ -1176,6 +1192,7 @@ class StubState:
         return None
 
     def unblock_client(self, mac: str) -> UniFiRecord | None:
+        self._check_failure("unblock_client")
         for c in self.clients:
             if c.get("mac") == mac:
                 c["blocked"] = False
@@ -1184,6 +1201,7 @@ class StubState:
         return None
 
     def reconnect_client(self, mac: str) -> bool:
+        self._check_failure("reconnect_client")
         for c in self.clients:
             if c.get("mac") == mac:
                 self.audit_log.append({"action": "reconnect_client", "mac": mac, "ts": _ts()})
@@ -1285,6 +1303,7 @@ class StubState:
         return record
 
     def update_port_forward(self, forward_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
+        self._check_failure("update_port_forward")
         for pf in self.port_forwards:
             if pf.get("_id") == forward_id:
                 pf.update(patch)
@@ -1315,6 +1334,7 @@ class StubState:
         return {"subsystem": "wan", "status": "unknown"}
 
     def trigger_speedtest(self) -> UniFiRecord:
+        self._check_failure("trigger_speedtest")
         # Append a fresh result to the front of the list. Carries both
         # ``xput_upload`` (live controller field name) and ``xput_up``
         # (documented return shape) so callers don't have to branch.

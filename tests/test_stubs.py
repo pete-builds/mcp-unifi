@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import inspect
+from collections.abc import Callable
+
 import pytest
 
 from mcp_unifi.clients.stubs import StubState
+from mcp_unifi.clients.unifi import UniFiError
+from mcp_unifi.clients.zone_firewall_stubs import ZoneFirewallStubState
 
 
 def test_seed_data_present(stub_state: StubState) -> None:
@@ -337,3 +342,82 @@ def test_firewall_policy_seed_points_at_seeded_zones(stub_state: StubState) -> N
     assert policies[0]["predefined"] is True
     assert policies[0]["source"]["zone_id"] in zone_ids
     assert policies[0]["destination"]["zone_id"] in zone_ids
+
+
+# ---------------------------------------------------------------------------
+# Failure injection reaches every mutating method, not only the ones a composite
+# happened to need when the hook was first added.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        "update_device",
+        "restart_device",
+        "locate_device",
+        "set_port_state",
+        "update_network",
+        "update_wlan",
+        "update_firewall_rule",
+        "update_firewall_group",
+        "update_route",
+        "update_traffic_rule",
+        "update_traffic_route",
+        "update_content_filter",
+        "update_dynamic_dns",
+        "create_port_profile",
+        "update_port_profile",
+        "delete_port_profile",
+        "unblock_client",
+        "reconnect_client",
+        "update_port_forward",
+        "trigger_speedtest",
+    ],
+)
+def test_fail_next_reaches_every_mutating_method(stub_state: StubState, method: str) -> None:
+    stub_state.fail_next(method, UniFiError(f"{method} injected"))
+    # Arguments do not matter: the queued failure is raised before any lookup.
+    with pytest.raises(UniFiError, match=f"{method} injected"):
+        getattr(stub_state, method)(*(["x"] * _arity(getattr(stub_state, method))))
+
+
+def _arity(fn: Callable[..., object]) -> int:
+    """Number of positional arguments ``fn`` requires."""
+    return sum(
+        1
+        for p in inspect.signature(fn).parameters.values()
+        if p.default is inspect.Parameter.empty and p.kind is p.POSITIONAL_OR_KEYWORD
+    )
+
+
+# ---------------------------------------------------------------------------
+# Zone policy index
+# ---------------------------------------------------------------------------
+
+
+def test_zone_policy_index_is_not_reused_after_a_delete() -> None:
+    zones = ZoneFirewallStubState()
+    zones.migrate()
+    zone_id = next(iter(zones.zone_ids.values()))
+
+    def body(name: str) -> dict[str, object]:
+        return {
+            "action": "ALLOW",
+            "destination": {"zoneId": zone_id},
+            "source": {"zoneId": zone_id},
+            "enabled": True,
+            "ipProtocolScope": {"ipVersion": "IPV4"},
+            "loggingEnabled": False,
+            "name": name,
+        }
+
+    first = zones.create_policy(body("a"))
+    second = zones.create_policy(body("b"))
+    zones.delete_policy(first["id"])
+    third = zones.create_policy(body("c"))
+
+    indexes = [p["index"] for p in zones.policies]
+    assert len(set(indexes)) == len(indexes), indexes
+    assert third["index"] != second["index"]
+    assert third["index"] > second["index"]

@@ -18,6 +18,7 @@ Every tool follows the same conventions as the Network and Protect modules:
 from __future__ import annotations
 
 import logging
+import math
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -57,6 +58,46 @@ EVENT_RESULTS: frozenset[str] = frozenset({"granted", "denied"})
 #: enumeration to filter against when audits ask about specific credential
 #: classes (e.g. "all NFC cards expiring soon").
 CREDENTIAL_TYPES: frozenset[str] = frozenset({"nfc", "pin", "mobile"})
+
+
+#: Upper bounds the read tools enforce, matching the Network module's
+#: ``hours`` (720 = 30 days) and ``limit`` (1000) bounds.
+MAX_HOURS_BACK = 720
+MAX_LIMIT = 1000
+
+#: Most events ``summarize_access_activity`` aggregates. The result says so
+#: when the window held more.
+SUMMARY_EVENT_CAP = 500
+
+#: An ``expires_at`` below this is not a plausible epoch-millisecond value
+#: (it is before 1973). It is more likely seconds, or 0 meaning "no expiry",
+#: so it is reported as unparseable rather than as a credential that expired
+#: in 1970.
+_MIN_EXPIRES_AT_MS = 100_000_000_000
+
+
+def _bounds_error(*, hours_back: int | None = None, limit: int | None = None) -> str | None:
+    """Return the error message for an out-of-range ``hours_back`` or ``limit``."""
+    if hours_back is not None and not 1 <= hours_back <= MAX_HOURS_BACK:
+        return f"hours_back must be between 1 and {MAX_HOURS_BACK}"
+    if limit is not None and not 1 <= limit <= MAX_LIMIT:
+        return f"limit must be between 1 and {MAX_LIMIT}"
+    return None
+
+
+def _expiry_ms(value: object) -> int | None:
+    """Return ``value`` as epoch milliseconds, or ``None`` when it is not one.
+
+    Accepts ints and finite floats (not bools, which are ints in Python, and
+    not strings or anything else) at or above :data:`_MIN_EXPIRES_AT_MS`.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if value < _MIN_EXPIRES_AT_MS:
+        return None
+    return int(value)
 
 
 def _hours_window(hours_back: int) -> tuple[int, int]:
@@ -272,10 +313,16 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         Side effects: None (read-only).
 
         Iterates ``list_credentials`` client-side and filters to those whose
-        ``expires_at`` falls inside the window ``[now, now + days_ahead]``.
+        ``expires_at`` (epoch milliseconds) falls inside the window
+        ``[now, now + days_ahead]``. Each entry includes ``days_until_expiry``
+        so the LLM can sort and summarise without re-doing the math.
         Credentials with no ``expires_at`` (typical for mobile credentials)
-        are excluded. Each entry includes ``days_until_expiry`` so the LLM
-        can sort and summarise without re-doing the math.
+        are left out and only counted in ``no_expiry_count``. Two more lists
+        keep nothing hidden: ``already_expired`` holds credentials whose
+        ``expires_at`` is already in the past (with ``days_since_expiry``),
+        and ``unparseable_expiry`` holds credentials whose ``expires_at`` is
+        present but is not an epoch-millisecond number (a string, seconds, 0),
+        so a bad value is reported rather than skipped.
 
         Example: audit_expiring_credentials(days_ahead=14)
 
@@ -298,18 +345,39 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
 
         now_ms = int(time.time() * 1000)
         horizon_ms = now_ms + days_ahead * 86_400 * 1000
+        day_ms = 86_400 * 1000
         expiring: list[dict[str, Any]] = []
+        already_expired: list[dict[str, Any]] = []
+        unparseable: list[dict[str, Any]] = []
+        no_expiry = 0
         for cred in credentials:
             if credential_type and cred.get("type") != credential_type:
                 continue
-            expires_at = cred.get("expires_at")
-            if not isinstance(expires_at, int):
+            raw_expiry = cred.get("expires_at")
+            if raw_expiry is None:
+                no_expiry += 1
                 continue
-            if now_ms <= expires_at <= horizon_ms:
+            expires_at = _expiry_ms(raw_expiry)
+            if expires_at is None:
+                unparseable.append(
+                    {
+                        "id": cred.get("id"),
+                        "type": cred.get("type"),
+                        "label": cred.get("label"),
+                        "user_id": cred.get("user_id"),
+                        "expires_at": raw_expiry,
+                    }
+                )
+            elif expires_at < now_ms:
                 annotated = dict(cred)
-                annotated["days_until_expiry"] = max(0, (expires_at - now_ms) // (86_400 * 1000))
+                annotated["days_since_expiry"] = (now_ms - expires_at) // day_ms
+                already_expired.append(annotated)
+            elif expires_at <= horizon_ms:
+                annotated = dict(cred)
+                annotated["days_until_expiry"] = (expires_at - now_ms) // day_ms
                 expiring.append(annotated)
-        expiring.sort(key=lambda c: c.get("expires_at", 0))
+        expiring.sort(key=lambda c: c["expires_at"])
+        already_expired.sort(key=lambda c: c["expires_at"], reverse=True)
         return format_json(
             {
                 "horizon_days": days_ahead,
@@ -320,6 +388,11 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 # tool, so it needs its own call — the 0.19.2 pass wired the
                 # two obvious credential readers and missed this one.
                 "credentials": redact(expiring),
+                "already_expired_count": len(already_expired),
+                "already_expired": redact(already_expired),
+                "unparseable_expiry_count": len(unparseable),
+                "unparseable_expiry": redact(unparseable),
+                "no_expiry_count": no_expiry,
             }
         )
 
@@ -405,16 +478,18 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         Example: list_access_events(hours_back=6, result="denied", limit=20)
 
         Args:
-            hours_back: Look-back window in hours. Defaults to 24.
+            hours_back: Look-back window in hours (1 to 720). Defaults to 24.
             result: Optional ``"granted"`` or ``"denied"`` filter. Empty
                 (default) returns both.
             door_id: Optional door ``id`` filter. Empty returns events
                 across every door.
-            limit: Maximum events returned. Defaults to 100.
+            limit: Maximum events returned (1 to 1000). Defaults to 100.
             controller: Name of the UniFi controller to target.
         """
         if result and result not in EVENT_RESULTS:
             return err(f"result {result!r} not in {sorted(EVENT_RESULTS)}")
+        if msg := _bounds_error(hours_back=hours_back, limit=limit):
+            return err(msg)
         try:
             backend = resolve_backend(registry, controller, "access")
             start_ms, end_ms = _hours_window(hours_back)
@@ -442,9 +517,11 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         Example: get_recent_access_events(limit=10)
 
         Args:
-            limit: Maximum events returned. Defaults to 20.
+            limit: Maximum events returned (1 to 1000). Defaults to 20.
             controller: Name of the UniFi controller to target.
         """
+        if msg := _bounds_error(limit=limit):
+            return err(msg)
         try:
             backend = resolve_backend(registry, controller, "access")
             start_ms, end_ms = _hours_window(24)
@@ -464,29 +541,47 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
 
         Side effects: None (read-only).
 
-        Pulls events over the last ``hours_back`` hours (cap 500 to keep the
-        summary tractable) and rolls them up into counts so the LLM can
-        answer "who used which door how often" without re-aggregating
-        client-side. Returns ``total``, ``granted``, ``denied``, plus
-        ``by_door`` and ``by_user`` maps.
+        Pulls events over the last ``hours_back`` hours and rolls them up
+        into counts so the LLM can answer "who used which door how often"
+        without re-aggregating client-side. At most 500 events are
+        aggregated, the newest ones. Returns ``total``, ``granted``,
+        ``denied``, ``other`` (events whose ``result`` is neither, so
+        ``granted + denied + other == total``), plus ``by_door`` and
+        ``by_user`` maps. When the window held more than 500 events,
+        ``truncated`` is ``true`` and every count covers only the newest 500;
+        narrow ``hours_back`` for exact counts.
 
         Example: summarize_access_activity(hours_back=24)
 
         Args:
-            hours_back: Look-back window in hours. Defaults to 24.
+            hours_back: Look-back window in hours (1 to 720). Defaults to 24.
             controller: Name of the UniFi controller to target.
         """
+        if msg := _bounds_error(hours_back=hours_back):
+            return err(msg)
         try:
             backend = resolve_backend(registry, controller, "access")
             start_ms, end_ms = _hours_window(hours_back)
-            events = await backend.list_events(start_ms, end_ms, 500)
+            # Ask for one more than the cap so a window that held exactly the
+            # cap is not reported as truncated.
+            fetched = await backend.list_events(start_ms, end_ms, SUMMARY_EVENT_CAP + 1)
         except UniFiError as exc:
             logger.exception("summarize_access_activity failed")
             return err(str(exc))
 
+        # Newest first in our code rather than trusting the controller's order,
+        # so the cap always drops the oldest events.
+        fetched = sorted(
+            fetched,
+            key=lambda e: e["timestamp"] if isinstance(e.get("timestamp"), (int, float)) else 0,
+            reverse=True,
+        )
+        truncated = len(fetched) > SUMMARY_EVENT_CAP
+        events = fetched[:SUMMARY_EVENT_CAP]
+
         total = len(events)
         granted = sum(1 for e in events if e.get("result") == "granted")
-        denied = total - granted
+        denied = sum(1 for e in events if e.get("result") == "denied")
         by_door: dict[str, dict[str, Any]] = {}
         by_user: dict[str, dict[str, Any]] = {}
         for evt in events:
@@ -508,16 +603,23 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             if evt.get("result") == "denied":
                 user_bucket["denied"] += 1
 
-        return format_json(
-            {
-                "hours_back": hours_back,
-                "total": total,
-                "granted": granted,
-                "denied": denied,
-                "by_door": sorted(by_door.values(), key=lambda d: d["total"], reverse=True),
-                "by_user": sorted(by_user.values(), key=lambda u: u["total"], reverse=True),
-            }
-        )
+        summary: dict[str, Any] = {
+            "hours_back": hours_back,
+            "total": total,
+            "granted": granted,
+            "denied": denied,
+            "other": total - granted - denied,
+            "truncated": truncated,
+            "by_door": sorted(by_door.values(), key=lambda d: d["total"], reverse=True),
+            "by_user": sorted(by_user.values(), key=lambda u: u["total"], reverse=True),
+        }
+        if truncated:
+            summary["note"] = (
+                f"The window held more than {SUMMARY_EVENT_CAP} events. Counts cover "
+                f"only the newest {SUMMARY_EVENT_CAP}; use a smaller hours_back for "
+                "exact totals."
+            )
+        return format_json(summary)
 
     @mcp.tool(annotations=READ_ONLY)
     @audited("list_failed_access_attempts", mutates=False)
@@ -538,12 +640,14 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         Example: list_failed_access_attempts(hours_back=12, door_id="abc...")
 
         Args:
-            hours_back: Look-back window in hours. Defaults to 24.
+            hours_back: Look-back window in hours (1 to 720). Defaults to 24.
             door_id: Optional door ``id`` filter. Empty returns denials
                 across every door.
-            limit: Maximum events returned. Defaults to 100.
+            limit: Maximum events returned (1 to 1000). Defaults to 100.
             controller: Name of the UniFi controller to target.
         """
+        if msg := _bounds_error(hours_back=hours_back, limit=limit):
+            return err(msg)
         try:
             backend = resolve_backend(registry, controller, "access")
             start_ms, end_ms = _hours_window(hours_back)

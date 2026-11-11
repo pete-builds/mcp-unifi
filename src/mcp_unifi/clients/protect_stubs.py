@@ -10,11 +10,14 @@ same per-controller-state pattern used by :class:`StubState`).
 
 from __future__ import annotations
 
+import copy
 import time
 import uuid
 from collections import defaultdict, deque
 from typing import Any
 
+from mcp_unifi.clients.errors import UniFiError
+from mcp_unifi.clients.ids import path_segment
 from mcp_unifi.models import UniFiRecord
 
 
@@ -202,27 +205,41 @@ class ProtectStubState:
             raise queue.popleft()
 
     # ----- Cameras --------------------------------------------------------
-    def list_cameras(self) -> list[UniFiRecord]:
-        return self.cameras
-
-    def get_camera(self, camera_id: str) -> UniFiRecord | None:
+    # Every read hands back a copy. The real client returns freshly parsed
+    # JSON, so a caller that edits a returned record must not be able to edit
+    # the stub's state through it. Every id goes through ``path_segment`` first,
+    # as it does in :class:`ProtectClient`, so a tool that forwards a malformed
+    # id fails here the way it would against a console.
+    def _find_camera(self, camera_id: str) -> UniFiRecord | None:
         for cam in self.cameras:
             if cam.get("id") == camera_id or cam.get("_id") == camera_id:
                 return cam
         return None
+
+    def list_cameras(self) -> list[UniFiRecord]:
+        self._check_failure("list_cameras")
+        return copy.deepcopy(self.cameras)
+
+    def get_camera(self, camera_id: str) -> UniFiRecord | None:
+        self._check_failure("get_camera")
+        path_segment(camera_id, "camera_id")
+        cam = self._find_camera(camera_id)
+        return copy.deepcopy(cam) if cam is not None else None
 
     def update_camera(self, camera_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
         self._check_failure("update_camera")
-        for cam in self.cameras:
-            if cam.get("id") == camera_id or cam.get("_id") == camera_id:
-                _deep_merge(cam, patch)
-                return cam
-        return None
+        path_segment(camera_id, "camera_id")
+        cam = self._find_camera(camera_id)
+        if cam is None:
+            return None
+        _deep_merge(cam, copy.deepcopy(patch))
+        return copy.deepcopy(cam)
 
     # ----- Events ---------------------------------------------------------
     def list_events(
         self, types: list[str], start_ms: int, end_ms: int, limit: int
     ) -> list[UniFiRecord]:
+        self._check_failure("list_events")
         type_set = set(types) if types else None
         out: list[UniFiRecord] = []
         for evt in self.events:
@@ -234,22 +251,30 @@ class ProtectStubState:
             out.append(evt)
         # Most-recent first, then cap to limit.
         out.sort(key=lambda e: e.get("start", 0), reverse=True)
-        return out[:limit]
+        return copy.deepcopy(out[:limit])
 
     # ----- Snapshots / thumbnails ----------------------------------------
     def get_snapshot(self, camera_id: str) -> bytes:
-        # Camera lookup is performed by the caller (the backend / tool) so the
-        # stub matches the wire-level Protect API which always returns bytes.
-        del camera_id
+        self._check_failure("get_snapshot")
+        path_segment(camera_id, "camera_id")
+        if self._find_camera(camera_id) is None:
+            raise UniFiError(f"Protect GET /cameras/{camera_id}/snapshot returned 404")
         return _TINY_JPEG
 
     def get_event_thumbnail(self, event_id: str) -> bytes:
-        del event_id
+        self._check_failure("get_event_thumbnail")
+        path_segment(event_id, "event_id")
+        if not any(e.get("id") == event_id or e.get("_id") == event_id for e in self.events):
+            raise UniFiError(f"Protect GET /events/{event_id}/thumbnail returned 404")
         return _TINY_JPEG
 
     # ----- Recordings -----------------------------------------------------
     def list_recordings(self, camera_id: str, start_ms: int, end_ms: int) -> list[UniFiRecord]:
         """Three deterministic recordings inside the requested window."""
+        self._check_failure("list_recordings")
+        path_segment(camera_id, "camera_id")
+        if self._find_camera(camera_id) is None:
+            raise UniFiError(f"Protect GET /recordings returned 404: camera {camera_id} not found")
         if end_ms <= start_ms:
             return []
         span = end_ms - start_ms

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 from fastmcp import FastMCP
 
@@ -145,3 +146,107 @@ async def test_audit_expiring_credentials_redacts_enrolment_material(
     assert surfaced["id"] == cred["id"]
     assert surfaced["type"] == "nfc"
     assert surfaced["days_until_expiry"] <= 5
+
+
+# ---------------------------------------------------------------------------
+# Nothing is skipped silently: expired and unreadable expiries get their own lists
+# ---------------------------------------------------------------------------
+
+_DAY_MS = 86_400 * 1000
+
+
+def _now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+async def test_audit_expiring_credentials_reports_already_expired(
+    access_registry: FastMCP, stub_access_state: AccessStubState
+) -> None:
+    expired = stub_access_state.credentials[2]
+    expired["expires_at"] = _now_ms() - 2 * _DAY_MS
+
+    result = await _call(access_registry, "audit_expiring_credentials", {"days_ahead": 30})
+
+    # Still only the 5-day NFC is "expiring"; the expired one is not mixed in.
+    assert result["count"] == 1
+    assert result["already_expired_count"] == 1
+    entry = result["already_expired"][0]
+    assert entry["id"] == expired["id"]
+    assert entry["days_since_expiry"] in (1, 2)
+
+
+async def test_audit_expiring_credentials_reports_unparseable_expiry(
+    access_registry: FastMCP, stub_access_state: AccessStubState
+) -> None:
+    nfc, pin, mobile = stub_access_state.credentials
+    nfc["expires_at"] = "2026-11-12T00:00:00Z"  # a string
+    pin["expires_at"] = (_now_ms() + 3 * _DAY_MS) // 1000  # epoch seconds, not ms
+    mobile["expires_at"] = True  # a bool is not a timestamp
+
+    result = await _call(access_registry, "audit_expiring_credentials", {"days_ahead": 30})
+
+    assert result["count"] == 0
+    assert result["unparseable_expiry_count"] == 3
+    by_id = {c["id"]: c for c in result["unparseable_expiry"]}
+    assert set(by_id) == {nfc["id"], pin["id"], mobile["id"]}
+    assert by_id[nfc["id"]]["expires_at"] == "2026-11-12T00:00:00Z"
+    assert by_id[nfc["id"]]["type"] == "nfc"
+
+
+async def test_audit_expiring_credentials_zero_expiry_is_unparseable_not_expired(
+    access_registry: FastMCP, stub_access_state: AccessStubState
+) -> None:
+    stub_access_state.credentials[0]["expires_at"] = 0
+
+    result = await _call(access_registry, "audit_expiring_credentials", {"days_ahead": 30})
+
+    assert result["already_expired_count"] == 0
+    assert [c["id"] for c in result["unparseable_expiry"]] == [
+        stub_access_state.credentials[0]["id"]
+    ]
+
+
+async def test_audit_expiring_credentials_accepts_a_float_millisecond_expiry(
+    access_registry: FastMCP, stub_access_state: AccessStubState
+) -> None:
+    cred = stub_access_state.credentials[1]
+    cred["expires_at"] = float(_now_ms() + 3 * _DAY_MS)
+
+    result = await _call(access_registry, "audit_expiring_credentials", {"days_ahead": 30})
+
+    assert cred["id"] in {c["id"] for c in result["credentials"]}
+    assert result["unparseable_expiry_count"] == 0
+
+
+async def test_audit_expiring_credentials_counts_non_expiring(access_registry: FastMCP) -> None:
+    result = await _call(access_registry, "audit_expiring_credentials", {"days_ahead": 30})
+    # The seeded mobile credential has expires_at = None.
+    assert result["no_expiry_count"] == 1
+    assert result["already_expired"] == []
+    assert result["unparseable_expiry"] == []
+
+
+async def test_audit_expiring_credentials_type_filter_applies_to_every_list(
+    access_registry: FastMCP, stub_access_state: AccessStubState
+) -> None:
+    nfc, pin, _ = stub_access_state.credentials
+    nfc["expires_at"] = _now_ms() - _DAY_MS
+    pin["expires_at"] = "soon"
+
+    result = await _call(access_registry, "audit_expiring_credentials", {"credential_type": "pin"})
+
+    assert result["already_expired_count"] == 0
+    assert [c["id"] for c in result["unparseable_expiry"]] == [pin["id"]]
+
+
+async def test_audit_expiring_credentials_redacts_the_new_lists(
+    access_registry: FastMCP, stub_access_state: AccessStubState
+) -> None:
+    cred = stub_access_state.credentials[0]
+    cred["expires_at"] = _now_ms() - _DAY_MS
+    cred["token"] = "expired-token-do-not-leak"
+
+    result = await _call(access_registry, "audit_expiring_credentials")
+
+    assert result["already_expired"][0]["token"] == "[REDACTED]"
+    assert "do-not-leak" not in str(result)

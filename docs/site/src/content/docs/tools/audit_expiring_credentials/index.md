@@ -11,10 +11,16 @@ Return credentials expiring within ``days_ahead`` days.
 Side effects: None (read-only).
 
 Iterates ``list_credentials`` client-side and filters to those whose
-``expires_at`` falls inside the window ``[now, now + days_ahead]``.
+``expires_at`` (epoch milliseconds) falls inside the window
+``[now, now + days_ahead]``. Each entry includes ``days_until_expiry``
+so the LLM can sort and summarise without re-doing the math.
 Credentials with no ``expires_at`` (typical for mobile credentials)
-are excluded. Each entry includes ``days_until_expiry`` so the LLM
-can sort and summarise without re-doing the math.
+are left out and only counted in ``no_expiry_count``. Two more lists
+keep nothing hidden: ``already_expired`` holds credentials whose
+``expires_at`` is already in the past (with ``days_since_expiry``),
+and ``unparseable_expiry`` holds credentials whose ``expires_at`` is
+present but is not an epoch-millisecond number (a string, seconds, 0),
+so a bad value is reported rather than skipped.
 
 ## Example
 

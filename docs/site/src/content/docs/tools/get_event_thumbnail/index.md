@@ -12,7 +12,8 @@ Side effects: None (read-only).
 
 Same response shape as ``get_snapshot``, but keyed on the event
 instead of the camera. Useful for previewing a motion or
-smart-detection trigger without pulling the full clip.
+smart-detection trigger without pulling the full clip. A body that
+is not a JPEG, or is over 4 MiB, comes back as an error instead.
 
 ## Example
 

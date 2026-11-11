@@ -55,7 +55,7 @@ The Protect tool surface is intentionally narrow: no live RTSP, no two-way audio
 |---|---|---|---|
 | `provision_camera` | write | yes | Configure a camera end-to-end: recording mode + retention + motion sensitivity + privacy mask. Three-step apply with rollback. The response includes `partial` and `rolled_back` keys when a step fails. |
 
-`provision_camera` captures the camera's `recordingSettings` and `motionSettings` before mutating, then applies in order: recording → sensitivity → privacy. If step 2 or 3 fails, the prior steps are restored to the pre-call snapshot before the error returns.
+`provision_camera` changes only the settings you pass; a setting you leave out keeps the camera's current value, and at least one is required. It captures the camera's `recordingSettings`, `motionSettings` and `privacyMask` before mutating, then applies the steps you asked for in order: recording → sensitivity → privacy. A step fails when it raises an error or when the controller returns no camera record for it. The failing call stops the run, the steps that already applied are restored to the pre-call snapshot, and the error names the `failed_step`. `dry_run=True` reads the camera and shows the before and after value of each setting it would change.
 
 ## Stub mode
 

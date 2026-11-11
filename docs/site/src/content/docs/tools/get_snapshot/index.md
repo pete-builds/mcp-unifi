@@ -13,7 +13,8 @@ Side effects: None (read-only).
 Returns ``{"camera_id": ..., "format": "jpeg", "data": "<base64>",
 "size_bytes": ...}``. The JPEG payload is base64-encoded so it can
 ride inside the JSON envelope all MCP tools return; decode with
-``base64.b64decode`` to get the raw image bytes.
+``base64.b64decode`` to get the raw image bytes. A body that is not
+a JPEG, or is over 4 MiB, comes back as an error instead.
 
 ## Example
 
