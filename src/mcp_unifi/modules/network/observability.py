@@ -77,12 +77,15 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
 
         Side effects: None (read-only).
 
-        Returns the most recent ``limit`` event records, newest first.
+        Does not work on UniFi Network 10.5 or 10.6: those controllers expose
+        no event log on the local API-key surface (``/stat/event`` answers
+        404), so the call returns an unsupported-feature error and never an
+        empty list. Do not read that error as "no events"; the events cannot
+        be read from that controller at all. It works on 10.4 and older. Stub
+        mode returns sample events either way, so a stub result says nothing
+        about a real controller.
 
-        Not available on every firmware: UniFi Network 10.5 and 10.6 expose no
-        event log on the local API-key surface (``/stat/event`` answers 404),
-        so on those controllers this tool returns an error saying the feature
-        is unsupported rather than an empty list. It works on 10.4 and older.
+        Returns the most recent ``limit`` event records, newest first.
 
         Example: list_events(limit=100)
 
@@ -111,12 +114,15 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
 
         Side effects: None (read-only).
 
-        Returns the most recent ``limit`` alarm records.
+        Does not work on UniFi Network 10.5 or 10.6: those controllers answer
+        400 ``api.err.InvalidObject`` on every alarm route, so the call
+        returns an unsupported-feature error and never an empty list. Do not
+        read that error as "no alarms"; the alarms cannot be read from that
+        controller at all. It works on 10.4 and older. Stub mode returns
+        sample alarms either way, so a stub result says nothing about a real
+        controller.
 
-        Not available on every firmware: UniFi Network 10.5 and 10.6 answer
-        400 ``api.err.InvalidObject`` on every alarm route, so on those
-        controllers this tool returns an error saying the feature is
-        unsupported rather than an empty list. It works on 10.4 and older.
+        Returns the most recent ``limit`` alarm records.
 
         Example: list_alarms(limit=20, archived=False)
 

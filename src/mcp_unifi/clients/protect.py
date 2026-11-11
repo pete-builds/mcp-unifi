@@ -23,7 +23,7 @@ from typing import Any, Literal
 
 import httpx
 
-from mcp_unifi.clients.errors import describe_error_body
+from mcp_unifi.clients.errors import describe_error_body, parse_json_body
 from mcp_unifi.clients.ids import path_segment
 from mcp_unifi.clients.retry import request_with_retry
 from mcp_unifi.clients.unifi import UniFiError
@@ -110,7 +110,7 @@ class ProtectClient:
             )
         if not resp.content:
             return None
-        return resp.json()
+        return parse_json_body(resp, f"Protect {method} {path}")
 
     async def _request_bytes(self, method: str, path: str) -> bytes:
         """Issue a binary-returning request (snapshots, thumbnails) with one retry.

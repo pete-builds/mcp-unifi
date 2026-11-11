@@ -623,3 +623,59 @@ async def test_real_get_door_redacts_sensitive_keys(real_access_server: FastMCP)
     result = await _call(real_access_server, "get_door", {"door_id": "d1"})
     assert result["id"] == "d1"
     assert result["admin_password"] == REDACTED_OUTPUT
+
+
+# ---------------------------------------------------------------------------
+# Enveloped bodies
+# ---------------------------------------------------------------------------
+
+
+@respx.mock
+async def test_real_list_doors_unwraps_an_enveloped_body(real_access_server: FastMCP) -> None:
+    """A hub that wraps its answers must not make every list tool report none."""
+    respx.get(f"{ACCESS_BASE}/doors").mock(
+        return_value=httpx.Response(
+            200,
+            json={"code": "SUCCESS", "msg": "success", "data": [{"id": "d1", "name": "Front"}]},
+        )
+    )
+    result = await _call(real_access_server, "list_doors")
+    assert [d["id"] for d in result] == ["d1"]
+
+
+@respx.mock
+async def test_real_get_door_unwraps_an_enveloped_record(real_access_server: FastMCP) -> None:
+    respx.get(f"{ACCESS_BASE}/doors/d1").mock(
+        return_value=httpx.Response(
+            200, json={"code": "SUCCESS", "msg": "success", "data": {"id": "d1", "name": "Front"}}
+        )
+    )
+    result = await _call(real_access_server, "get_door", {"door_id": "d1"})
+    assert result["id"] == "d1"
+    assert "code" not in result
+
+
+@respx.mock
+async def test_real_get_door_keeps_a_record_that_has_its_own_data_field() -> None:
+    """Only a body made of envelope keys is unwrapped; a real record is not."""
+    client = AccessClient(host="access.test", api_key="k" * 20)
+    record = {"id": "d1", "name": "Front", "data": {"lock": "open"}}
+    respx.get(f"{ACCESS_BASE}/doors/d1").mock(return_value=httpx.Response(200, json=record))
+    try:
+        assert await client.get_door("d1") == record
+    finally:
+        await client.aclose()
+
+
+@respx.mock
+async def test_bare_list_and_empty_envelope_still_read_correctly() -> None:
+    client = AccessClient(host="access.test", api_key="k" * 20)
+    respx.get(f"{ACCESS_BASE}/doors").mock(return_value=httpx.Response(200, json=[{"id": "d1"}]))
+    respx.get(f"{ACCESS_BASE}/visitors").mock(
+        return_value=httpx.Response(200, json={"code": "SUCCESS", "data": []})
+    )
+    try:
+        assert await client.list_doors() == [{"id": "d1"}]
+        assert await client.list_visitors() == []
+    finally:
+        await client.aclose()

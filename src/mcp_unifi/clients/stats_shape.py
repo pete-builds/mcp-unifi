@@ -13,6 +13,7 @@ UniFi Network 10.4.57 (2026-06-12); see the per-function docstrings in
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from mcp_unifi.models import UniFiRecord
@@ -177,3 +178,67 @@ def shape_session(raw: Any) -> UniFiRecord:
         "roaming_sessions",
     )
     return {k: raw[k] for k in keys if k in raw}
+
+
+def _byte_count(value: Any) -> int:
+    """Coerce a controller byte counter (int, float, or numeric string) to int, or 0."""
+    number = _to_float(value)
+    return int(number) if number is not None and math.isfinite(number) else 0
+
+
+def shape_top_talkers(rows: Any, limit: int) -> list[UniFiRecord]:
+    """Rank client traffic rows and project them to one documented shape.
+
+    The controller's report comes back unsorted, so ranking and ``limit`` are
+    applied here, in our code, for the real client and the stub alike. Every
+    row becomes ``mac``, ``hostname``, ``ip``, ``tx_bytes``, ``rx_bytes`` and
+    ``total_bytes`` (their sum), highest ``total_bytes`` first. A field the row
+    does not carry is ``None`` for the identity keys and ``0`` for the counters.
+    """
+    if not isinstance(rows, list):
+        return []
+    shaped: list[UniFiRecord] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        tx = _byte_count(row.get("tx_bytes"))
+        rx = _byte_count(row.get("rx_bytes"))
+        shaped.append(
+            {
+                "mac": row.get("mac"),
+                "hostname": row.get("hostname"),
+                "ip": row.get("ip"),
+                "tx_bytes": tx,
+                "rx_bytes": rx,
+                "total_bytes": tx + rx,
+            }
+        )
+    shaped.sort(key=lambda r: r["total_bytes"], reverse=True)
+    return shaped[:limit]
+
+
+def shape_speedtest_results(rows: Any, limit: int) -> list[UniFiRecord]:
+    """Order speed-test runs newest first, cap them at ``limit``, add ``xput_up``.
+
+    The controller returns ``xput_upload``; the documented field is
+    ``xput_up``, so it is added when absent and the original key is kept. A row
+    with no usable ``time`` sorts last. Used by the real client and the stub so
+    both return the same keys in the same order.
+    """
+    if not isinstance(rows, list):
+        return []
+    normalised: list[UniFiRecord] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        entry = dict(row)
+        if "xput_upload" in entry and "xput_up" not in entry:
+            entry["xput_up"] = entry["xput_upload"]
+        normalised.append(entry)
+
+    def newest_first(entry: UniFiRecord) -> float:
+        when = _to_float(entry.get("time"))
+        return when if when is not None and math.isfinite(when) else -math.inf
+
+    normalised.sort(key=newest_first, reverse=True)
+    return normalised[:limit]

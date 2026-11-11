@@ -11,7 +11,7 @@ and v2, Integration, Protect, Access) describes a failed response the same way.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from mcp_unifi.redaction import REDACTED_OUTPUT, is_sensitive, redact
 
@@ -161,6 +161,28 @@ def describe_error_body(resp: httpx.Response, sent: object = None) -> str:
     return f" (unrecognised body: {content_type}, {len(resp.content)} bytes)"
 
 
+def parse_json_body(resp: httpx.Response, label: str) -> Any:
+    """Parse a successful response body as JSON, or raise :class:`UniFiError`.
+
+    A 2xx whose body is not JSON (a login page served with a 200, a reverse
+    proxy's own page, a truncated reply) used to escape every client as a raw
+    ``JSONDecodeError``, which no tool handler catches. ``label`` names the
+    call, for example ``"UniFi GET /api/s/default/stat/sta"``.
+
+    Like :func:`describe_error_body`, this reports the content type and size
+    and never copies any of the body: an HTML page cannot be key-redacted, and
+    a login page or proxy error can echo request headers.
+    """
+    try:
+        return resp.json()
+    except ValueError as exc:
+        content_type = resp.headers.get("content-type", "unknown")
+        raise UniFiError(
+            f"{label} returned {resp.status_code} with a body that is not JSON "
+            f"({content_type}, {len(resp.content)} bytes)"
+        ) from exc
+
+
 __all__ = [
     "MAX_ERROR_DETAIL_CHARS",
     "MIN_MASKED_SECRET_CHARS",
@@ -168,5 +190,6 @@ __all__ = [
     "UniFiUnsupportedError",
     "describe_error_body",
     "error_fields",
+    "parse_json_body",
     "sent_secrets",
 ]

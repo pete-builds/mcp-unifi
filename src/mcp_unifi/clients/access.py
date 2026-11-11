@@ -11,8 +11,9 @@ separate session-token flow that v0.10 does not implement (see the spec doc
 ``docs/v0.10-access-module.md``, Option B is the deferred write path).
 
 Like :class:`ProtectClient`, responses are NOT wrapped in a ``{"meta":...,
-"data":...}`` envelope. Each method returns either a list of records or a
-single record. Retries one ``ConnectError`` and surfaces transport faults as
+"data":...}`` envelope, though an enveloped body is unwrapped if a hub sends
+one. Each method returns either a list of records or a single record.
+Retries one ``ConnectError`` and surfaces transport faults as
 :class:`UniFiError` so all three module clients share one exception class.
 """
 
@@ -24,13 +25,35 @@ from typing import Any
 
 import httpx
 
-from mcp_unifi.clients.errors import describe_error_body
+from mcp_unifi.clients.errors import describe_error_body, parse_json_body
 from mcp_unifi.clients.ids import path_segment
 from mcp_unifi.clients.retry import request_with_retry
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.models import UniFiRecord
 
 logger = logging.getLogger("mcp_unifi.access_client")
+
+
+#: Keys a ``{"code", "msg", "data"}`` style envelope can carry beside ``data``.
+_ENVELOPE_KEYS = frozenset({"code", "msg", "message", "data", "pagination"})
+
+
+def _unwrap_envelope(result: Any) -> Any:
+    """Return the payload of an enveloped Access body, or ``result`` unchanged.
+
+    Access is documented as returning bare records, but a hub that wraps its
+    answers as ``{"code": "SUCCESS", "data": [...]}`` would otherwise read as
+    "no records": a dict is not a list, and the envelope is not the record. A
+    body with a list under ``data`` is always unwrapped. A body with a record
+    under ``data`` is unwrapped only when every other key is an envelope key,
+    so a real record that happens to have a ``data`` field is left alone.
+    """
+    if not isinstance(result, dict) or "data" not in result:
+        return result
+    data = result["data"]
+    if isinstance(data, list) or (isinstance(data, dict) and set(result) <= _ENVELOPE_KEYS):
+        return data
+    return result
 
 
 class AccessClient:
@@ -104,10 +127,11 @@ class AccessClient:
             )
         if not resp.content:
             return None
-        return resp.json()
+        return parse_json_body(resp, f"Access {method} {path}")
 
     @staticmethod
     def _ensure_record(result: Any) -> UniFiRecord:
+        result = _unwrap_envelope(result)
         if isinstance(result, list) and result:
             first = result[0]
             return first if isinstance(first, dict) else {}
@@ -117,6 +141,7 @@ class AccessClient:
 
     @staticmethod
     def _ensure_list(result: Any) -> list[UniFiRecord]:
+        result = _unwrap_envelope(result)
         if isinstance(result, list):
             return [item for item in result if isinstance(item, dict)]
         return []

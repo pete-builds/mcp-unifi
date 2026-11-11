@@ -21,6 +21,7 @@ from collections import defaultdict, deque
 from typing import Any
 
 from mcp_unifi.clients.errors import UniFiError
+from mcp_unifi.clients.stats_shape import shape_speedtest_results, shape_top_talkers
 from mcp_unifi.clients.zone_firewall_stubs import ZoneFirewallStubState
 from mcp_unifi.models import UniFiRecord
 
@@ -1191,22 +1192,9 @@ class StubState:
         return False
 
     def top_talkers(self, limit: int) -> list[UniFiRecord]:
-        ranked = sorted(
-            self.clients,
-            key=lambda c: c.get("tx_bytes", 0) + c.get("rx_bytes", 0),
-            reverse=True,
-        )
-        return [
-            {
-                "mac": c.get("mac"),
-                "hostname": c.get("hostname"),
-                "ip": c.get("ip"),
-                "tx_bytes": c.get("tx_bytes", 0),
-                "rx_bytes": c.get("rx_bytes", 0),
-                "total_bytes": c.get("tx_bytes", 0) + c.get("rx_bytes", 0),
-            }
-            for c in ranked[:limit]
-        ]
+        # Same ranking and projection the real client applies to the
+        # controller's rows, so the stub cannot drift from the real shape.
+        return shape_top_talkers(self.clients, limit)
 
     # ----- DHCP leases (static) -------------------------------------------
     def list_dhcp_leases(self) -> list[UniFiRecord]:
@@ -1335,10 +1323,13 @@ class StubState:
                 h["xput_down"] = result["xput_download"]
                 h["latency"] = result["latency"]
                 break
-        return {"started": True, "result": result}
+        # The real controller answers the trigger with an acknowledgement, not
+        # the measurement (it is not finished yet); read it back with
+        # get_speedtest_results.
+        return {"started": True}
 
     def get_speedtest_results(self, limit: int) -> list[UniFiRecord]:
-        return self.speedtest_results[:limit]
+        return shape_speedtest_results(self.speedtest_results, limit)
 
     # ----- Stats & insights (read-only — Wave C) --------------------------
     def get_system_info(self) -> UniFiRecord:

@@ -50,10 +50,16 @@ async def test_list_alarms_invalid_limit(stub_server: FastMCP) -> None:
 
 
 async def test_speedtest_round_trip_stub(stub_server: FastMCP) -> None:
+    before = await _call(stub_server, "get_speedtest_results", {"limit": 100})
     triggered = await _call(stub_server, "trigger_speedtest")
-    assert triggered["started"] is True
-    results = await _call(stub_server, "get_speedtest_results", {"limit": 5})
-    assert len(results) >= 1
+    # An acknowledgement only: the real controller has not finished measuring
+    # yet, so the result is read back, never returned by the trigger.
+    assert triggered == {"started": True}
+    results = await _call(stub_server, "get_speedtest_results", {"limit": 100})
+    assert len(results) == len(before) + 1
+    # The new run is the newest row, and rows carry the documented keys.
+    assert results[0]["time"] >= before[0]["time"]
+    assert {"time", "xput_up", "xput_download", "latency", "server"} <= set(results[0])
 
 
 async def test_get_speedtest_results_invalid_limit(stub_server: FastMCP) -> None:
@@ -61,11 +67,18 @@ async def test_get_speedtest_results_invalid_limit(stub_server: FastMCP) -> None
     assert "limit" in result["error"]
 
 
-async def test_list_top_talkers_stub(stub_server: FastMCP) -> None:
+async def test_list_top_talkers_stub(stub_server: FastMCP, stub_state: StubState) -> None:
     result = await _call(stub_server, "list_top_talkers", {"limit": 3})
-    assert len(result) <= 3
-    if result:
-        assert result[0]["total_bytes"] >= result[-1]["total_bytes"]
+    # The seed has more than three clients, so the limit is what trims this.
+    assert len(stub_state.clients) > 3
+    assert len(result) == 3
+    totals = [r["total_bytes"] for r in result]
+    assert totals == sorted(totals, reverse=True)
+    assert all(r["total_bytes"] == r["tx_bytes"] + r["rx_bytes"] for r in result)
+    assert set(result[0]) == {"mac", "hostname", "ip", "tx_bytes", "rx_bytes", "total_bytes"}
+    # The first row is the busiest client in the seed, not merely the first one.
+    busiest = max(stub_state.clients, key=lambda c: c["tx_bytes"] + c["rx_bytes"])
+    assert result[0]["mac"] == busiest["mac"]
 
 
 async def test_list_top_talkers_invalid_limit(stub_server: FastMCP) -> None:
@@ -275,6 +288,10 @@ async def test_real_list_events_404_is_an_error_not_an_empty_list(
     assert isinstance(result, dict), f"expected an error envelope, got {type(result)}"
     assert "error" in result
     assert "not available on this UniFi Network version" in result["error"]
+    # One plain sentence: what is unavailable, what the controller said, and
+    # that it is a firmware limitation. No second sentence to skim past.
+    assert result["error"].endswith("not an empty result.")
+    assert result["error"].count(". ") == 0
 
 
 @respx.mock
@@ -413,9 +430,68 @@ async def test_real_get_speedtest_results(real_server: FastMCP) -> None:
     assert captured["body"]["limit"] == 3
     # And it must surface both the canonical and back-compat field names so
     # existing callers (and the documented contract) keep working.
-    assert result[0]["xput_upload"] == 950.0
-    assert result[0]["xput_up"] == 950.0
-    assert result[0]["xput_download"] == 2100.0
+    # Newest first: s2 (later ``time``) leads even though the controller listed
+    # s1 first.
+    assert [r["_id"] for r in result] == ["s2", "s1"]
+    assert result[1]["xput_upload"] == 950.0
+    assert result[1]["xput_up"] == 950.0
+    assert result[1]["xput_download"] == 2100.0
+
+
+@respx.mock
+async def test_real_get_speedtest_results_sorts_newest_first_and_applies_limit(
+    real_server: FastMCP,
+) -> None:
+    """The controller's order and ``limit`` are not trusted.
+
+    The request body still carries ``limit`` (unchanged), but a controller that
+    ignores it, or returns the rows oldest first, must not change what the tool
+    reports: newest first, and no more than ``limit`` rows.
+    """
+    import json as _json
+
+    captured: dict = {}
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = _json.loads(request.content)
+        rows = [
+            {"_id": f"s{t}", "time": t * 1000, "xput_upload": float(t)} for t in (3, 1, 5, 2, 4)
+        ]
+        return httpx.Response(200, json={"data": rows})
+
+    respx.post(f"{BASE}/stat/report/archive.speedtest").mock(side_effect=capture)
+    result = await _call(real_server, "get_speedtest_results", {"limit": 3})
+
+    assert captured["body"]["limit"] == 3
+    assert [r["_id"] for r in result] == ["s5", "s4", "s3"]
+    assert all(r["xput_up"] == r["xput_upload"] for r in result)
+
+
+@respx.mock
+async def test_real_and_stub_speedtest_rows_share_the_documented_keys(
+    real_server: FastMCP, stub_server: FastMCP
+) -> None:
+    """A stub row carries every key a real row does, so tests see the real shape."""
+    respx.post(f"{BASE}/stat/report/archive.speedtest").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "_id": "s1",
+                        "time": 1779800888000,
+                        "xput_upload": 950.0,
+                        "xput_download": 2100.0,
+                        "latency": 12,
+                        "server": {"city": "New York"},
+                    }
+                ]
+            },
+        )
+    )
+    real = (await _call(real_server, "get_speedtest_results", {"limit": 1}))[0]
+    stub = (await _call(stub_server, "get_speedtest_results", {"limit": 1}))[0]
+    assert set(real) == set(stub)
 
 
 @respx.mock
@@ -427,6 +503,70 @@ async def test_real_list_top_talkers(real_server: FastMCP) -> None:
     )
     result = await _call(real_server, "list_top_talkers", {"limit": 1})
     assert len(result) == 1
+
+
+@respx.mock
+async def test_real_list_top_talkers_ranks_and_projects_the_controllers_rows(
+    real_server: FastMCP,
+) -> None:
+    """The controller returns rows unranked; ranking, limit and shape are ours.
+
+    The stub used to return a tidy ranked shape while the real client sliced
+    the first ``limit`` rows as they came, so a quiet client listed first beat
+    the real top talker and the stub never showed it. The rows below are
+    unsorted, carry a numeric-string counter, a missing counter and an extra
+    field the documented shape does not include.
+    """
+    respx.get(f"{BASE}/stat/sitedpi").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"mac": "small", "tx_bytes": 1, "rx_bytes": 1, "by_app": [{"app": 1}]},
+                    {"mac": "big", "hostname": "nas", "ip": "10.0.0.9", "tx_bytes": "900"},
+                    {"mac": "mid", "tx_bytes": 50, "rx_bytes": 60},
+                    "not a record",
+                ]
+            },
+        )
+    )
+    result = await _call(real_server, "list_top_talkers", {"limit": 2})
+
+    assert [r["mac"] for r in result] == ["big", "mid"]
+    assert result[0] == {
+        "mac": "big",
+        "hostname": "nas",
+        "ip": "10.0.0.9",
+        "tx_bytes": 900,
+        "rx_bytes": 0,
+        "total_bytes": 900,
+    }
+    assert set(result[1]) == {"mac", "hostname", "ip", "tx_bytes", "rx_bytes", "total_bytes"}
+    assert result[1]["hostname"] is None
+
+
+@respx.mock
+async def test_real_and_stub_top_talkers_share_one_shape(
+    real_server: FastMCP, stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """Fed the same client rows, the real path and the stub answer identically."""
+    rows = [dict(c) for c in stub_state.clients]
+    respx.get(f"{BASE}/stat/sitedpi").mock(return_value=httpx.Response(200, json={"data": rows}))
+    real = await _call(real_server, "list_top_talkers", {"limit": 4})
+    stub = await _call(stub_server, "list_top_talkers", {"limit": 4})
+    assert real == stub
+
+
+@respx.mock
+async def test_real_list_top_talkers_reports_a_non_json_body_as_an_error(
+    real_server: FastMCP,
+) -> None:
+    respx.get(f"{BASE}/stat/sitedpi").mock(
+        return_value=httpx.Response(200, text="<html>login</html>")
+    )
+    result = await _call(real_server, "list_top_talkers", {"limit": 3})
+    assert "not JSON" in result["error"]
+    assert "login" not in result["error"]
 
 
 @respx.mock
@@ -675,3 +815,10 @@ async def test_event_and_alarm_descriptions_name_the_firmware_gap(stub_server: F
         description = tools[name].description or ""
         assert "10.6" in description, name
         assert "unsupported" in description, name
+        # Said plainly and first, before the tool's happy-path description, and
+        # the stub's sample data is not mistaken for evidence about a console.
+        flat = " ".join(description.split())
+        assert flat.index("Does not work on UniFi Network 10.5") < flat.index(
+            "Returns the most recent"
+        ), name
+        assert "Stub mode returns" in flat, name
