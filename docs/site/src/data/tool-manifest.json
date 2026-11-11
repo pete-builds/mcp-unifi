@@ -91,7 +91,7 @@
           },
           "dry_run": {
             "default": false,
-            "description": "Preview the change without applying it. Returns the\npredicted change set.",
+            "description": "Preview the change without applying it. Returns the\npredicted change set plus ``client_known``, and a ``note``\nwhen the controller does not know the MAC.",
             "type": "boolean"
           },
           "mac": {
@@ -574,7 +574,7 @@
       "name": "create_guest_network"
     },
     {
-      "description": "Add a honeypot trap to a network.\n\nSide effects:\n- Reads the current ``ips`` setting, appends a new entry\n  ``{\"network_id\": ..., \"ip_address\": ..., \"version\": \"v4\"}``,\n  and writes the updated list back via ``POST /set/setting/ips``.\n- Sets ``honeypot_enabled=true`` on the controller (the toggle\n  tracks list non-emptiness).\n- Mutates controller state. Use dry_run=True to preview.\n\nRefuses to write if the (network_id, ip) pair is already a\nhoneypot or if ``ip`` is not a valid LAN IPv4 address.\n\nExample: create_honeypot(network_id=\"65f...\", ip=\"10.0.50.2\")",
+      "description": "Add a honeypot trap to a network.\n\nSide effects:\n- Reads the current ``ips`` setting, appends a new entry\n  ``{\"network_id\": ..., \"ip_address\": ..., \"version\": \"v4\"}``,\n  and writes the updated list back via ``POST /set/setting/ips``.\n- Sets ``honeypot_enabled=true`` on the controller (the toggle\n  tracks list non-emptiness).\n- Mutates controller state. Use dry_run=True to preview.\n\nRefuses to write if the (network_id, ip) pair is already a\nhoneypot, if ``ip`` is not a valid LAN IPv4 address, or if ``ip`` is\noutside the network's subnet or is its gateway, network or\nbroadcast address.\n\nExample: create_honeypot(network_id=\"65f...\", ip=\"10.0.50.2\")",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -680,7 +680,7 @@
             "type": "boolean"
           },
           "dst_port": {
-            "description": "External / WAN port to listen on.",
+            "description": "External / WAN port to listen on, same format.",
             "type": "string"
           },
           "enabled": {
@@ -693,7 +693,7 @@
             "type": "string"
           },
           "fwd_port": {
-            "description": "Internal port (string; UniFi accepts ranges like\n``\"8000-8010\"``).",
+            "description": "Internal port (string; UniFi accepts ranges like\n``\"8000-8010\"``). Each port must be 1-65535.",
             "type": "string"
           },
           "log": {
@@ -1184,7 +1184,7 @@
       "name": "delete_firewall_rule"
     },
     {
-      "description": "Preview deletion of a honeypot entry.\n\nv0.7.0 destructive pattern: this tool does not delete on its own.\nIt returns a preview envelope with a ``token``; call\n``confirm_destructive_action(token)`` to commit. Tokens expire\nafter 5 minutes.\n\nSide effects:\n- None until ``confirm_destructive_action`` runs against the token.\n- On confirm: rewrites the ``ips`` setting's ``honeypot`` list with\n  the entry removed and sets ``honeypot_enabled`` based on whether\n  the resulting list is empty.\n- ``dry_run=True`` returns the legacy ``would_delete`` envelope\n  with no token (informational only).\n\nExample: delete_honeypot(id=\"65f...:10.0.50.2\")",
+      "description": "Preview deletion of a honeypot entry.\n\nv0.7.0 destructive pattern: this tool does not delete on its own.\nIt returns a preview envelope with a ``token``; call\n``confirm_destructive_action(token)`` to commit. Tokens expire\nafter 5 minutes.\n\nSide effects:\n- None until ``confirm_destructive_action`` runs against the token.\n- On confirm: re-reads the ``ips`` setting, rewrites its\n  ``honeypot`` list with only this entry removed (honeypots added\n  since the preview are kept), and sets ``honeypot_enabled`` based\n  on whether the resulting list is empty.\n- ``dry_run=True`` returns the legacy ``would_delete`` envelope\n  with no token (informational only).\n\nExample: delete_honeypot(id=\"65f...:10.0.50.2\")",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -2889,7 +2889,7 @@
           },
           "dry_run": {
             "default": false,
-            "description": "Preview the change without applying it. Returns the\npredicted change set.",
+            "description": "Preview the change without applying it. Returns the\npredicted change set plus ``client_known``, and a ``note``\nwhen the controller does not know the MAC.",
             "type": "boolean"
           },
           "mac": {
@@ -3206,7 +3206,7 @@
           },
           "prefix_id": {
             "default": -1,
-            "description": "Sub-prefix id (e.g. ``0``, ``1``) selecting which /64 to\ncarve from the delegated /56, so multiple PD LANs don't collide.\nOnly valid with ``interface_type=\"pd\"``. Default ``-1`` means\n\"not supplied\" \u2014 the LAN keeps the controller-managed ``auto``\ncarve (only the primary LAN gets a /64). Supplying a value (``0``\nand up) writes ``ipv6_pd_prefixid`` AND pins\n``ipv6_setting_preference=\"manual\"`` so the controller honours the\npinned sub-prefix and the LAN carves its OWN /64. The\nDefault/MGMT LAN already holds id ``0``, so a second LAN needs a\ndistinct id (``1``, ``2``, ...).",
+            "description": "Sub-prefix id (e.g. ``0``, ``1``) selecting which /64 to\ncarve from the delegated /56, so multiple PD LANs don't collide.\nOnly valid with ``interface_type=\"pd\"``. Default ``-1`` means\n\"not supplied\" \u2014 the LAN keeps the controller-managed ``auto``\ncarve (only the primary LAN gets a /64). Supplying a value (``0``\nand up) writes ``ipv6_pd_prefixid`` AND pins\n``ipv6_setting_preference=\"manual\"`` so the controller honours the\npinned sub-prefix and the LAN carves its OWN /64. The\nDefault/MGMT LAN already holds id ``0``, so a second LAN needs a\ndistinct id (``1``, ``2``, ...). At most ``65535`` (a /48).",
             "type": "integer"
           },
           "ra_enabled": {
@@ -3262,7 +3262,7 @@
       "name": "set_motion_sensitivity"
     },
     {
-      "description": "Override settings on a single switch port.\n\nSide effects:\n- Modifies one port's ``enable``, ``poe_mode``, and/or\n  ``portconf_id`` on the named switch without touching the others.\n- Disabling a port immediately drops the link; powered devices on\n  that port (PoE cameras, APs) will go offline.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: set_port_state(device_mac=\"aa:bb:cc:00:00:01\", port_idx=5, enable=True, poe_mode=\"auto\")",
+      "description": "Override settings on a single switch port.\n\nSide effects:\n- Modifies one port's ``enable``, ``poe_mode``, and/or\n  ``portconf_id`` on the named switch without touching the others.\n- Disabling a port immediately drops the link; powered devices on\n  that port (PoE cameras, APs) will go offline.\n- Refused when ``port_idx`` is not in the device's own port table\n  (``port_table`` from ``list_devices``), dry run included.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: set_port_state(device_mac=\"aa:bb:cc:00:00:01\", port_idx=5, enable=True, poe_mode=\"auto\")",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -3316,7 +3316,7 @@
       "name": "set_port_state"
     },
     {
-      "description": "Set the channel and/or channel width of one radio on an AP.\n\nSide effects:\n- The radio retunes immediately; wireless clients on that band\n  briefly disconnect and re-associate.\n- On 5GHz, DFS channels (52-144) may add a radar-scan delay before\n  the radio starts serving clients.\n- Only the targeted radio changes; everything else on the device is\n  read first and written back unchanged.\n- Mutates controller state. Use dry_run=True to preview the change\n  (including the current value) without applying.\n\nRead first: call ``get_device_radios`` to see the current channel\nand width.\n\nExample: set_radio_channel(device_mac=\"aa:bb:cc:00:00:02\", band=\"5g\", channel=\"36\", width_mhz=80)",
+      "description": "Set the channel and/or channel width of one radio on an AP.\n\nSide effects:\n- The radio retunes immediately; wireless clients on that band\n  briefly disconnect and re-associate.\n- On 5GHz, DFS channels (52-144) may add a radar-scan delay before\n  the radio starts serving clients.\n- Only the targeted radio changes; everything else on the device is\n  read first and written back unchanged.\n- Mutates controller state. Use dry_run=True to preview the change\n  (including the current value) without applying.\n\nRead first: call ``get_device_radios`` to see the current channel\nand width.\n\nChannel numbers are checked against the band's standard 20 MHz\nchannels (2g: 1-14; 5g: 36-64, 100-144, 149-165; 6g: 1-233 in steps\nof 4) and widths against the band (2g: 20 or 40; 320 is 6g only).\nWhich of those the site's country allows is left to the controller.\n\nExample: set_radio_channel(device_mac=\"aa:bb:cc:00:00:02\", band=\"5g\", channel=\"36\", width_mhz=80)",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -3469,7 +3469,7 @@
       "name": "set_teleport_enabled"
     },
     {
-      "description": "Update Threat Management (IDS/IPS) configuration.\n\nSide effects:\n- Patches the controller's ``ips`` setting record. When\n  ``enabled=False`` the mode is forced to ``off``; the controller\n  then disables packet inspection on every network. When\n  ``enabled=True``, ``mode`` selects detection-only (``ids``) or\n  inline blocking (``ips``).\n- Untouched fields (signature categories, network bindings, ad\n  blocking, DNS filtering) are preserved by the controller's merge\n  semantics. Supplying ``signature_categories`` replaces the active\n  list wholesale; ``None`` leaves it unchanged.\n- Mutates controller state. Use dry_run=True to preview the change.\n\nExample: set_threat_management(enabled=True, mode=\"ips\")",
+      "description": "Update Threat Management (IDS/IPS) configuration.\n\nSide effects:\n- Patches the controller's ``ips`` setting record. When\n  ``enabled=False`` the mode is forced to ``off``; the controller\n  then disables packet inspection on every network. When\n  ``enabled=True``, ``mode`` selects detection-only (``ids``) or\n  inline blocking (``ips``). With no ``mode``, a site already on\n  ``ids`` or ``ips`` keeps its mode, so changing only the categories\n  never downgrades IPS to IDS; a site that was off comes on as\n  ``ids``.\n- Untouched fields (signature categories, network bindings, ad\n  blocking, DNS filtering) are preserved by the controller's merge\n  semantics. Supplying ``signature_categories`` replaces the active\n  list wholesale; ``None`` leaves it unchanged.\n- Mutates controller state. Use dry_run=True to preview the change;\n  the preview shows the current and resulting mode and categories.\n\nExample: set_threat_management(enabled=True, mode=\"ips\")",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -3480,7 +3480,7 @@
           },
           "dry_run": {
             "default": false,
-            "description": "Preview the change without applying it. Returns the\npredicted patch envelope.",
+            "description": "Preview the change without applying it. Returns the\npredicted patch plus the current (``before``) and resulting\n(``after``) mode and categories.",
             "type": "boolean"
           },
           "enabled": {
@@ -3488,8 +3488,8 @@
             "type": "boolean"
           },
           "mode": {
-            "default": "ids",
-            "description": "When ``enabled=True``, one of ``\"ids\"`` (detection-only,\ndefault) or ``\"ips\"`` (inline blocking). Ignored when\n``enabled=False``.",
+            "default": "",
+            "description": "When ``enabled=True``, one of ``\"ids\"`` (detection-only)\nor ``\"ips\"`` (inline blocking). Empty (default) keeps the\ncurrent mode, or ``\"ids\"`` if inspection is off. Ignored\nwhen ``enabled=False``.",
             "type": "string"
           },
           "signature_categories": {
@@ -3671,7 +3671,7 @@
           },
           "dry_run": {
             "default": false,
-            "description": "Preview the change without applying it. Returns the\npredicted change set.",
+            "description": "Preview the change without applying it. Returns the\npredicted change set plus ``client_known``, and a ``note``\nwhen the controller does not know the MAC.",
             "type": "boolean"
           },
           "mac": {
@@ -4175,7 +4175,7 @@
           },
           "updates": {
             "additionalProperties": true,
-            "description": "Partial network record. Common keys: ``name``, ``vlan``,\n``ip_subnet``, ``dhcpd_start``, ``dhcpd_stop``, ``enabled``,\n``mdns_enabled`` (toggle the per-VLAN mDNS reflector\nindependently of network creation), ``purpose``.",
+            "description": "Partial network record. Common keys: ``name``, ``vlan``\n(1-4094), ``ip_subnet`` (network form ``10.50.0.0/24`` is\npromoted to gateway form, as in ``create_vlan``),\n``dhcpd_start``, ``dhcpd_stop``, ``enabled``,\n``mdns_enabled`` (toggle the per-VLAN mDNS reflector\nindependently of network creation), ``purpose``.",
             "type": "object"
           }
         },

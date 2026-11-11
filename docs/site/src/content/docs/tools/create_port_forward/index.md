@@ -28,8 +28,8 @@ create_port_forward(name="plex", fwd="10.50.0.10", fwd_port="32400", dst_port="3
 |---|---|---|---|---|
 | `name` | `string` | yes | — | Display name for the rule. |
 | `fwd` | `string` | yes | — | Internal IP to forward to (e.g. ``"10.50.0.10"``). |
-| `fwd_port` | `string` | yes | — | Internal port (string; UniFi accepts ranges like ``"8000-8010"``). |
-| `dst_port` | `string` | yes | — | External / WAN port to listen on. |
+| `fwd_port` | `string` | yes | — | Internal port (string; UniFi accepts ranges like ``"8000-8010"``). Each port must be 1-65535. |
+| `dst_port` | `string` | yes | — | External / WAN port to listen on, same format. |
 | `proto` | `string` | no | "tcp" | ``"tcp"``, ``"udp"``, or ``"tcp_udp"``. |
 | `src` | `string` | no | "any" | Source restriction. ``"any"`` (default) or a CIDR. |
 | `enabled` | `boolean` | no | true | ``True`` enables the rule immediately. |

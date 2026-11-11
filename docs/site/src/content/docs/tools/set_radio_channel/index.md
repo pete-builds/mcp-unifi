@@ -21,6 +21,11 @@ Side effects:
 Read first: call ``get_device_radios`` to see the current channel
 and width.
 
+Channel numbers are checked against the band's standard 20 MHz
+channels (2g: 1-14; 5g: 36-64, 100-144, 149-165; 6g: 1-233 in steps
+of 4) and widths against the band (2g: 20 or 40; 320 is 6g only).
+Which of those the site's country allows is left to the controller.
+
 ## Example
 
 ```python

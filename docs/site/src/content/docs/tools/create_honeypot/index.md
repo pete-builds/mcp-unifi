@@ -17,7 +17,9 @@ Side effects:
 - Mutates controller state. Use dry_run=True to preview.
 
 Refuses to write if the (network_id, ip) pair is already a
-honeypot or if ``ip`` is not a valid LAN IPv4 address.
+honeypot, if ``ip`` is not a valid LAN IPv4 address, or if ``ip`` is
+outside the network's subnet or is its gateway, network or
+broadcast address.
 
 ## Example
 

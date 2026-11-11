@@ -13,6 +13,8 @@ Side effects:
   ``portconf_id`` on the named switch without touching the others.
 - Disabling a port immediately drops the link; powered devices on
   that port (PoE cameras, APs) will go offline.
+- Refused when ``port_idx`` is not in the device's own port table
+  (``port_table`` from ``list_devices``), dry run included.
 - Mutates controller state. Use dry_run=True to preview the change
   without applying.
 

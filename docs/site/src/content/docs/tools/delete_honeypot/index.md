@@ -15,9 +15,10 @@ after 5 minutes.
 
 Side effects:
 - None until ``confirm_destructive_action`` runs against the token.
-- On confirm: rewrites the ``ips`` setting's ``honeypot`` list with
-  the entry removed and sets ``honeypot_enabled`` based on whether
-  the resulting list is empty.
+- On confirm: re-reads the ``ips`` setting, rewrites its
+  ``honeypot`` list with only this entry removed (honeypots added
+  since the preview are kept), and sets ``honeypot_enabled`` based
+  on whether the resulting list is empty.
 - ``dry_run=True`` returns the legacy ``would_delete`` envelope
   with no token (informational only).
 
