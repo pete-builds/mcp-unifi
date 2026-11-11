@@ -91,6 +91,10 @@ the box is down, the application is down, or your credentials are wrong
 verdict, so the reasoning is auditable.</li>
 <li><code dir="auto">network_app_version</code>: the Network app version, when it reported one.</li>
 </ul>
+<p><code dir="auto">unknown</code> also covers a status endpoint that looked fine while the
+live Network API call meant to confirm it timed out or returned a 4xx.
+That is reported as inconclusive, with the probe’s error in
+<code dir="auto">summary</code>, never as an outage.</p>
 <p>Note on the <code dir="auto">network_app_down</code> verdict: UniFi OS handles routing, so
 the Network application being down does <strong>not</strong> mean the internet is
 down. It means configuration and monitoring are unavailable.</p>
