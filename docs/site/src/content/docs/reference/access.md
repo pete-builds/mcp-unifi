@@ -51,7 +51,7 @@ The Access tool surface is intentionally narrow: no door unlocks, no credential 
 |---|---|---|---|
 | `list_credentials` | read | — | List every credential enrolled in the controller. Includes `type` (`nfc`, `pin`, `mobile`), `label`, `user_id`, `status`, `issued_at`, `expires_at`. |
 | `get_credential` | read | — | Fetch one credential's full record. Type-specific fields (`card_id`, `pin_length`, `device_label`) come back as well. |
-| `audit_expiring_credentials` | read | — | Return credentials expiring inside the next `days_ahead` days (default 30). Optional `credential_type` narrows to one of `nfc`, `pin`, `mobile`. Each entry includes a computed `days_until_expiry`. |
+| `audit_expiring_credentials` | read | — | Return credentials expiring inside the next `days_ahead` days (default 30). Optional `credential_type` narrows to one of `nfc`, `pin`, `mobile`. Each entry includes a computed `days_until_expiry`. Credentials already past `expires_at` are listed in `already_expired`, and ones whose `expires_at` is not an epoch-millisecond number are listed in `unparseable_expiry`, so neither is skipped silently. |
 
 ### Visitors
 
@@ -66,7 +66,7 @@ The Access tool surface is intentionally narrow: no door unlocks, no credential 
 |---|---|---|---|
 | `list_access_events` | read | — | List badge-scan / door events with filters. `result` filters to `granted` or `denied`; empty returns both. `door_id` narrows to one door. |
 | `get_recent_access_events` | read | — | Last `limit` events across every door over the last 24h. Convenience wrapper for triage. |
-| `summarize_access_activity` | read | — | Aggregate badge events by door, user, and outcome over the last `hours_back` hours. Returns `total`, `granted`, `denied`, plus `by_door` and `by_user` rollups. |
+| `summarize_access_activity` | read | — | Aggregate badge events by door, user, and outcome over the last `hours_back` hours. Returns `total`, `granted`, `denied`, `other` (events with neither result), plus `by_door` and `by_user` rollups. At most 500 events are aggregated; `truncated` is `true` when the window held more. |
 | `list_failed_access_attempts` | read | — | Return only `result == "denied"` events within the window. Each entry includes a `reason` (`expired`, `off-hours`, `unknown_pin`, etc.). |
 
 ### Devices

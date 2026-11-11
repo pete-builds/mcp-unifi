@@ -2,7 +2,7 @@
   "tool_count": 139,
   "tools": [
     {
-      "description": "Return credentials expiring within ``days_ahead`` days.\n\nSide effects: None (read-only).\n\nIterates ``list_credentials`` client-side and filters to those whose\n``expires_at`` falls inside the window ``[now, now + days_ahead]``.\nCredentials with no ``expires_at`` (typical for mobile credentials)\nare excluded. Each entry includes ``days_until_expiry`` so the LLM\ncan sort and summarise without re-doing the math.\n\nExample: audit_expiring_credentials(days_ahead=14)",
+      "description": "Return credentials expiring within ``days_ahead`` days.\n\nSide effects: None (read-only).\n\nIterates ``list_credentials`` client-side and filters to those whose\n``expires_at`` (epoch milliseconds) falls inside the window\n``[now, now + days_ahead]``. Each entry includes ``days_until_expiry``\nso the LLM can sort and summarise without re-doing the math.\nCredentials with no ``expires_at`` (typical for mobile credentials)\nare left out and only counted in ``no_expiry_count``. Two more lists\nkeep nothing hidden: ``already_expired`` holds credentials whose\n``expires_at`` is already in the past (with ``days_since_expiry``),\nand ``unparseable_expiry`` holds credentials whose ``expires_at`` is\npresent but is not an epoch-millisecond number (a string, seconds, 0),\nso a bad value is reported rather than skipped.\n\nExample: audit_expiring_credentials(days_ahead=14)",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -1698,7 +1698,7 @@
       "name": "get_dynamic_dns_details"
     },
     {
-      "description": "Fetch the JPEG thumbnail for a Protect event, base64-encoded.\n\nSide effects: None (read-only).\n\nSame response shape as ``get_snapshot``, but keyed on the event\ninstead of the camera. Useful for previewing a motion or\nsmart-detection trigger without pulling the full clip.\n\nExample: get_event_thumbnail(event_id=\"evt123\", controller=\"default\")",
+      "description": "Fetch the JPEG thumbnail for a Protect event, base64-encoded.\n\nSide effects: None (read-only).\n\nSame response shape as ``get_snapshot``, but keyed on the event\ninstead of the camera. Useful for previewing a motion or\nsmart-detection trigger without pulling the full clip. A body that\nis not a JPEG, or is over 4 MiB, comes back as an error instead.\n\nExample: get_event_thumbnail(event_id=\"evt123\", controller=\"default\")",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -1809,7 +1809,7 @@
           },
           "limit": {
             "default": 20,
-            "description": "Maximum events returned. Defaults to 20.",
+            "description": "Maximum events returned (1 to 1000). Defaults to 20.",
             "type": "integer"
           }
         },
@@ -1855,7 +1855,7 @@
       "name": "get_site_health"
     },
     {
-      "description": "Fetch a current JPEG snapshot from a camera, base64-encoded.\n\nSide effects: None (read-only).\n\nReturns ``{\"camera_id\": ..., \"format\": \"jpeg\", \"data\": \"<base64>\",\n\"size_bytes\": ...}``. The JPEG payload is base64-encoded so it can\nride inside the JSON envelope all MCP tools return; decode with\n``base64.b64decode`` to get the raw image bytes.\n\nExample: get_snapshot(camera_id=\"65f...\", controller=\"default\")",
+      "description": "Fetch a current JPEG snapshot from a camera, base64-encoded.\n\nSide effects: None (read-only).\n\nReturns ``{\"camera_id\": ..., \"format\": \"jpeg\", \"data\": \"<base64>\",\n\"size_bytes\": ...}``. The JPEG payload is base64-encoded so it can\nride inside the JSON envelope all MCP tools return; decode with\n``base64.b64decode`` to get the raw image bytes. A body that is not\na JPEG, or is over 4 MiB, comes back as an error instead.\n\nExample: get_snapshot(camera_id=\"65f...\", controller=\"default\")",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -2074,12 +2074,12 @@
           },
           "hours_back": {
             "default": 24,
-            "description": "Look-back window in hours. Defaults to 24.",
+            "description": "Look-back window in hours (1 to 720). Defaults to 24.",
             "type": "integer"
           },
           "limit": {
             "default": 100,
-            "description": "Maximum events returned. Defaults to 100.",
+            "description": "Maximum events returned (1 to 1000). Defaults to 100.",
             "type": "integer"
           },
           "result": {
@@ -2354,12 +2354,12 @@
           },
           "hours_back": {
             "default": 24,
-            "description": "Look-back window in hours. Defaults to 24.",
+            "description": "Look-back window in hours (1 to 720). Defaults to 24.",
             "type": "integer"
           },
           "limit": {
             "default": 100,
-            "description": "Maximum events returned. Defaults to 100.",
+            "description": "Maximum events returned (1 to 1000). Defaults to 100.",
             "type": "integer"
           }
         },
@@ -2459,12 +2459,12 @@
           },
           "hours_back": {
             "default": 24,
-            "description": "Look-back window in hours from now. Defaults to 24.",
+            "description": "Look-back window in hours from now (1 to 720).\nDefaults to 24.",
             "type": "integer"
           },
           "limit": {
             "default": 50,
-            "description": "Maximum number of events returned. Defaults to 50.",
+            "description": "Maximum number of events returned, newest first (1 to\n1000). Defaults to 50.",
             "type": "integer"
           }
         },
@@ -2533,7 +2533,7 @@
           },
           "hours_back": {
             "default": 24,
-            "description": "Look-back window in hours. Defaults to 24.",
+            "description": "Look-back window in hours (1 to 720). Defaults to 24.",
             "type": "integer"
           }
         },
@@ -2581,12 +2581,12 @@
           },
           "hours_back": {
             "default": 24,
-            "description": "Look-back window in hours. Defaults to 24.",
+            "description": "Look-back window in hours (1 to 720). Defaults to 24.",
             "type": "integer"
           },
           "limit": {
             "default": 20,
-            "description": "Maximum number of events returned. Defaults to 20.",
+            "description": "Maximum number of events returned, newest first (1 to\n1000). Defaults to 20.",
             "type": "integer"
           }
         },
@@ -2707,7 +2707,7 @@
       "name": "locate_device"
     },
     {
-      "description": "Configure a camera end-to-end: recording mode + sensitivity + privacy.\n\nSide effects:\n- Step 1: PATCHes ``recordingSettings.mode`` and\n  ``recordingSettings.retentionDurationMs`` (computed from\n  ``retention_days`` * 86400000).\n- Step 2: PATCHes ``motionSettings.sensitivity``.\n- Step 3: PATCHes ``privacyMask.enabled``.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n- Rollback: if step 2 or step 3 fails, the camera's original\n  recording, sensitivity, and privacy settings are restored from the\n  pre-call snapshot. The response includes ``rolled_back`` and\n  ``partial`` keys describing what was applied and what was\n  reverted.\n\nExample: provision_camera(camera_id=\"65f...\", recording_mode=\"motion\", sensitivity=60, retention_days=14)",
+      "description": "Configure a camera end-to-end: recording mode + sensitivity + privacy.\n\nOnly the settings you pass are changed. A setting you leave out keeps\nthe camera's current value, so passing just ``sensitivity=60`` does\nnot touch the recording mode, retention or privacy mask. At least one\nsetting is required. ``dry_run=True`` reads the camera and returns the\ncurrent (\"before\") and requested (\"after\") value of each setting it\nwould change.\n\nSide effects:\n- Step 1 (when ``recording_mode`` or ``retention_days`` is given):\n  PATCHes ``recordingSettings.mode`` and/or\n  ``recordingSettings.retentionDurationMs`` (computed from\n  ``retention_days`` * 86400000).\n- Step 2 (when ``sensitivity`` is given): PATCHes\n  ``motionSettings.sensitivity``.\n- Step 3 (when ``privacy_enabled`` is given): PATCHes\n  ``privacyMask.enabled``.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n- Rollback: a step fails when it raises an error or when the\n  controller returns no camera record for it. The failing call stops\n  the run, and the steps that already applied are restored from the\n  pre-call snapshot (a step that returned no record is restored too,\n  since it may have applied). The response then has an ``error``\n  naming ``failed_step``, plus ``rolled_back`` and ``partial`` keys\n  describing what was applied and what was reverted.\n\nExample: provision_camera(camera_id=\"65f...\", recording_mode=\"motion\", sensitivity=60, retention_days=14)",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -2722,28 +2722,56 @@
           },
           "dry_run": {
             "default": false,
-            "description": "Preview the change without applying it. Returns the\npredicted change set.",
+            "description": "Preview the change without applying it. Returns the\nbefore and after value of each setting.",
             "type": "boolean"
           },
           "privacy_enabled": {
-            "default": false,
-            "description": "``True`` engages the privacy mask after the\nrecording / sensitivity steps. Defaults to ``False``.",
-            "type": "boolean"
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "``True`` engages the privacy mask after the\nrecording / sensitivity steps, ``False`` releases it. Omit to\nleave the privacy mask unchanged."
           },
           "recording_mode": {
-            "default": "motion",
-            "description": "One of ``\"always\"``, ``\"motion\"``, ``\"never\"``.\nDefaults to ``\"motion\"``.",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "One of ``\"always\"``, ``\"motion\"``, ``\"never\"``.\nOmit to leave the recording mode unchanged."
           },
           "retention_days": {
-            "default": 7,
-            "description": "Clip retention in days. Multiplied by 86,400,000\nto derive ``retentionDurationMs``. Defaults to 7.",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Clip retention in days. Multiplied by 86,400,000\nto derive ``retentionDurationMs``. Omit to leave retention\nunchanged."
           },
           "sensitivity": {
-            "default": 50,
-            "description": "Motion sensitivity 0-100. Defaults to 50.",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Motion sensitivity 0-100. Omit to leave it unchanged."
           }
         },
         "required": [
@@ -3533,7 +3561,7 @@
       "name": "set_wan_ipv6"
     },
     {
-      "description": "Aggregate badge events by door, user, and outcome.\n\nSide effects: None (read-only).\n\nPulls events over the last ``hours_back`` hours (cap 500 to keep the\nsummary tractable) and rolls them up into counts so the LLM can\nanswer \"who used which door how often\" without re-aggregating\nclient-side. Returns ``total``, ``granted``, ``denied``, plus\n``by_door`` and ``by_user`` maps.\n\nExample: summarize_access_activity(hours_back=24)",
+      "description": "Aggregate badge events by door, user, and outcome.\n\nSide effects: None (read-only).\n\nPulls events over the last ``hours_back`` hours and rolls them up\ninto counts so the LLM can answer \"who used which door how often\"\nwithout re-aggregating client-side. At most 500 events are\naggregated, the newest ones. Returns ``total``, ``granted``,\n``denied``, ``other`` (events whose ``result`` is neither, so\n``granted + denied + other == total``), plus ``by_door`` and\n``by_user`` maps. When the window held more than 500 events,\n``truncated`` is ``true`` and every count covers only the newest 500;\nnarrow ``hours_back`` for exact counts.\n\nExample: summarize_access_activity(hours_back=24)",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -3544,7 +3572,7 @@
           },
           "hours_back": {
             "default": 24,
-            "description": "Look-back window in hours. Defaults to 24.",
+            "description": "Look-back window in hours (1 to 720). Defaults to 24.",
             "type": "integer"
           }
         },
