@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -78,6 +79,27 @@ def subnet_to_dhcp(
         f"{base}.{dhcp_start_offset}",
         f"{base}.{dhcp_stop_offset}",
     )
+
+
+def check_composite_subnet(ip_subnet: str, dhcp_start: str, dhcp_stop: str) -> str | None:
+    """Why a composite's subnet and DHCP range cannot be written, or ``None``.
+
+    :func:`subnet_to_dhcp` is plain string slicing, so a template like
+    ``10.0.{vlan_id}.0/24`` with ``vlan_id=300`` yields ``10.0.300.1/24``
+    without complaint. This is the check that runs before any write.
+    """
+    try:
+        iface = ipaddress.IPv4Interface(ip_subnet)
+    except ValueError:
+        return f"subnet {ip_subnet!r} is not a valid IPv4 subnet"
+    for label, addr in (("dhcp_start", dhcp_start), ("dhcp_stop", dhcp_stop)):
+        try:
+            inside = ipaddress.IPv4Address(addr) in iface.network
+        except ValueError:
+            return f"{label} {addr!r} derived from subnet {ip_subnet!r} is not an IPv4 address"
+        if not inside:
+            return f"{label} {addr} falls outside subnet {iface.network}"
+    return None
 
 
 def subnet_to_network_form(subnet: str) -> str:

@@ -29,6 +29,13 @@ The ``passphrase`` is **redacted** to ``"[REDACTED]"`` everywhere this
 tool emits it: the ``dry_run`` preview, the created WLAN record, and
 the ``partial`` record on a rollback. There is no opt-in flag.
 
+Checked before anything is written, ``dry_run`` included: the guest
+subnet and its DHCP range must be valid IPv4 (a ``vlan_id`` above 255
+does not fit the default template), and ``main_lan_subnet`` must
+overlap a network that exists on the site. Otherwise the call is
+refused, and for ``main_lan_subnet`` the error lists the site's
+subnets; the default ``192.168.1.0/24`` is not right for every site.
+
 ## Example
 
 ```python
@@ -43,7 +50,7 @@ create_guest_network(name="guest", ssid="guest-wifi", passphrase="hunter2hunter2
 | `ssid` | `string` | yes | — | SSID to broadcast (e.g. ``"guest-wifi"``). |
 | `passphrase` | `string` | yes | — | WPA2 PSK (8-63 chars). |
 | `vlan_id` | `integer` | yes | — | 802.1Q VLAN ID, 2-4094. |
-| `main_lan_subnet` | `string` | no | "192.168.1.0/24" | CIDR of the main LAN. The drop rule blocks guest → this subnet. |
+| `main_lan_subnet` | `string` | no | "192.168.1.0/24" | CIDR of the main LAN. The drop rule blocks guest → this subnet. Must overlap an existing network's subnet. |
 | `subnet` | `string` | no | "" | Override the guest subnet. Empty uses ``IOT_SUBNET_TEMPLATE`` (default ``10.0.{vlan_id}.0/24``). |
 | `schedule` | `string` | no | "" | Optional schedule descriptor (controller field ``schedule``). Empty = always on. |
 | `hide_ssid` | `boolean` | no | false | ``True`` suppresses SSID broadcast (rare for guest). |

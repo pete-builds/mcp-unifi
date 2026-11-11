@@ -15,7 +15,8 @@ can run, so a site on the Zone-Based Firewall is not reported as
 clean just because its legacy rulesets are empty (issue #112):
 - Active port forwards (DNAT into the LAN).
 - Legacy ``WAN_*`` ``accept`` rules, excluding the boilerplate
-  established/related rule.
+  established/related rule (a rule that also matches new
+  connections is kept).
 - Zone-Based Firewall ``ALLOW`` policies whose source zone is the WAN
   (``External``) zone, excluding return-traffic allowances
   (``connection_state_type == "RESPOND_ONLY"``); the number excluded

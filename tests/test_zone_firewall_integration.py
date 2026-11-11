@@ -362,3 +362,80 @@ async def test_tool_on_a_legacy_site_writes_nothing(auto_server: Any) -> None:
     result = json.loads(raw.content[0].text)
     assert "create_firewall_rule" in result["error"]
     assert not post.called
+
+
+# ---------------------------------------------------------------------------
+# Composites on consoles the Integration API cannot fully serve
+# ---------------------------------------------------------------------------
+
+LAN = {"_id": "lan", "name": "Default", "purpose": "corporate", "ip_subnet": "192.168.1.1/24"}
+
+
+def _priv(records: list[dict[str, Any]]) -> httpx.Response:
+    return httpx.Response(200, json={"meta": {"rc": "ok"}, "data": records})
+
+
+def _mock_ap_groups() -> None:
+    respx.get(f"{ROOT}/v2/api/site/default/apgroups").mock(
+        return_value=httpx.Response(200, json=[{"_id": "apg", "attr_hidden_id": "default"}])
+    )
+
+
+@respx.mock
+async def test_iot_composite_runs_on_a_console_without_the_integration_api(
+    auto_server: Any,
+) -> None:
+    """Finding B1 end to end: ``/sites`` 404 used to fail the composite before
+    its first write. It now runs the legacy path on the private API."""
+    respx.get(f"{ROOT}/integration/v1/sites").mock(return_value=httpx.Response(404))
+    respx.get(f"{PRIV}/rest/networkconf").mock(return_value=_priv([LAN]))
+    respx.post(f"{PRIV}/rest/networkconf").mock(return_value=_priv([{"_id": "net-id"}]))
+    _mock_ap_groups()
+    respx.post(f"{PRIV}/rest/wlanconf").mock(return_value=_priv([{"_id": "wlan-id"}]))
+    rule = respx.post(f"{PRIV}/rest/firewallrule").mock(return_value=_priv([{"_id": "fw-id"}]))
+
+    raw = await auto_server.call_tool(
+        "create_iot_network", {"name": "IoT", "vlan_id": 30, "passphrase": "iot-pass-1234"}
+    )
+    result = json.loads(raw.content[0].text)
+
+    assert "error" not in result, result
+    assert result["firewall_rule"]["_id"] == "fw-id"
+    assert rule.called
+
+
+@respx.mock
+async def test_iot_composite_rolls_back_a_v1_network_it_could_not_read_back(
+    auto_server: Any,
+) -> None:
+    """Finding B3 end to end: the v1 POST landed but the private list did not
+    show the network yet. The composite used to fail with no ``_id`` and
+    leave the network behind; rollback now finds it by ``external_id``."""
+    _mock_site()
+    respx.get(f"{INT}/firewall/zones").mock(
+        return_value=httpx.Response(
+            400, json={"code": "api.firewall.zone-based-firewall-not-configured"}
+        )
+    )
+    created = {"_id": "new-net", "external_id": "new-uuid", "name": "IoT", "purpose": "corporate"}
+    respx.get(f"{PRIV}/rest/networkconf").mock(
+        side_effect=[
+            _priv([LAN]),  # main_lan_subnet check
+            _priv([LAN]),  # readback right after the POST: not there yet
+            _priv([LAN, created]),  # rollback looks it up by external_id
+            _priv([LAN, created]),  # delete_network resolves the v1 id
+        ]
+    )
+    respx.post(f"{INT}/networks").mock(return_value=httpx.Response(201, json={"id": "new-uuid"}))
+    v1_delete = respx.delete(f"{INT}/networks/new-uuid").mock(return_value=httpx.Response(200))
+    priv_post = respx.post(f"{PRIV}/rest/networkconf")
+
+    raw = await auto_server.call_tool(
+        "create_iot_network", {"name": "IoT", "vlan_id": 30, "passphrase": "iot-pass-1234"}
+    )
+    result = json.loads(raw.content[0].text)
+
+    assert "new-uuid" in result["error"]
+    assert {"network": "new-net", "deleted": True} in result["rolled_back"]
+    assert v1_delete.called
+    assert not priv_post.called

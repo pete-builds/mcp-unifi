@@ -142,8 +142,11 @@ def fresh_server(stub_settings: Settings, fresh_state: StubState) -> FastMCP:
 # Strategies
 # ---------------------------------------------------------------------------
 
-# VLAN IDs that pass the 2-4094 range gate.
-_vlan_ids = st.integers(min_value=2, max_value=4094)
+# VLAN IDs that pass the 2-4094 range gate AND fit the default subnet
+# template ``10.0.{vlan_id}.0/24``. Anything above 255 is refused before the
+# first write (finding C12), so it has no rollback to test; that refusal is
+# covered in test_composites.py.
+_vlan_ids = st.integers(min_value=2, max_value=255)
 # Names used by composites — short, ASCII-only, no slashes/quotes that would
 # upset payload serialisation.
 _safe_names = st.text(
@@ -247,17 +250,30 @@ async def test_create_guest_network_rolls_back_on_any_step(
 # ---------------------------------------------------------------------------
 
 _provision_failure_points_with_ports = st.sampled_from(
-    ["create_dhcp_lease", "create_firewall_rule", "create_port_forward"]
+    ["lease", "create_firewall_rule", "create_port_forward"]
 )
+
+# Whose MAC the service gets. The seed holds a reservation for the NAS, so a
+# rollback that clears the lease instead of restoring it shows up as a
+# snapshot diff. Before this was sampled the tests used only a new MAC and
+# could not see that defect (finding C1/T2).
+_NEW_MAC = "aa:bb:cc:00:11:22"
+_RESERVED_MAC = "aa:bb:cc:00:00:03"
+_provision_macs = st.sampled_from([_NEW_MAC, _RESERVED_MAC])
+
+
+def _lease_step(mac: str) -> str:
+    """The stub method step 1 calls: an existing record is updated, not created."""
+    return "create_dhcp_lease" if mac == _NEW_MAC else "update_dhcp_lease"
 
 
 @given(
     name=_safe_names,
     octet=_octet,
-    fail_at=st.sampled_from(["create_dhcp_lease"]),
+    mac=_provision_macs,
 )
 async def test_provision_without_ports_rolls_back_on_lease_failure(
-    stub_settings: Settings, name: str, octet: int, fail_at: str
+    stub_settings: Settings, name: str, octet: int, mac: str
 ) -> None:
     """No ports => only the lease step exists. Failure there is the only
     failure point; rollback is trivial (nothing was created)."""
@@ -266,6 +282,7 @@ async def test_provision_without_ports_rolls_back_on_lease_failure(
     network_id = state.networks[0]["_id"]
     pre = _snapshot(state)
 
+    fail_at = _lease_step(mac)
     state.fail_next(fail_at, UniFiError(f"injected at {fail_at}"))
 
     result = await _call(
@@ -273,13 +290,14 @@ async def test_provision_without_ports_rolls_back_on_lease_failure(
         "provision_homelab_service",
         {
             "name": name,
-            "mac": "aa:bb:cc:00:11:22",
+            "mac": mac,
             "ip": f"192.168.1.{octet}",
             "network_id": network_id,
         },
     )
 
-    assert "error" in result
+    assert "lease" in result["error"]
+    assert result["rolled_back"] == []
     _assert_resource_state_restored(pre, state)
 
 
@@ -289,6 +307,7 @@ async def test_provision_without_ports_rolls_back_on_lease_failure(
     ports=st.lists(st.integers(min_value=1, max_value=65535), min_size=1, max_size=3, unique=True),
     wan_expose=st.booleans(),
     fail_at=_provision_failure_points_with_ports,
+    mac=_provision_macs,
 )
 async def test_provision_with_ports_rolls_back_on_any_step(
     stub_settings: Settings,
@@ -297,6 +316,7 @@ async def test_provision_with_ports_rolls_back_on_any_step(
     ports: list[int],
     wan_expose: bool,
     fail_at: str,
+    mac: str,
 ) -> None:
     """With ports: lease + firewall (+ optional N port forwards). Inject at
     any step. State must be byte-identical pre/post."""
@@ -305,6 +325,8 @@ async def test_provision_with_ports_rolls_back_on_any_step(
     network_id = state.networks[0]["_id"]
     pre = _snapshot(state)
 
+    if fail_at == "lease":
+        fail_at = _lease_step(mac)
     state.fail_next(fail_at, UniFiError(f"injected at {fail_at}"))
 
     result = await _call(
@@ -312,7 +334,7 @@ async def test_provision_with_ports_rolls_back_on_any_step(
         "provision_homelab_service",
         {
             "name": name,
-            "mac": "aa:bb:cc:00:11:22",
+            "mac": mac,
             "ip": f"192.168.1.{octet}",
             "network_id": network_id,
             "ports": ports,
@@ -320,17 +342,17 @@ async def test_provision_with_ports_rolls_back_on_any_step(
         },
     )
 
-    # If fail_at == create_port_forward but wan_expose=False, no port-forward
-    # call ever happens; the queued failure stays armed and the call succeeds.
-    # That's a legitimate outcome — verify state is consistent either way.
-    if "error" in result:
-        _assert_resource_state_restored(pre, state)
-    else:
-        # Successful call: the queued failure was never consumed (because
-        # the step it targets was skipped). State legitimately changed; we
-        # don't compare to pre. Sanity-check the created resources count.
+    if fail_at == "create_port_forward" and not wan_expose:
+        # No port-forward call ever happens, so the queued failure stays
+        # armed and the call legitimately succeeds. This is the ONLY case
+        # allowed to succeed: anywhere else a success means an injected
+        # failure was swallowed.
+        assert "error" not in result, result
         assert result["lease"] is not None
         assert result["firewall_rule"] is not None
+        return
+    assert "error" in result, f"injected {fail_at} but the call reported success: {result}"
+    _assert_resource_state_restored(pre, state)
 
 
 # ---------------------------------------------------------------------------

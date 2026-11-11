@@ -25,12 +25,16 @@ is most likely to be pasted somewhere.
 
 from __future__ import annotations
 
+import copy
+import ipaddress
 import logging
 from typing import TYPE_CHECKING, Any
 
 from mcp_unifi.annotations import CREATE, DESTRUCTIVE, READ_ONLY
 from mcp_unifi.backends import Backend
+from mcp_unifi.clients.integration import CreatedButUnreadError
 from mcp_unifi.clients.unifi import UniFiError
+from mcp_unifi.clients.zone_policy import PolicyBodyError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
 from mcp_unifi.modules._params import (
@@ -40,6 +44,7 @@ from mcp_unifi.modules._params import (
     BoundedText,
 )
 from mcp_unifi.modules.network._common import (
+    check_composite_subnet,
     format_json,
     make_err,
     normalize_ip_subnet,
@@ -100,6 +105,120 @@ async def _delete_resource(backend: Backend, kind: str, resource_id: str) -> boo
         return False
 
 
+async def _undo_create(
+    backend: Backend, kind: str, record: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Delete a network or WLAN this call created, by ``_id`` or by v1 id.
+
+    A create that landed through the Integration API but could not be read
+    back is recorded as ``{"external_id": <v1 id>}`` (see
+    :class:`CreatedButUnreadError`). By rollback time the private API usually
+    shows it, so it is looked up by ``external_id`` and deleted like any
+    other. If it still cannot be found the action says so, and the record is
+    left on the console for the caller to remove. ``None`` when the record
+    carries neither id, so there is nothing to act on.
+    """
+    resource_id = record.get("_id")
+    external_id = record.get("external_id")
+    if not resource_id and not isinstance(external_id, str):
+        return None
+    if not resource_id:
+        lister = backend.list_networks if kind == "network" else backend.list_wlans
+        try:
+            resource_id = next(
+                (r.get("_id") for r in await lister() if r.get("external_id") == external_id),
+                None,
+            )
+        except UniFiError as exc:
+            logger.error(
+                "rollback lookup failed",
+                extra={"kind": kind, "external_id": external_id, "error": str(exc)},
+            )
+        if not isinstance(resource_id, str) or not resource_id:
+            return {kind: None, "external_id": external_id, "deleted": False}
+    ok = await _delete_resource(backend, kind, str(resource_id))
+    return {kind: resource_id, "deleted": ok}
+
+
+#: User-record keys ``provision_homelab_service`` writes, and so may restore.
+_LEASE_KEYS = ("use_fixedip", "fixed_ip", "network_id", "name")
+
+
+async def _restore_lease(
+    backend: Backend, lease_id: str, prior: dict[str, Any], payload: dict[str, Any]
+) -> dict[str, Any]:
+    """Put back what this call changed on a user record that existed before it.
+
+    Each key the call wrote gets its previous value. A record that held no
+    reservation gets ``use_fixedip`` false, which is how a reservation is
+    cleared (issue #124). A key the record did not have before cannot be
+    removed through ``PUT /rest/user``, so it is listed in ``not_restored``
+    instead of guessed at.
+    """
+    restore: dict[str, Any] = {}
+    not_restored: list[str] = []
+    for key in _LEASE_KEYS:
+        if key not in payload:
+            continue
+        if key in prior:
+            if prior[key] != payload[key]:
+                restore[key] = prior[key]
+        elif key == "use_fixedip":
+            restore[key] = False
+        else:
+            not_restored.append(key)
+    action: dict[str, Any] = {"dhcp_lease": lease_id, "restored_fields": sorted(restore)}
+    if not_restored:
+        action["not_restored"] = not_restored
+    ok = True
+    if restore:
+        try:
+            await backend.update_dhcp_lease(lease_id, restore)
+        except UniFiError as exc:
+            logger.error(
+                "rollback restore failed",
+                extra={"kind": "dhcp_lease", "resource_id": lease_id, "error": str(exc)},
+            )
+            ok = False
+    action["restored"] = ok
+    return action
+
+
+async def _main_lan_error(backend: Backend, main_lan_subnet: str) -> str | None:
+    """Why ``main_lan_subnet`` cannot anchor an isolation rule, or ``None``.
+
+    A drop rule toward a subnet no network on the site uses isolates nothing,
+    yet the composite would still report "with isolation". The site's own
+    subnets are listed so the caller can pass the right one; none is guessed.
+    """
+    trusted = ipaddress.IPv4Network(main_lan_subnet, strict=False)
+    seen: list[str] = []
+    for net in await backend.list_networks():
+        raw = net.get("ip_subnet")
+        if not isinstance(raw, str):
+            continue
+        try:
+            have = ipaddress.IPv4Interface(raw).network
+        except ValueError:
+            continue
+        if have.overlaps(trusted):
+            return None
+        seen.append(f"{net.get('name', '?')} {have}")
+    return (
+        f"main_lan_subnet {trusted} overlaps no network on this site, so an isolation "
+        f"rule toward it would block nothing. Pass the subnet of the LAN to protect; "
+        f"this site's subnets are: {', '.join(seen) if seen else 'none found'}"
+    )
+
+
+def _subnet_input_error(main_lan_subnet: str) -> str | None:
+    try:
+        ipaddress.IPv4Network(main_lan_subnet, strict=False)
+    except ValueError:
+        return f"main_lan_subnet {main_lan_subnet!r} is not an IPv4 subnet"
+    return None
+
+
 def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> None:
     err = make_err(settings)
 
@@ -147,6 +266,14 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         tool emits it: the ``dry_run`` preview, the created WLAN record, and
         the ``partial`` record on a rollback. There is no opt-in flag.
 
+        Checked before anything is written, ``dry_run`` included: the IoT
+        subnet and its DHCP range must be valid IPv4 (a ``vlan_id`` above 255
+        does not fit the default template), and with ``isolate=True``
+        ``main_lan_subnet`` must overlap a network that exists on the site.
+        Otherwise the call is refused, and for ``main_lan_subnet`` the error
+        lists the site's subnets; the default ``192.168.1.0/24`` is not right
+        for every site.
+
         Example: create_iot_network(name="iot", vlan_id=50, passphrase="hunter2hunter2", main_lan_subnet="192.168.1.0/24")
 
         Args:
@@ -155,6 +282,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             passphrase: WPA2 PSK for the IoT SSID (8-63 chars).
             main_lan_subnet: CIDR of the main/trusted LAN. The isolation rule
                 blocks IoT → this subnet. Defaults to ``"192.168.1.0/24"``.
+                Must overlap an existing network's subnet when ``isolate``.
             subnet: Override the IoT subnet. Empty uses
                 ``IOT_SUBNET_TEMPLATE`` (default ``10.0.{vlan_id}.0/24``).
             isolate: ``True`` (default) creates the LAN_IN drop rule. ``False``
@@ -176,6 +304,12 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             settings.iot_dhcp_start_offset,
             settings.iot_dhcp_stop_offset,
         )
+        input_error = check_composite_subnet(iot_subnet, dhcp_start, dhcp_stop)
+        if input_error is not None:
+            source = "subnet" if subnet else f"IOT_SUBNET_TEMPLATE and vlan_id {vlan_id}"
+            return err(f"{input_error} (from {source}); nothing was created")
+        if isolate and (input_error := _subnet_input_error(main_lan_subnet)) is not None:
+            return err(f"{input_error}; nothing was created")
 
         net_payload: dict[str, Any] = {
             "name": name,
@@ -215,6 +349,15 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             }
 
         if dry_run:
+            if isolate:
+                try:
+                    lan_error = await _main_lan_error(
+                        resolve_backend(registry, controller), main_lan_subnet
+                    )
+                except UniFiError as exc:
+                    return err(str(exc))
+                if lan_error is not None:
+                    return err(lan_error)
             would_create: dict[str, Any] = {
                 "network": net_payload,
                 "wlan": wlan_payload,
@@ -251,8 +394,11 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         try:
             backend = resolve_backend(registry, controller)
             zone_based = fw_payload is not None and await site_is_zone_based(backend)
+            lan_error = await _main_lan_error(backend, main_lan_subnet) if isolate else None
         except UniFiError as exc:
             return err(str(exc))
+        if lan_error is not None:
+            return err(lan_error)
         created: dict[str, Any] = {
             "network": None,
             "wlan": None,
@@ -269,12 +415,12 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             if created["firewall_rule"] and (fw_id := created["firewall_rule"].get("_id")):
                 ok = await _delete_resource(backend, "firewall_rule", fw_id)
                 actions.append({"firewall_rule": fw_id, "deleted": ok})
-            if created["wlan"] and (wlan_id := created["wlan"].get("_id")):
-                ok = await _delete_resource(backend, "wlan", wlan_id)
-                actions.append({"wlan": wlan_id, "deleted": ok})
-            if created["network"] and (net_id := created["network"].get("_id")):
-                ok = await _delete_resource(backend, "network", net_id)
-                actions.append({"network": net_id, "deleted": ok})
+            if created["wlan"] and (undone := await _undo_create(backend, "wlan", created["wlan"])):
+                actions.append(undone)
+            if created["network"] and (
+                undone := await _undo_create(backend, "network", created["network"])
+            ):
+                actions.append(undone)
             logger.warning(
                 "create_iot_network rolled back",
                 extra={"failed_step": failed_step, "rolled_back": actions},
@@ -299,6 +445,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             created["network"] = await backend.create_network(net_payload)
         except UniFiError as exc:
             logger.exception("create_iot_network: VLAN step failed")
+            if isinstance(exc, CreatedButUnreadError):
+                # It exists; rollback finds it by v1 id.
+                created["network"] = {"external_id": exc.v1_id}
             return await _fail("vlan", exc)
 
         net_id = (created["network"] or {}).get("_id")
@@ -322,6 +471,8 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             created["wlan"] = await backend.create_wlan(wlan_payload_real)
         except UniFiError as exc:
             logger.exception("create_iot_network: WLAN step failed")
+            if isinstance(exc, CreatedButUnreadError):
+                created["wlan"] = {"external_id": exc.v1_id}
             return await _fail("wlan", exc)
 
         # Step 3: isolation rule (optional); a zone policy on a zone-based site
@@ -335,7 +486,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                     main_lan_subnet=main_lan_subnet,
                 )
                 created["firewall_policy"] = await backend.create_v1_firewall_policy(body)
-            except UniFiError as exc:
+            except (UniFiError, PolicyBodyError) as exc:
+                # PolicyBodyError is a ValueError: without it here a bad body
+                # skipped rollback and left the SSID broadcasting.
                 logger.exception("create_iot_network: firewall policy step failed")
                 return await _fail("firewall_policy", exc)
         elif fw_payload is not None:
@@ -387,7 +540,11 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         - Rollback: if any sub-step fails, all prior sub-steps are reverted
           in reverse order (port_forwards → firewall_rule or
           firewall_policy → lease) and the
-          response includes ``rolled_back`` and ``partial`` keys.
+          response includes ``rolled_back`` and ``partial`` keys. A
+          reservation this call created is cleared; one that already existed
+          for ``mac`` gets its previous values back instead.
+        - ``ip`` must be an IPv4 address and every port 1-65535; anything else
+          is refused before the first write, ``dry_run`` included.
 
         Example: provision_homelab_service(name="plex", mac="aa:bb:cc:00:00:01", ip="10.50.0.10", network_id="65f...", ports=[32400], wan_expose=False)
 
@@ -409,6 +566,13 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 predicted change set.
         """
         ports = ports or []
+        try:
+            ipaddress.IPv4Address(ip)
+        except ValueError:
+            return err(f"ip {ip!r} is not an IPv4 address; nothing was created")
+        bad_ports = [p for p in ports if not 1 <= p <= 65535]
+        if bad_ports:
+            return err(f"port(s) {bad_ports} out of range (1-65535); nothing was created")
 
         lease_payload: dict[str, Any] = {
             "mac": mac,
@@ -488,6 +652,8 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         }
         if zone_based:
             created["firewall_policy"] = None
+        # The user record for ``mac`` as it was before step 1, if there was one.
+        prior_user: dict[str, Any] | None = None
 
         async def _rollback(failed_step: str) -> list[dict[str, Any]]:
             actions: list[dict[str, Any]] = []
@@ -503,8 +669,15 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 ok = await _delete_resource(backend, "firewall_rule", fw_id)
                 actions.append({"firewall_rule": fw_id, "deleted": ok})
             if created["lease"] and (lease_id := created["lease"].get("_id")):
-                ok = await _delete_resource(backend, "dhcp_lease", lease_id)
-                actions.append({"dhcp_lease": lease_id, "deleted": ok})
+                if prior_user is None:
+                    ok = await _delete_resource(backend, "dhcp_lease", lease_id)
+                    actions.append({"dhcp_lease": lease_id, "deleted": ok})
+                else:
+                    # The record was there before this call: undo the edit,
+                    # never clear a reservation someone else made.
+                    actions.append(
+                        await _restore_lease(backend, lease_id, prior_user, lease_payload)
+                    )
             logger.warning(
                 "provision_homelab_service rolled back",
                 extra={"failed_step": failed_step, "rolled_back": actions},
@@ -525,8 +698,13 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         # Step 1: lease. A known client (anything that ever connected) has a
         # user record already and the controller refuses a second one with
         # api.err.MacUsed, so this is an upsert: PUT to the existing record
-        # or POST a new one. Rollback clears the flag either way.
+        # or POST a new one. The record as it was is kept so rollback can
+        # tell the two apart: clear a reservation this call created, restore
+        # one it edited.
         try:
+            found = await backend.find_user_by_mac(mac)
+            # A copy: the stub hands back its live record, which the upsert edits.
+            prior_user = copy.deepcopy(found) if found is not None else None
             created["lease"] = await upsert_dhcp_lease(backend, lease_payload)
         except UniFiError as exc:
             return await _fail("lease", exc)
@@ -539,7 +717,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                     backend, name=name, network_id=network_id, ip=ip, ports=ports
                 )
                 created["firewall_policy"] = await backend.create_v1_firewall_policy(body)
-            except UniFiError as exc:
+            except (UniFiError, PolicyBodyError) as exc:
                 return await _fail("firewall_policy", exc)
         elif fw_payload is not None:
             try:
@@ -662,6 +840,13 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         tool emits it: the ``dry_run`` preview, the created WLAN record, and
         the ``partial`` record on a rollback. There is no opt-in flag.
 
+        Checked before anything is written, ``dry_run`` included: the guest
+        subnet and its DHCP range must be valid IPv4 (a ``vlan_id`` above 255
+        does not fit the default template), and ``main_lan_subnet`` must
+        overlap a network that exists on the site. Otherwise the call is
+        refused, and for ``main_lan_subnet`` the error lists the site's
+        subnets; the default ``192.168.1.0/24`` is not right for every site.
+
         Example: create_guest_network(name="guest", ssid="guest-wifi", passphrase="hunter2hunter2", vlan_id=60, main_lan_subnet="192.168.1.0/24")
 
         Args:
@@ -670,7 +855,8 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             passphrase: WPA2 PSK (8-63 chars).
             vlan_id: 802.1Q VLAN ID, 2-4094.
             main_lan_subnet: CIDR of the main LAN. The drop rule blocks
-                guest → this subnet.
+                guest → this subnet. Must overlap an existing network's
+                subnet.
             subnet: Override the guest subnet. Empty uses
                 ``IOT_SUBNET_TEMPLATE`` (default ``10.0.{vlan_id}.0/24``).
             schedule: Optional schedule descriptor (controller field
@@ -692,6 +878,12 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             settings.iot_dhcp_start_offset,
             settings.iot_dhcp_stop_offset,
         )
+        input_error = check_composite_subnet(guest_subnet, dhcp_start, dhcp_stop)
+        if input_error is not None:
+            source = "subnet" if subnet else f"IOT_SUBNET_TEMPLATE and vlan_id {vlan_id}"
+            return err(f"{input_error} (from {source}); nothing was created")
+        if (input_error := _subnet_input_error(main_lan_subnet)) is not None:
+            return err(f"{input_error}; nothing was created")
 
         net_payload: dict[str, Any] = {
             "name": name,
@@ -732,6 +924,14 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         }
 
         if dry_run:
+            try:
+                lan_error = await _main_lan_error(
+                    resolve_backend(registry, controller), main_lan_subnet
+                )
+            except UniFiError as exc:
+                return err(str(exc))
+            if lan_error is not None:
+                return err(lan_error)
             return format_json(
                 {
                     "dry_run": True,
@@ -771,8 +971,11 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         try:
             backend = resolve_backend(registry, controller)
             zone_based = await site_is_zone_based(backend)
+            lan_error = await _main_lan_error(backend, main_lan_subnet)
         except UniFiError as exc:
             return err(str(exc))
+        if lan_error is not None:
+            return err(lan_error)
         created: dict[str, Any] = {
             "network": None,
             "wlan": None,
@@ -789,12 +992,12 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             if created["firewall_rule"] and (fw_id := created["firewall_rule"].get("_id")):
                 ok = await _delete_resource(backend, "firewall_rule", fw_id)
                 actions.append({"firewall_rule": fw_id, "deleted": ok})
-            if created["wlan"] and (wlan_id := created["wlan"].get("_id")):
-                ok = await _delete_resource(backend, "wlan", wlan_id)
-                actions.append({"wlan": wlan_id, "deleted": ok})
-            if created["network"] and (net_id := created["network"].get("_id")):
-                ok = await _delete_resource(backend, "network", net_id)
-                actions.append({"network": net_id, "deleted": ok})
+            if created["wlan"] and (undone := await _undo_create(backend, "wlan", created["wlan"])):
+                actions.append(undone)
+            if created["network"] and (
+                undone := await _undo_create(backend, "network", created["network"])
+            ):
+                actions.append(undone)
             logger.warning(
                 "create_guest_network rolled back",
                 extra={"failed_step": failed_step, "rolled_back": actions},
@@ -818,6 +1021,8 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         try:
             created["network"] = await backend.create_network(net_payload)
         except UniFiError as exc:
+            if isinstance(exc, CreatedButUnreadError):
+                created["network"] = {"external_id": exc.v1_id}
             return await _fail("vlan", exc)
 
         net_id = (created["network"] or {}).get("_id")
@@ -839,6 +1044,8 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         try:
             created["wlan"] = await backend.create_wlan(wlan_payload_real)
         except UniFiError as exc:
+            if isinstance(exc, CreatedButUnreadError):
+                created["wlan"] = {"external_id": exc.v1_id}
             return await _fail("wlan", exc)
 
         # Isolation rule; a zone policy on a zone-based site
@@ -852,7 +1059,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                     main_lan_subnet=main_lan_subnet,
                 )
                 created["firewall_policy"] = await backend.create_v1_firewall_policy(body)
-            except UniFiError as exc:
+            except (UniFiError, PolicyBodyError) as exc:
                 return await _fail("firewall_policy", exc)
         else:
             try:
@@ -884,7 +1091,8 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         clean just because its legacy rulesets are empty (issue #112):
         - Active port forwards (DNAT into the LAN).
         - Legacy ``WAN_*`` ``accept`` rules, excluding the boilerplate
-          established/related rule.
+          established/related rule (a rule that also matches new
+          connections is kept).
         - Zone-Based Firewall ``ALLOW`` policies whose source zone is the WAN
           (``External``) zone, excluding return-traffic allowances
           (``connection_state_type == "RESPOND_ONLY"``); the number excluded
@@ -938,8 +1146,10 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 and r.get("action") == "accept"
                 and r.get("enabled", True)
                 and not (
-                    # Filter out the boilerplate "accept established/related" rule
-                    r.get("state_established") and r.get("state_related")
+                    # Filter out the boilerplate "accept established/related"
+                    # rule. A rule that also matches new connections admits
+                    # inbound traffic and is a finding.
+                    r.get("state_established") and r.get("state_related") and not r.get("state_new")
                 )
             ]
 

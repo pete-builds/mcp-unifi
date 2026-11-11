@@ -24,7 +24,11 @@ Side effects:
 - Rollback: if any sub-step fails, all prior sub-steps are reverted
   in reverse order (port_forwards → firewall_rule or
   firewall_policy → lease) and the
-  response includes ``rolled_back`` and ``partial`` keys.
+  response includes ``rolled_back`` and ``partial`` keys. A
+  reservation this call created is cleared; one that already existed
+  for ``mac`` gets its previous values back instead.
+- ``ip`` must be an IPv4 address and every port 1-65535; anything else
+  is refused before the first write, ``dry_run`` included.
 
 ## Example
 

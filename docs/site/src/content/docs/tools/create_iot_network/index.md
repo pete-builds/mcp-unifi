@@ -28,6 +28,14 @@ The ``passphrase`` is **redacted** to ``"[REDACTED]"`` everywhere this
 tool emits it: the ``dry_run`` preview, the created WLAN record, and
 the ``partial`` record on a rollback. There is no opt-in flag.
 
+Checked before anything is written, ``dry_run`` included: the IoT
+subnet and its DHCP range must be valid IPv4 (a ``vlan_id`` above 255
+does not fit the default template), and with ``isolate=True``
+``main_lan_subnet`` must overlap a network that exists on the site.
+Otherwise the call is refused, and for ``main_lan_subnet`` the error
+lists the site's subnets; the default ``192.168.1.0/24`` is not right
+for every site.
+
 ## Example
 
 ```python
@@ -41,7 +49,7 @@ create_iot_network(name="iot", vlan_id=50, passphrase="hunter2hunter2", main_lan
 | `name` | `string` | yes | — | Used for both the network name and the SSID (e.g. ``"iot"``). |
 | `vlan_id` | `integer` | yes | — | 802.1Q VLAN ID, 2-4094. Also drives the default subnet. |
 | `passphrase` | `string` | yes | — | WPA2 PSK for the IoT SSID (8-63 chars). |
-| `main_lan_subnet` | `string` | no | "192.168.1.0/24" | CIDR of the main/trusted LAN. The isolation rule blocks IoT → this subnet. Defaults to ``"192.168.1.0/24"``. |
+| `main_lan_subnet` | `string` | no | "192.168.1.0/24" | CIDR of the main/trusted LAN. The isolation rule blocks IoT → this subnet. Defaults to ``"192.168.1.0/24"``. Must overlap an existing network's subnet when ``isolate``. |
 | `subnet` | `string` | no | "" | Override the IoT subnet. Empty uses ``IOT_SUBNET_TEMPLATE`` (default ``10.0.{vlan_id}.0/24``). |
 | `isolate` | `boolean` | no | true | ``True`` (default) creates the LAN_IN drop rule. ``False`` lets IoT devices reach the main LAN (rare). |
 | `hide_ssid` | `boolean` | no | false | ``True`` suppresses SSID broadcast. |

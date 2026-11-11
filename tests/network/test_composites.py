@@ -17,7 +17,10 @@ import respx
 from fastmcp import FastMCP
 
 from mcp_unifi.clients.stubs import StubState
+from mcp_unifi.clients.unifi import UniFiError
+from mcp_unifi.clients.zone_policy import PolicyBodyError
 from mcp_unifi.config import Settings
+from mcp_unifi.modules.network import composites
 from mcp_unifi.server import build_server
 from tests.network.conftest import BASE, _call
 
@@ -32,6 +35,16 @@ _DEFAULT_APGROUPS_BODY = [{"_id": "apg-default", "attr_hidden_id": "default", "n
 def _mock_default_apgroups() -> None:
     """Register a respx mock returning a single default AP group."""
     respx.get(APGROUPS_URL).mock(return_value=httpx.Response(200, json=_DEFAULT_APGROUPS_BODY))
+
+
+def _mock_lan_networks() -> None:
+    """Register the site's existing LAN, which the isolation composites check
+    ``main_lan_subnet`` against before writing anything."""
+    respx.get(f"{BASE}/rest/networkconf").mock(
+        return_value=httpx.Response(
+            200, json={"data": [{"_id": "lan", "name": "Default", "ip_subnet": "192.168.1.1/24"}]}
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +176,8 @@ async def test_create_iot_network_rollback_on_vlan_failure(
 async def test_create_iot_network_subnet_override(
     stub_server: FastMCP, stub_state: StubState
 ) -> None:
+    # The trusted subnet must belong to a network on the site (finding C4).
+    stub_state.networks[0]["ip_subnet"] = "172.16.0.1/24"
     result = await _call(
         stub_server,
         "create_iot_network",
@@ -190,6 +205,7 @@ async def test_create_iot_network_subnet_override(
 @respx.mock
 async def test_real_iot_network_full_flow(real_server: FastMCP) -> None:
     _mock_default_apgroups()
+    _mock_lan_networks()
     respx.post(f"{BASE}/rest/networkconf").mock(
         return_value=httpx.Response(200, json={"data": [{"_id": "net-id"}]})
     )
@@ -214,6 +230,7 @@ async def test_real_iot_network_rolls_back_on_wlan_failure(
     real_server: FastMCP,
 ) -> None:
     _mock_default_apgroups()
+    _mock_lan_networks()
     respx.post(f"{BASE}/rest/networkconf").mock(
         return_value=httpx.Response(200, json={"data": [{"_id": "rb-net"}]})
     )
@@ -237,6 +254,7 @@ async def test_real_iot_network_rolls_back_firewall_and_wlan(
 ) -> None:
     """Firewall rule fails after WLAN: both WLAN and VLAN must be cleaned up."""
     _mock_default_apgroups()
+    _mock_lan_networks()
     respx.post(f"{BASE}/rest/networkconf").mock(
         return_value=httpx.Response(200, json={"data": [{"_id": "rb-net"}]})
     )
@@ -268,6 +286,7 @@ async def test_real_iot_network_rollback_records_delete_failure(
 ) -> None:
     """Rollback should be best-effort: delete failures are logged, not raised."""
     _mock_default_apgroups()
+    _mock_lan_networks()
     respx.post(f"{BASE}/rest/networkconf").mock(
         return_value=httpx.Response(200, json={"data": [{"_id": "stuck-net"}]})
     )
@@ -624,6 +643,7 @@ async def test_real_provision_homelab_service_rolls_back_on_pf_failure(
 @respx.mock
 async def test_real_create_guest_network_full_flow(real_server: FastMCP) -> None:
     _mock_default_apgroups()
+    _mock_lan_networks()
     respx.post(f"{BASE}/rest/networkconf").mock(
         return_value=httpx.Response(200, json={"data": [{"_id": "gn"}]})
     )
@@ -747,6 +767,7 @@ def _echoing_wlanconf() -> None:
 @respx.mock
 async def test_real_iot_network_redacts_created_wlan_record(real_server: FastMCP) -> None:
     _mock_default_apgroups()
+    _mock_lan_networks()
     respx.post(f"{BASE}/rest/networkconf").mock(
         return_value=httpx.Response(200, json={"data": [{"_id": "net-id", "name": "IoT"}]})
     )
@@ -772,6 +793,7 @@ async def test_real_iot_network_redacts_created_wlan_record(real_server: FastMCP
 @respx.mock
 async def test_real_guest_network_redacts_created_wlan_record(real_server: FastMCP) -> None:
     _mock_default_apgroups()
+    _mock_lan_networks()
     respx.post(f"{BASE}/rest/networkconf").mock(
         return_value=httpx.Response(200, json={"data": [{"_id": "gnet-id", "name": "Guest"}]})
     )
@@ -808,6 +830,7 @@ async def test_real_iot_network_rollback_partial_redacts_passphrase(
     gets pasted into an issue or a chat.
     """
     _mock_default_apgroups()
+    _mock_lan_networks()
     respx.post(f"{BASE}/rest/networkconf").mock(
         return_value=httpx.Response(200, json={"data": [{"_id": "rb-net"}]})
     )
@@ -835,6 +858,7 @@ async def test_real_guest_network_rollback_partial_redacts_passphrase(
     real_server: FastMCP,
 ) -> None:
     _mock_default_apgroups()
+    _mock_lan_networks()
     respx.post(f"{BASE}/rest/networkconf").mock(
         return_value=httpx.Response(200, json={"data": [{"_id": "grb-net"}]})
     )
@@ -926,3 +950,284 @@ async def test_provision_homelab_service_for_a_known_client_upserts_the_lease(
     assert "error" not in result, result
     assert result["lease"]["_id"] == known["_id"]
     assert any(lease["_id"] == known["_id"] for lease in stub_state.list_dhcp_leases())
+
+
+# ---------------------------------------------------------------------------
+# Rollback only undoes what the call did (finding C1)
+# ---------------------------------------------------------------------------
+
+
+async def test_provision_rollback_restores_a_reservation_that_existed_before(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """The NAS already holds a reservation. A provision that fails later must
+    put its old values back, not clear it."""
+    nas = next(u for u in stub_state.dhcp_leases if u["mac"] == "aa:bb:cc:00:00:03")
+    before = dict(nas)
+    stub_state.fail_next("create_firewall_rule", UniFiError("injected"))
+
+    result = await _call(
+        stub_server,
+        "provision_homelab_service",
+        {
+            "name": "plex",
+            "mac": "aa:bb:cc:00:00:03",
+            "ip": "192.168.1.50",
+            "network_id": stub_state.networks[0]["_id"],
+            "ports": [32400],
+        },
+    )
+
+    assert "firewall_rule" in result["error"]
+    assert nas == before
+    lease_action = next(a for a in result["rolled_back"] if "dhcp_lease" in a)
+    assert lease_action["restored"] is True
+    assert lease_action["restored_fields"] == ["fixed_ip", "name"]
+    assert "deleted" not in lease_action
+
+
+async def test_provision_rollback_on_a_known_client_clears_only_its_own_reservation(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """A known client with no reservation: rollback clears the reservation
+    this call made, puts the client's name back, and says which keys it
+    could not remove."""
+    client = stub_state.clients[0]
+    stub_state.fail_next("create_firewall_rule", UniFiError("injected"))
+
+    result = await _call(
+        stub_server,
+        "provision_homelab_service",
+        {
+            "name": "plex",
+            "mac": client["mac"],
+            "ip": "192.168.1.51",
+            "network_id": stub_state.networks[0]["_id"],
+            "ports": [32400],
+        },
+    )
+
+    assert "error" in result
+    assert all(u["mac"] != client["mac"] for u in stub_state.list_dhcp_leases())
+    assert client["name"] == "Pete's MacBook"
+    lease_action = next(a for a in result["rolled_back"] if "dhcp_lease" in a)
+    assert lease_action["not_restored"] == ["fixed_ip", "network_id"]
+
+
+# ---------------------------------------------------------------------------
+# Inputs are checked before the first write; a policy-body error rolls back
+# (finding C2)
+# ---------------------------------------------------------------------------
+
+
+async def test_zone_based_provision_with_a_bad_port_writes_nothing(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    stub_state.zone_firewall.migrate()
+    before = [dict(u) for u in stub_state.list_dhcp_leases()]
+    result = await _call(
+        stub_server,
+        "provision_homelab_service",
+        {
+            "name": "svc",
+            "mac": "de:ad:be:ef:00:01",
+            "ip": "192.168.1.77",
+            "network_id": stub_state.networks[0]["_id"],
+            "ports": [70000],
+        },
+    )
+    assert "70000" in result["error"]
+    assert [dict(u) for u in stub_state.list_dhcp_leases()] == before
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+async def test_provision_with_a_bad_ip_is_refused_up_front(
+    stub_server: FastMCP, stub_state: StubState, dry_run: bool
+) -> None:
+    before = [dict(u) for u in stub_state.list_dhcp_leases()]
+    result = await _call(
+        stub_server,
+        "provision_homelab_service",
+        {
+            "name": "svc",
+            "mac": "de:ad:be:ef:00:01",
+            "ip": "192.168.1.300",
+            "network_id": stub_state.networks[0]["_id"],
+            "dry_run": dry_run,
+        },
+    )
+    assert "not an IPv4 address" in result["error"]
+    assert [dict(u) for u in stub_state.list_dhcp_leases()] == before
+
+
+@pytest.mark.parametrize("tool", ["create_iot_network", "create_guest_network"])
+async def test_zone_based_isolation_with_a_bad_main_lan_writes_nothing(
+    stub_server: FastMCP, stub_state: StubState, tool: str
+) -> None:
+    stub_state.zone_firewall.migrate()
+    counts = (len(stub_state.networks), len(stub_state.wlans))
+    args: dict[str, Any] = {
+        "name": "iot",
+        "vlan_id": 50,
+        "passphrase": "hunter2hunter2",
+        "main_lan_subnet": "192.168.1.0/24 lan",
+    }
+    if tool == "create_guest_network":
+        args["ssid"] = "guest-wifi"
+    result = await _call(stub_server, tool, args)
+    assert "not an IPv4 subnet" in result["error"]
+    assert (len(stub_state.networks), len(stub_state.wlans)) == counts
+
+
+@pytest.mark.parametrize("tool", ["create_iot_network", "create_guest_network"])
+async def test_policy_body_error_rolls_back_the_isolation_composites(
+    stub_server: FastMCP,
+    stub_state: StubState,
+    monkeypatch: pytest.MonkeyPatch,
+    tool: str,
+) -> None:
+    """``PolicyBodyError`` is a ``ValueError``; it used to escape the
+    ``except UniFiError`` and leave the new SSID broadcasting."""
+
+    async def _refuse(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise PolicyBodyError("not an address, subnet or range")
+
+    monkeypatch.setattr(composites, "isolation_policy", _refuse)
+    stub_state.zone_firewall.migrate()
+    counts = (len(stub_state.networks), len(stub_state.wlans))
+    args: dict[str, Any] = {"name": "iot", "vlan_id": 50, "passphrase": "hunter2hunter2"}
+    if tool == "create_guest_network":
+        args["ssid"] = "guest-wifi"
+
+    result = await _call(stub_server, tool, args)
+
+    assert "firewall_policy" in result["error"]
+    assert {next(iter(a.keys() - {"deleted"})) for a in result["rolled_back"]} == {
+        "wlan",
+        "network",
+    }
+    assert (len(stub_state.networks), len(stub_state.wlans)) == counts
+
+
+async def test_policy_body_error_rolls_back_provision(
+    stub_server: FastMCP, stub_state: StubState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _refuse(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise PolicyBodyError("port 0 out of range (1-65535)")
+
+    monkeypatch.setattr(composites, "service_policy", _refuse)
+    stub_state.zone_firewall.migrate()
+    before = [dict(u) for u in stub_state.list_dhcp_leases()]
+
+    result = await _call(
+        stub_server,
+        "provision_homelab_service",
+        {
+            "name": "svc",
+            "mac": "de:ad:be:ef:00:01",
+            "ip": "192.168.1.77",
+            "network_id": stub_state.networks[0]["_id"],
+            "ports": [8080],
+        },
+    )
+
+    assert "firewall_policy" in result["error"]
+    assert [dict(u) for u in stub_state.list_dhcp_leases()] == before
+
+
+# ---------------------------------------------------------------------------
+# The trusted subnet must be a network on the site (finding C4)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize("tool", ["create_iot_network", "create_guest_network"])
+async def test_isolation_toward_a_subnet_no_network_uses_is_refused(
+    stub_server: FastMCP, stub_state: StubState, tool: str, dry_run: bool
+) -> None:
+    """The site's LAN is 192.168.86.0/24, so the default 192.168.1.0/24
+    isolates nothing. Refuse, and name the subnets that do exist."""
+    stub_state.networks[0]["ip_subnet"] = "192.168.86.1/24"
+    counts = (len(stub_state.networks), len(stub_state.wlans), len(stub_state.firewall_rules))
+    args: dict[str, Any] = {
+        "name": "iot",
+        "vlan_id": 50,
+        "passphrase": "hunter2hunter2",
+        "dry_run": dry_run,
+    }
+    if tool == "create_guest_network":
+        args["ssid"] = "guest-wifi"
+
+    result = await _call(stub_server, tool, args)
+
+    assert "overlaps no network" in result["error"]
+    assert "192.168.86.0/24" in result["error"]
+    assert (
+        len(stub_state.networks),
+        len(stub_state.wlans),
+        len(stub_state.firewall_rules),
+    ) == counts
+
+
+async def test_iot_without_isolation_skips_the_main_lan_check(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    stub_state.networks[0]["ip_subnet"] = "192.168.86.1/24"
+    result = await _call(
+        stub_server,
+        "create_iot_network",
+        {"name": "iot", "vlan_id": 50, "passphrase": "hunter2hunter2", "isolate": False},
+    )
+    assert "error" not in result, result
+
+
+# ---------------------------------------------------------------------------
+# Derived subnets are validated (finding C12)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize("tool", ["create_iot_network", "create_guest_network"])
+async def test_vlan_id_that_breaks_the_subnet_template_is_refused(
+    stub_server: FastMCP, stub_state: StubState, tool: str, dry_run: bool
+) -> None:
+    counts = (len(stub_state.networks), len(stub_state.wlans))
+    args: dict[str, Any] = {
+        "name": "iot",
+        "vlan_id": 300,
+        "passphrase": "hunter2hunter2",
+        "dry_run": dry_run,
+    }
+    if tool == "create_guest_network":
+        args["ssid"] = "guest-wifi"
+    result = await _call(stub_server, tool, args)
+    assert "10.0.300.1/24" in result["error"]
+    assert "IOT_SUBNET_TEMPLATE" in result["error"]
+    assert (len(stub_state.networks), len(stub_state.wlans)) == counts
+
+
+# ---------------------------------------------------------------------------
+# audit_open_ports (finding C11)
+# ---------------------------------------------------------------------------
+
+
+async def test_audit_reports_a_wan_accept_rule_that_also_admits_new_connections(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    stub_state.firewall_rules.append(
+        {
+            "_id": "ssh-in",
+            "name": "SSH in",
+            "ruleset": "WAN_IN",
+            "action": "accept",
+            "enabled": True,
+            "protocol": "tcp",
+            "dst_port": "22",
+            "state_new": True,
+            "state_established": True,
+            "state_related": True,
+        }
+    )
+    result = await _call(stub_server, "audit_open_ports")
+    names = [r["name"] for r in result["wan_accept_rules"]]
+    assert names == ["SSH in"]  # the seeded established/related rule stays filtered
