@@ -85,6 +85,31 @@ def _validate_ipv4(ip: str) -> str | None:
     return None
 
 
+def _validate_in_subnet(ip: str, network: dict[str, Any]) -> str | None:
+    """Return an error message if ``ip`` cannot be a host on ``network``.
+
+    UniFi stores ``ip_subnet`` in gateway form (``192.168.1.1/24``), so the
+    interface address is the gateway itself. A honeypot outside the subnet,
+    or on the gateway, network or broadcast address, is not a trap any
+    client can reach. A network record with no parseable ``ip_subnet`` is
+    left to the controller: there is nothing here to check against.
+    """
+    try:
+        iface = ipaddress.IPv4Interface(str(network.get("ip_subnet") or ""))
+    except (ipaddress.AddressValueError, ipaddress.NetmaskValueError, ValueError):
+        return None
+    addr = ipaddress.IPv4Address(ip)
+    net = iface.network
+    name = network.get("name") or network.get("_id")
+    if addr not in net:
+        return f"ip {ip} is outside network {name} ({net})"
+    if addr == iface.ip:
+        return f"ip {ip} is the gateway address of network {name}"
+    if net.prefixlen <= 30 and addr in (net.network_address, net.broadcast_address):
+        return f"ip {ip} is the network or broadcast address of {net}"
+    return None
+
+
 def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> None:
     err = make_err(settings)
 
@@ -141,7 +166,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         - Mutates controller state. Use dry_run=True to preview.
 
         Refuses to write if the (network_id, ip) pair is already a
-        honeypot or if ``ip`` is not a valid LAN IPv4 address.
+        honeypot, if ``ip`` is not a valid LAN IPv4 address, or if ``ip`` is
+        outside the network's subnet or is its gateway, network or
+        broadcast address.
 
         Example: create_honeypot(network_id="65f...", ip="10.0.50.2")
 
@@ -166,6 +193,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
 
         if network_id not in networks:
             return err(f"network {network_id} not found")
+        subnet_err = _validate_in_subnet(ip, networks[network_id])
+        if subnet_err is not None:
+            return err(subnet_err)
 
         try:
             record = await backend.get_setting("ips")
@@ -219,9 +249,10 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
 
         Side effects:
         - None until ``confirm_destructive_action`` runs against the token.
-        - On confirm: rewrites the ``ips`` setting's ``honeypot`` list with
-          the entry removed and sets ``honeypot_enabled`` based on whether
-          the resulting list is empty.
+        - On confirm: re-reads the ``ips`` setting, rewrites its
+          ``honeypot`` list with only this entry removed (honeypots added
+          since the preview are kept), and sets ``honeypot_enabled`` based
+          on whether the resulting list is empty.
         - ``dry_run=True`` returns the legacy ``would_delete`` envelope
           with no token (informational only).
 
@@ -254,13 +285,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
         existing = list(record.get("honeypot", []) or [])
-        target_entry: dict[str, Any] | None = None
-        target_index = -1
-        for idx, entry in enumerate(existing):
-            if isinstance(entry, dict) and _honeypot_id(entry) == id:
-                target_entry = entry
-                target_index = idx
-                break
+        target_entry = next(
+            (e for e in existing if isinstance(e, dict) and _honeypot_id(e) == id), None
+        )
 
         if target_entry is None:
             return err(f"honeypot {id} not found")
@@ -273,7 +300,17 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
 
         async def _execute() -> str:
             try:
-                remaining = [e for i, e in enumerate(existing) if i != target_index]
+                # Re-read at confirm time. The list is written back wholesale,
+                # so a snapshot taken at preview time would drop any honeypot
+                # added while the token was outstanding (and could switch the
+                # feature off). Only the previewed entry is removed.
+                current = await backend.get_setting("ips")
+                entries = list(current.get("honeypot", []) or [])
+                remaining = [
+                    e for e in entries if not (isinstance(e, dict) and _honeypot_id(e) == id)
+                ]
+                if len(remaining) == len(entries):
+                    return err(f"honeypot {id} not found")
                 patch: dict[str, Any] = {
                     "honeypot": remaining,
                     "honeypot_enabled": bool(remaining),
