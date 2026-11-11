@@ -271,6 +271,35 @@ def _classify(
                 "next_step": None,
             }
 
+        # A corroboration probe that never got an answer (timeout, transport
+        # error) or got a 4xx (auth, throttling, a route this firmware lacks)
+        # says nothing about the app: it is "unknown", not "down". Only a probe
+        # that answered with a 5xx is evidence of a dead app, and a status
+        # envelope that itself declares the app not running stands on its own.
+        serving_5xx = serving is not None and serving.status is not None and serving.status >= 500
+        if not declares_state and serving is not None and not serving_5xx:
+            why = (
+                f"it returned HTTP {serving.status}"
+                if serving.status is not None
+                else f"it failed: {serving.error or 'no answer'}"
+            )
+            return {
+                "state": "unknown",
+                "unifi_os": "up",
+                "network_app": "unknown",
+                "summary": (
+                    f"UniFi OS answered and the Network status endpoint reported "
+                    f"no readiness fields, but the live Network API call used to "
+                    f"confirm the app is serving was inconclusive ({why}). That "
+                    f"is not evidence the application is down, so no outage is "
+                    f"reported."
+                ),
+                "next_step": (
+                    "Re-run in a few seconds; if it persists, check the console "
+                    "UI and the 'checks' field for the failed probe."
+                ),
+            }
+
         starting = migrating or "start" in context.lower()
         detail = f" The console reports: {context!r}." if context else ""
         observed = (
@@ -340,11 +369,16 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     err = make_err(settings)
 
     def _controller_config(name: str) -> ControllerConfig:
+        # Resolve the ``"default"`` alias the way every other tool does (see
+        # ControllerRegistry.resolve_name); a literal match alone made these
+        # tools fail on a deployment whose only controller is not named
+        # ``default``. An unknown name raises UnknownControllerError, a KeyError.
+        resolved = registry.resolve_name(name)
         for ctrl in settings.controllers:
-            if ctrl.name == name:
+            if ctrl.name == resolved:
                 return ctrl
         available = ", ".join(sorted(c.name for c in settings.controllers)) or "(none)"
-        raise KeyError(f"Unknown controller '{name}'. Available: {available}.")
+        raise KeyError(f"Unknown controller '{resolved}'. Available: {available}.")
 
     def _client(name: str) -> UniFiOSClient:
         """Build a per-call UniFi OS client for the named controller.
@@ -392,6 +426,11 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         - ``checks``: the raw probe results (path + HTTP status) behind the
           verdict, so the reasoning is auditable.
         - ``network_app_version``: the Network app version, when it reported one.
+
+        ``unknown`` also covers a status endpoint that looked fine while the
+        live Network API call meant to confirm it timed out or returned a 4xx.
+        That is reported as inconclusive, with the probe's error in
+        ``summary``, never as an outage.
 
         Note on the ``network_app_down`` verdict: UniFi OS handles routing, so
         the Network application being down does **not** mean the internet is
