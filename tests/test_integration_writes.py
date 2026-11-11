@@ -23,7 +23,7 @@ import pytest
 import respx
 from fastmcp import FastMCP
 
-from mcp_unifi.clients.integration import IntegrationWrites
+from mcp_unifi.clients.integration import CreatedButUnreadError, IntegrationWrites
 from mcp_unifi.clients.unifi import UniFiClient, UniFiError
 from mcp_unifi.config import Settings
 from mcp_unifi.server import build_server
@@ -51,6 +51,7 @@ NETWORK_RECORD = {
     "external_id": NET_V1_ID,
     "name": "IoT",
     "purpose": "corporate",
+    "vlan_enabled": True,
     "vlan": 50,
 }
 WLAN_RECORD = {
@@ -58,6 +59,8 @@ WLAN_RECORD = {
     "external_id": WLAN_V1_ID,
     "name": "iot",
     "networkconf_id": NET_PRIV_ID,
+    "security": "wpapsk",
+    "is_guest": False,
     "x_passphrase": PASSPHRASE,
 }
 V1_NETWORK = {
@@ -209,6 +212,63 @@ async def test_v1_create_wlan_without_an_id_is_not_replayed_on_the_private_api(
 
 
 @respx.mock
+async def test_v1_create_network_not_read_back_raises_with_the_v1_id(
+    client: UniFiClient,
+) -> None:
+    """The POST landed, so the error must say what exists, not hand back a
+    record with no ``_id`` that a rollback cannot delete (finding B3)."""
+    _mock_site()
+    v1_post = respx.post(f"{INT}/networks").mock(
+        return_value=httpx.Response(201, json={"id": "new-uuid"})
+    )
+    # The private list does not show the new network yet.
+    respx.get(f"{PRIV}/rest/networkconf").mock(return_value=_priv([NETWORK_RECORD]))
+    priv_post = respx.post(f"{PRIV}/rest/networkconf")
+
+    with pytest.raises(CreatedButUnreadError) as excinfo:
+        await IntegrationWrites(client).create_network(dict(VLAN_PAYLOAD))
+
+    assert excinfo.value.v1_id == "new-uuid"
+    assert "new-uuid" in str(excinfo.value)
+    assert "exists on the console" in str(excinfo.value)
+    assert v1_post.call_count == 1 and not priv_post.called
+
+
+@respx.mock
+async def test_v1_create_network_readback_failure_raises_with_the_v1_id(
+    client: UniFiClient,
+) -> None:
+    _mock_site()
+    respx.post(f"{INT}/networks").mock(return_value=httpx.Response(201, json={"id": NET_V1_ID}))
+    respx.get(f"{PRIV}/rest/networkconf").mock(return_value=httpx.Response(503))
+    priv_post = respx.post(f"{PRIV}/rest/networkconf")
+
+    with pytest.raises(CreatedButUnreadError) as excinfo:
+        await IntegrationWrites(client).create_network(dict(VLAN_PAYLOAD))
+
+    assert excinfo.value.v1_id == NET_V1_ID
+    assert not priv_post.called
+
+
+@respx.mock
+async def test_v1_create_wlan_not_read_back_raises_with_the_v1_id(client: UniFiClient) -> None:
+    _mock_site()
+    _mock_ap_groups()
+    respx.get(f"{PRIV}/rest/networkconf").mock(return_value=_priv([NETWORK_RECORD]))
+    respx.get(f"{PRIV}/rest/wlanconf").mock(return_value=_priv([]))
+    respx.post(f"{INT}/wifi/broadcasts").mock(
+        return_value=httpx.Response(201, json={"id": WLAN_V1_ID})
+    )
+    priv_post = respx.post(f"{PRIV}/rest/wlanconf")
+
+    with pytest.raises(CreatedButUnreadError) as excinfo:
+        await IntegrationWrites(client).create_wlan(dict(WLAN_PAYLOAD))
+
+    assert excinfo.value.v1_id == WLAN_V1_ID
+    assert not priv_post.called
+
+
+@respx.mock
 async def test_guest_network_stays_private(client: UniFiClient) -> None:
     v1_post = respx.post(f"{INT}/networks")
     priv_post = respx.post(f"{PRIV}/rest/networkconf").mock(
@@ -312,6 +372,59 @@ async def test_update_network_with_an_unmapped_key_stays_private(client: UniFiCl
     )
     await IntegrationWrites(client).update_network(NET_PRIV_ID, {"ipv6_interface_type": "pd"})
     assert priv_put.called and not v1_put.called
+
+
+@pytest.mark.parametrize("patch", [{"purpose": "corporate"}, {"vlan_enabled": True}])
+@respx.mock
+async def test_network_patch_v1_cannot_express_goes_private(
+    client: UniFiClient, patch: dict[str, Any]
+) -> None:
+    """v1 has no field for either key: a v1 PUT would drop it and report
+    success (finding B2). The whole update goes to the private API."""
+    _mock_site()
+    respx.get(f"{PRIV}/rest/networkconf").mock(return_value=_priv([NETWORK_RECORD]))
+    respx.get(f"{INT}/networks/{NET_V1_ID}").mock(return_value=httpx.Response(200, json=V1_NETWORK))
+    v1_put = respx.put(f"{INT}/networks/{NET_V1_ID}")
+    priv_put = respx.put(f"{PRIV}/rest/networkconf/{NET_PRIV_ID}").mock(
+        return_value=_priv([NETWORK_RECORD])
+    )
+    await IntegrationWrites(client).update_network(NET_PRIV_ID, dict(patch))
+    assert priv_put.called and not v1_put.called
+    assert json.loads(priv_put.calls.last.request.content) == patch
+
+
+@respx.mock
+async def test_update_to_a_guest_network_stays_private(client: UniFiClient) -> None:
+    """A v1 PUT replaces the record from a readback that has no guest concept."""
+    _mock_site()
+    guest = dict(NETWORK_RECORD, purpose="guest")
+    respx.get(f"{PRIV}/rest/networkconf").mock(return_value=_priv([guest]))
+    v1_get = respx.get(f"{INT}/networks/{NET_V1_ID}").mock(
+        return_value=httpx.Response(200, json=V1_NETWORK)
+    )
+    v1_put = respx.put(f"{INT}/networks/{NET_V1_ID}")
+    priv_put = respx.put(f"{PRIV}/rest/networkconf/{NET_PRIV_ID}").mock(return_value=_priv([guest]))
+    await IntegrationWrites(client).update_network(NET_PRIV_ID, {"name": "Visitors"})
+    assert priv_put.called
+    assert not v1_get.called and not v1_put.called
+
+
+@pytest.mark.parametrize("over", [{"is_guest": True}, {"security": "wpaeap"}])
+@respx.mock
+async def test_update_to_a_guest_or_enterprise_wlan_stays_private(
+    client: UniFiClient, over: dict[str, Any]
+) -> None:
+    _mock_site()
+    record = dict(WLAN_RECORD, **over)
+    respx.get(f"{PRIV}/rest/wlanconf").mock(return_value=_priv([record]))
+    v1_get = respx.get(f"{INT}/wifi/broadcasts/{WLAN_V1_ID}").mock(
+        return_value=httpx.Response(200, json=V1_WLAN)
+    )
+    v1_put = respx.put(f"{INT}/wifi/broadcasts/{WLAN_V1_ID}")
+    priv_put = respx.put(f"{PRIV}/rest/wlanconf/{WLAN_PRIV_ID}").mock(return_value=_priv([record]))
+    await IntegrationWrites(client).update_wlan(WLAN_PRIV_ID, {"name": "renamed"})
+    assert priv_put.called
+    assert not v1_get.called and not v1_put.called
 
 
 @respx.mock

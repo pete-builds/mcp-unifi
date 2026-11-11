@@ -28,6 +28,9 @@ What deliberately stays private, and why:
   bound to specific AP groups. None of those were exercised live, and AP-group
   targeting has no one-to-one mapping onto ``broadcastingDeviceFilter``.
 - Anything touching IPv6, DHCP DNS overrides, VPN or WAN records.
+- Updates to any network or WLAN the create map would have refused (see
+  :func:`network_update_maps` and :func:`wlan_update_maps`), and network
+  patches that set ``purpose`` or ``vlan_enabled``.
 """
 
 from __future__ import annotations
@@ -53,13 +56,15 @@ _NETWORK_CREATE_OPTIONAL = frozenset(
         "mdns_enabled",
     }
 )
+#: ``purpose`` and ``vlan_enabled`` are left out deliberately: v1 has no field
+#: for either (no guest concept, ADR 0008, and tagging only implied by
+#: ``vlanId``), so a patch carrying them goes to the private API whole rather
+#: than reporting success for a field the PUT never sent.
 _NETWORK_PATCHABLE = frozenset(
     {
         "name",
         "enabled",
         "vlan",
-        "vlan_enabled",
-        "purpose",
         "ip_subnet",
         "dhcpd_enabled",
         "dhcpd_start",
@@ -212,6 +217,18 @@ def _dhcp_server(changes: dict[str, Any], current: dict[str, Any] | None) -> dic
     return dhcp
 
 
+def network_update_maps(record: dict[str, Any]) -> bool:
+    """Whether an update to this private ``networkconf`` record may go through v1.
+
+    A v1 PUT replaces the whole network with a v1 readback plus the patch, and
+    the readback has no field for the private-only settings (a guest purpose
+    first among them). Only the shape :func:`network_create_body` maps, a
+    VLAN-tagged corporate network, was renamed through v1 live; anything else
+    is updated on the private API, which merges the patch instead.
+    """
+    return record.get("purpose") == "corporate" and record.get("vlan_enabled") is True
+
+
 def network_put_body(current: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any] | None:
     """Layer a private ``networkconf`` patch over a v1 readback; return the PUT body.
 
@@ -221,10 +238,6 @@ def network_put_body(current: dict[str, Any], patch: dict[str, Any]) -> dict[str
     if not patch or set(patch) - _NETWORK_PATCHABLE:
         return None
     if current.get("management") != "GATEWAY":
-        return None
-    if "purpose" in patch and patch["purpose"] != "corporate":
-        return None
-    if "vlan_enabled" in patch and patch["vlan_enabled"] is not True:
         return None
 
     body = {k: deepcopy(v) for k, v in current.items() if k not in _SERVER_OWNED}
@@ -327,6 +340,17 @@ def wlan_create_body(
         "arpProxyEnabled": False,
         "bssTransitionEnabled": True,
     }
+
+
+def wlan_update_maps(record: dict[str, Any]) -> bool:
+    """Whether an update to this private ``wlanconf`` record may go through v1.
+
+    The create map refuses guest WLANs and anything but WPA personal security
+    because neither was exercised live; an update to such a WLAN would PUT a v1
+    readback that may not carry its guest or RADIUS settings, so it stays on
+    the private API too.
+    """
+    return record.get("is_guest") is False and record.get("security") == "wpapsk"
 
 
 def wlan_put_body(

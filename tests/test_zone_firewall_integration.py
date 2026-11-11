@@ -130,6 +130,36 @@ async def test_state_unsupported_when_the_site_is_missing(client: UniFiClient) -
 
 
 @respx.mock
+async def test_state_unsupported_when_the_console_has_no_integration_api(
+    client: UniFiClient,
+) -> None:
+    """``/sites`` itself 404s on firmware without the Integration API. That is
+    an answer, not an error: every composite and restore_config asks this
+    before writing, and a raise stopped all of them (finding B1)."""
+    respx.get(f"{ROOT}/integration/v1/sites").mock(
+        return_value=httpx.Response(404, json={"code": "api.err.NotFound"})
+    )
+    assert await IntegrationWrites(client).zone_firewall_state() == "unsupported"
+
+
+@pytest.mark.parametrize("status", [401, 403])
+@pytest.mark.parametrize("route", ["sites", "zones"])
+@respx.mock
+async def test_state_on_401_or_403_raises_as_a_credential_problem(
+    client: UniFiClient, status: int, route: str
+) -> None:
+    denied = httpx.Response(status, json={"message": "Unauthorized"})
+    if route == "sites":
+        respx.get(f"{ROOT}/integration/v1/sites").mock(return_value=denied)
+    else:
+        _mock_site()
+        respx.get(f"{INT}/firewall/zones").mock(return_value=denied)
+    with pytest.raises(IntegrationRejectedError, match="credentials") as excinfo:
+        await IntegrationWrites(client).zone_firewall_state()
+    assert excinfo.value.status == status
+
+
+@respx.mock
 async def test_state_disabled_under_private_sends_nothing(client: UniFiClient) -> None:
     sites = _mock_site()
     assert await IntegrationWrites(client, "private").zone_firewall_state() == "disabled"
