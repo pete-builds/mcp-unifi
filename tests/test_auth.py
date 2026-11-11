@@ -103,6 +103,27 @@ def test_http_transport_refuses_to_start_without_tokens(stub_state: StubState) -
         build_server(s, stub=stub_state)
 
 
+def test_missing_token_error_points_a_local_client_at_stdio(stub_state: StubState) -> None:
+    """A uvx or pipx user who forgot the transport is told which one they need.
+
+    The default transport is HTTP, so following the local install steps
+    without ``MCP_TRANSPORT=stdio`` lands on this error; it used to offer only
+    a token or turning auth off.
+    """
+    s = Settings(
+        stub_mode=True,
+        log_format="text",
+        mcp_transport="streamable-http",
+        auth_required=True,
+        auth_tokens="",
+    )
+    with pytest.raises(ValueError) as exc:
+        build_server(s, stub=stub_state)
+    message = str(exc.value)
+    assert "MCP_TRANSPORT=stdio" in message
+    assert "Claude Desktop" in message
+
+
 def test_http_transport_opt_out_warns_but_boots(
     stub_state: StubState, caplog: pytest.LogCaptureFixture
 ) -> None:

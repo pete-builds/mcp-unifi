@@ -34,7 +34,7 @@ import logging
 import logging.handlers
 import os
 import sys
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -280,18 +280,100 @@ class AuditLog:
 
 _AUDIT_LOG: AuditLog | None = None
 
+#: What :func:`check_configured_sink` found at startup, served on ``/health``.
+_SINK_STATUS: dict[str, Any] | None = None
 
-def _build_sink_from_env(env: dict[str, str] | None = None) -> Sink:
-    e = env if env is not None else os.environ
+
+def _configured_sink_name(e: Mapping[str, str]) -> str:
     sink_name = (e.get(ENV_SINK) or "file").strip().lower()
     if sink_name not in VALID_SINKS:
         raise ValueError(f"{ENV_SINK}={sink_name!r} is not one of {sorted(VALID_SINKS)}")
+    return sink_name
+
+
+def _build_sink_from_env(env: dict[str, str] | None = None) -> Sink:
+    e = env if env is not None else os.environ
+    sink_name = _configured_sink_name(e)
     if sink_name == "stdout":
         return StdoutSink()
     if sink_name == "syslog":
         address = e.get(ENV_SYSLOG_ADDRESS, "/dev/log")
         return SyslogSink(address=address)
     return FileSink(path=e.get(ENV_PATH) or DEFAULT_PATH)
+
+
+def _file_is_appendable(path: Path) -> bool:
+    """Whether the file sink could append to ``path``, found by doing what it does.
+
+    Opens the file for append (creating it, and its parent directories, just
+    as :class:`FileSink` would on the first call) and writes nothing. A
+    permission check alone would miss a read-only filesystem.
+    """
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8"):
+            pass
+    except OSError:
+        return False
+    return True
+
+
+def check_configured_sink(
+    *, transport: str, env: Mapping[str, str] | None = None
+) -> dict[str, Any]:
+    """Check the configured audit sink at startup and record its state for ``/health``.
+
+    The sink used to be built on the first tool call, so a configuration
+    error surfaced there instead of at boot. Two cases now fail startup, and
+    both already broke every call or the transport:
+
+    * an unknown ``MCP_UNIFI_AUDIT_SINK`` (a typo such as ``files``), with
+      the same message every tool call used to fail with;
+    * the stdout sink combined with the stdio transport, which would write
+      audit lines into the JSON-RPC stream.
+
+    A file sink that cannot be written does NOT fail startup. That is the
+    default ``./audit.jsonl`` on a read-only root filesystem, which is what
+    the shipped compose file and Helm chart run, so refusing would take down
+    deployments that boot today. Instead one ERROR names the path and the
+    fix, and ``/health`` reports ``writable: false``. Tool calls keep working
+    and each failed write is still logged by :meth:`AuditLog.emit`.
+
+    Returns the summary ``/health`` serves: the sink name, and for the file
+    sink whether it could be written at startup. Never the path, since
+    ``/health`` answers unauthenticated.
+    """
+    global _SINK_STATUS
+    e = env if env is not None else os.environ
+    sink_name = _configured_sink_name(e)
+    if sink_name == "stdout" and transport == "stdio":
+        raise ValueError(
+            f"{ENV_SINK}=stdout cannot be used with MCP_TRANSPORT=stdio: the stdio "
+            f"transport owns stdout for its JSON-RPC stream, and audit lines written "
+            f"there would corrupt it. Use {ENV_SINK}=file (with {ENV_PATH}) or "
+            f"{ENV_SINK}=syslog."
+        )
+    status: dict[str, Any] = {"sink": sink_name}
+    if sink_name == "file":
+        path = Path(e.get(ENV_PATH) or DEFAULT_PATH)
+        writable = _file_is_appendable(path)
+        status["writable"] = writable
+        if not writable:
+            logger.error(
+                "audit log cannot be written at %s: tool calls will run, but none will be "
+                "recorded. Set %s=stdout to ship audit lines with the container log, or "
+                "point %s at a writable path such as a mounted volume.",
+                path,
+                ENV_SINK,
+                ENV_PATH,
+            )
+    _SINK_STATUS = status
+    return dict(status)
+
+
+def sink_status() -> dict[str, Any] | None:
+    """What :func:`check_configured_sink` found, or ``None`` if it has not run."""
+    return None if _SINK_STATUS is None else dict(_SINK_STATUS)
 
 
 def get_audit_log() -> AuditLog:
@@ -387,11 +469,13 @@ __all__ = [
     "Sink",
     "StdoutSink",
     "SyslogSink",
+    "check_configured_sink",
     "emit",
     "get_audit_log",
     "parse_jsonl",
     "scrub",
     "set_audit_log",
+    "sink_status",
 ]
 
 

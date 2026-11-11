@@ -31,7 +31,7 @@ from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from mcp_unifi import __version__, telemetry
+from mcp_unifi import __version__, audit, telemetry
 from mcp_unifi.backends import (
     AccessBackend,
     AccessRealBackend,
@@ -50,7 +50,12 @@ from mcp_unifi.clients.protect import ProtectClient
 from mcp_unifi.clients.protect_stubs import ProtectStubState
 from mcp_unifi.clients.stubs import StubState
 from mcp_unifi.clients.unifi import UniFiClient
-from mcp_unifi.config import Settings, load_settings, log_legacy_shape_warnings
+from mcp_unifi.config import (
+    Settings,
+    load_settings,
+    log_bare_name_warnings,
+    log_legacy_shape_warnings,
+)
 from mcp_unifi.dispatcher import build_registry, register_modules
 from mcp_unifi.logging_setup import configure_logging
 from mcp_unifi.responses import AdaptiveResponseMiddleware
@@ -159,9 +164,21 @@ def build_server(
         http server doesn't log 406 noise every healthcheck interval. The body
         echoes the running version so deploy checks can read it in one line:
         ``curl .../health | jq .version``. The Docker HEALTHCHECK gates on the
-        200 status code, not the body, so the JSON shape is safe.
+        200 status code, not the body, so the JSON shape is safe, and so do
+        the Helm chart's ``httpGet`` probes.
+
+        Once :func:`main` has checked the audit sink, the body also carries
+        ``audit``: the sink name and, for the file sink, whether it could be
+        written at startup (``{"sink": "file", "writable": false}`` means tool
+        calls run but nothing is recorded). An unwritable audit log does not
+        change the status code: the server is up, and restarting it would
+        not make the path writable.
         """
-        return JSONResponse({"status": "ok", "version": _resolve_version()})
+        body: dict[str, object] = {"status": "ok", "version": _resolve_version()}
+        audit_state = audit.sink_status()
+        if audit_state is not None:
+            body["audit"] = audit_state
+        return JSONResponse(body)
 
     register_modules(mcp, settings, registry)
     _install_scope_middleware(mcp, settings)
@@ -261,7 +278,9 @@ def _build_auth_provider(settings: Settings) -> StaticTokenVerifier | None:
                 "HTTP transport requires MCP_UNIFI_AUTH_TOKENS. Generate a "
                 "token with `openssl rand -hex 32` and set the env var. To "
                 "opt out (NOT RECOMMENDED beyond a single-host trusted "
-                "boundary), set MCP_UNIFI_AUTH_REQUIRED=false."
+                "boundary), set MCP_UNIFI_AUTH_REQUIRED=false. Running a local "
+                "stdio client (uvx, pipx, Claude Desktop)? Set "
+                "MCP_TRANSPORT=stdio instead; stdio needs no token."
             )
         logger.warning(
             "HTTP transport running WITHOUT authentication "
@@ -295,7 +314,13 @@ def main() -> None:
         fastmcp.settings.http_session_idle_timeout = SESSION_IDLE_TIMEOUT
     settings = load_settings()
     configure_logging(level=settings.log_level, fmt=settings.log_format)
+    # Ahead of safe_repr, which parses the auth settings: a stray bare
+    # CLIENT_ID fails there, and the warning says where it came from.
+    log_bare_name_warnings()
     logger.info("MCP UniFi starting", extra={"config": settings.safe_repr()})
+    # Before any tool can run: a sink typo used to boot healthy and then fail
+    # every call, and an unwritable audit path dropped every record silently.
+    audit.check_configured_sink(transport=settings.mcp_transport)
     server = build_server(settings)
 
     if settings.mcp_transport == "stdio":
