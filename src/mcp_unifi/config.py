@@ -345,14 +345,35 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     # Response shaping
     # ------------------------------------------------------------------
+    compact_responses: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("MCP_UNIFI_COMPACT_RESPONSES", "compact_responses"),
+        description=(
+            "If True, a client that negotiated MCP 2025-06-18 or later gets a "
+            "one-line summary as the text block and the data only in "
+            "structuredContent. Saves tokens on a host that feeds "
+            "structuredContent to the model. Leave False for Claude Desktop "
+            "and any host that shows the model only the text block: there "
+            "the summary would be all the model sees (issue #226). "
+            "Env var: MCP_UNIFI_COMPACT_RESPONSES."
+        ),
+    )
     force_full_text_responses: bool = Field(
         default=False,
+        # FORCE_FULL_TEXT_RESPONSES is the name 0.19.0 shipped (the field had
+        # no alias, so pydantic-settings bound the bare field name). It keeps
+        # working; the prefixed name is the documented one.
+        validation_alias=AliasChoices(
+            "MCP_UNIFI_FORCE_FULL_TEXT_RESPONSES",
+            "FORCE_FULL_TEXT_RESPONSES",
+            "force_full_text_responses",
+        ),
         description=(
-            "If True, always return the full JSON payload as the text block, "
-            "even to clients that negotiated MCP 2025-06-18 or later. The "
-            "escape hatch for a client that advertises structuredContent "
-            "support but does not actually read it. Costs tokens; changes no "
-            "data."
+            "If True, every client gets the tool's JSON text exactly as the "
+            "tool returned it and no parsed structuredContent, whatever it "
+            "negotiated. Wins over MCP_UNIFI_COMPACT_RESPONSES. For a client "
+            "that mishandles structuredContent altogether. "
+            "Env var: MCP_UNIFI_FORCE_FULL_TEXT_RESPONSES."
         ),
     )
 
@@ -819,6 +840,8 @@ class Settings(BaseSettings):
         return {
             "stub_mode": self.stub_mode,
             "readonly": self.readonly,
+            "compact_responses": self.compact_responses,
+            "force_full_text_responses": self.force_full_text_responses,
             "controllers_file": _path_or_none(self.controllers_file),
             "default_controller": self.default_controller or None,
             "controllers": [

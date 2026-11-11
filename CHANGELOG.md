@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Tool results carry the full data in the text block again.** Since 0.19.0 a
+  client that negotiated MCP `2025-06-18` or later got a one-line summary as
+  the text block and the data only in `structuredContent`. A host is free to
+  show the model only the text block, and Claude Desktop does, so there every
+  read tool answered "returned 10 record(s). Full result is in
+  structuredContent." and the model had nothing to work with. The negotiated
+  revision says what the client library can parse, not what the host passes
+  on, so the server cannot detect this. The default is now the shape the MCP
+  specification asks for: the full JSON as text, plus the same payload parsed
+  as `structuredContent`. Thanks to @Caleb79 for the report (#226).
+
+  The summary form is still available as `MCP_UNIFI_COMPACT_RESPONSES=true`,
+  for a host known to feed `structuredContent` to the model. **If you relied
+  on the smaller text block, set it when you upgrade**; otherwise responses
+  cost more tokens than they did on 0.27.0. Helm: `compactResponses: true`.
+- **The full-text escape hatch has a documented name.**
+  `FORCE_FULL_TEXT_RESPONSES` was the only way out of the behaviour above and
+  appeared in no `.env.example`, README or reference page, with no
+  `MCP_UNIFI_` prefix. It is now `MCP_UNIFI_FORCE_FULL_TEXT_RESPONSES`; the old
+  name keeps working. Both response settings are in the configuration
+  reference and in the startup log line.
+
 ### Security
 
 - **A failed startup no longer prints the secrets it was configured with.**

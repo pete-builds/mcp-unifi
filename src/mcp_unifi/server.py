@@ -175,19 +175,30 @@ def build_server(
 
 
 def _install_adaptive_response_middleware(mcp: FastMCP, settings: Settings) -> None:
-    """Register the compact-text + ``structuredContent`` response shaper.
+    """Register the response shaper: full JSON text plus ``structuredContent``.
 
     Installed unconditionally (including on stdio): the middleware decides
     per-request from the revision the client negotiated, and a client that
-    negotiated an older revision passes through untouched. There is no
-    transport for which "always send the full JSON as text" is the right
-    default when the client can read structured data.
+    negotiated an older revision passes through untouched.
+
+    The text block carries the full payload unless the operator opts into
+    compact mode. A host that shows the model only the text block is common
+    (Claude Desktop, most proxies), and for it a summary is the whole answer.
     """
     mcp.add_middleware(
-        AdaptiveResponseMiddleware(force_full_text=settings.force_full_text_responses)
+        AdaptiveResponseMiddleware(
+            compact=settings.compact_responses,
+            force_full_text=settings.force_full_text_responses,
+        )
     )
     if settings.force_full_text_responses:
-        logger.info("adaptive responses disabled; every client gets full JSON text")
+        logger.info("adaptive responses disabled; every client gets the tool's JSON text only")
+    elif settings.compact_responses:
+        logger.info(
+            "compact responses enabled: clients on MCP 2025-06-18+ get a summary "
+            "as text and the data in structuredContent only "
+            "(MCP_UNIFI_COMPACT_RESPONSES=true)"
+        )
 
 
 def _install_scope_middleware(mcp: FastMCP, settings: Settings) -> None:

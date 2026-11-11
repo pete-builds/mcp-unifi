@@ -1,10 +1,13 @@
 """Tests for adaptive tool responses.
 
-Two properties matter and are asserted separately:
+Three properties matter and are asserted separately:
 
-* **No data loss.** Whatever a client can read out of the response must equal
-  what the tool returned. A summary that drops a field is worse than a
-  verbose response.
+* **The text block carries the data by default.** A host is free to show the
+  model only the text block (Claude Desktop does), so by default the text must
+  be the tool's full JSON for every client, whatever it negotiated. Issue #226
+  was this property failing: the text said "returned 10 record(s)" and stopped.
+* **No data loss in compact mode.** With the opt-in summary, whatever a client
+  can read out of ``structuredContent`` must equal what the tool returned.
 * **No regression for old clients.** A client that did not negotiate MCP
   ``2025-06-18`` must receive exactly the payload it received before, because
   it has nowhere else to read it from.
@@ -159,11 +162,60 @@ async def _run(middleware: AdaptiveResponseMiddleware, revision: str | None, pay
     return await middleware.on_call_tool(_FakeContext(revision), call_next)
 
 
-async def test_new_client_gets_summary_plus_full_structured_content() -> None:
+async def test_new_client_gets_full_text_plus_parsed_structured_content() -> None:
+    """Default mode: the text block is the tool's own JSON, byte for byte."""
     payload = [{"_id": "w1", "name": "Home"}]
     result = await _run(AdaptiveResponseMiddleware(), "2025-06-18", payload)
+    assert result.content[0].text == json.dumps(payload, indent=2)
+    assert result.structured_content == {"result": payload}
+
+
+async def test_default_text_block_never_points_at_structured_content() -> None:
+    """Issue #226: a text-only host must not be told the data is elsewhere."""
+    payload = {"count": 10, "devices": [{"name": f"ap-{i}"} for i in range(10)]}
+    result = await _run(AdaptiveResponseMiddleware(), "2025-11-25", payload)
+    assert "structuredContent" not in result.content[0].text
+    assert json.loads(result.content[0].text) == payload
+    assert result.structured_content == payload
+
+
+async def test_compact_mode_gets_summary_plus_full_structured_content() -> None:
+    payload = [{"_id": "w1", "name": "Home"}]
+    result = await _run(AdaptiveResponseMiddleware(compact=True), "2025-06-18", payload)
     assert result.content[0].text.startswith("list_wlans returned 1 record(s).")
     assert result.structured_content == {"result": payload}
+
+
+async def test_compact_mode_leaves_an_old_client_untouched() -> None:
+    """Compact mode is still gated on the revision: no structure, no summary."""
+    payload = [{"_id": "w1", "name": "Home"}]
+    result = await _run(AdaptiveResponseMiddleware(compact=True), "2025-03-26", payload)
+    assert json.loads(result.content[0].text) == payload
+
+
+async def test_force_full_text_wins_over_compact() -> None:
+    payload = [{"_id": "w1", "name": "Home"}]
+    middleware = AdaptiveResponseMiddleware(compact=True, force_full_text=True)
+    result = await _run(middleware, "2025-11-25", payload)
+    assert json.loads(result.content[0].text) == payload
+
+
+async def test_error_flag_and_meta_survive_the_reframing() -> None:
+    from fastmcp.tools import ToolResult
+    from mcp import types as mt
+
+    async def call_next(_ctx: Any) -> Any:
+        return ToolResult(
+            content=[mt.TextContent(type="text", text='{"error": "boom"}')],
+            meta={"trace": "abc"},
+            is_error=True,
+        )
+
+    for middleware in (AdaptiveResponseMiddleware(), AdaptiveResponseMiddleware(compact=True)):
+        result = await middleware.on_call_tool(_FakeContext("2025-11-25"), call_next)
+        assert result.is_error is True
+        assert result.meta == {"trace": "abc"}
+        assert result.structured_content == {"error": "boom"}
 
 
 async def test_old_client_gets_the_original_payload_untouched() -> None:
@@ -213,11 +265,52 @@ def stdio_server(stub_settings: Settings) -> FastMCP:
     return build_server(stub_settings.model_copy(update={"mcp_transport": "stdio"}))
 
 
-async def test_end_to_end_client_reads_full_data_from_structured_content(
+@pytest.fixture
+def compact_stdio_server(stub_settings: Settings) -> FastMCP:
+    return build_server(
+        stub_settings.model_copy(update={"mcp_transport": "stdio", "compact_responses": True})
+    )
+
+
+@pytest.mark.parametrize("tool", ["list_devices", "get_site_health", "list_clients", "list_wlans"])
+async def test_end_to_end_text_block_carries_the_full_data_by_default(
+    stdio_server: FastMCP, tool: str
+) -> None:
+    """Issue #226, through a real negotiated session.
+
+    ``list_devices`` and ``get_site_health`` are the two tools the report
+    named. A host that reads only ``content[0].text`` must be able to answer
+    from it, so the text has to parse to the same records ``structuredContent``
+    carries, and has to carry at least one record.
+    """
+    async with Client(stdio_server) as client:
+        result = await client.call_tool(tool, {})
+
+        text = result.content[0].text
+        assert "structuredContent" not in text
+        from_text = json.loads(text)
+        structured = result.structured_content
+        from_structured = structured["result"] if isinstance(from_text, list) else structured
+        assert from_text == from_structured
+        assert from_text, f"{tool} returned no data to compare"
+
+
+async def test_end_to_end_default_text_is_what_the_tool_returned(
     stdio_server: FastMCP,
 ) -> None:
-    """The compact text must never be the only copy of the data."""
+    """The default adds a channel; it does not rewrite the existing one."""
+    raw = (await stdio_server.call_tool("list_wlans", {})).content[0].text
     async with Client(stdio_server) as client:
+        result = await client.call_tool("list_wlans", {})
+        assert result.content[0].text == raw
+        assert result.structured_content["result"][0]["name"] == "Home"
+
+
+async def test_end_to_end_compact_client_reads_full_data_from_structured_content(
+    compact_stdio_server: FastMCP,
+) -> None:
+    """The compact text must never be the only copy of the data."""
+    async with Client(compact_stdio_server) as client:
         result = await client.call_tool("list_wlans", {})
 
         assert "structuredContent" in result.content[0].text
@@ -228,19 +321,19 @@ async def test_end_to_end_client_reads_full_data_from_structured_content(
 
 
 async def test_end_to_end_compact_text_is_much_smaller_than_the_payload(
-    stdio_server: FastMCP,
+    compact_stdio_server: FastMCP,
 ) -> None:
-    async with Client(stdio_server) as client:
+    async with Client(compact_stdio_server) as client:
         result = await client.call_tool("list_clients", {})
         text_chars = len(result.content[0].text)
         payload_chars = len(json.dumps(result.structured_content))
         assert text_chars < payload_chars / 4
 
 
-async def test_end_to_end_verification_summary_reaches_the_text_block(
-    stdio_server: FastMCP,
+async def test_end_to_end_compact_verification_summary_reaches_the_text_block(
+    compact_stdio_server: FastMCP,
 ) -> None:
-    async with Client(stdio_server) as client:
+    async with Client(compact_stdio_server) as client:
         networks = (await client.call_tool("list_networks", {})).structured_content["result"]
         result = await client.call_tool(
             "update_vlan",
@@ -250,11 +343,13 @@ async def test_end_to_end_verification_summary_reaches_the_text_block(
         assert result.structured_content["verification"]["verified"] is True
 
 
+@pytest.mark.parametrize("server_fixture", ["stdio_server", "compact_stdio_server"])
 async def test_end_to_end_secrets_stay_redacted_in_both_channels(
-    stdio_server: FastMCP,
+    server_fixture: str, request: pytest.FixtureRequest
 ) -> None:
     """Adding a second channel must not open a second leak path."""
-    async with Client(stdio_server) as client:
+    server: FastMCP = request.getfixturevalue(server_fixture)
+    async with Client(server) as client:
         result = await client.call_tool("list_wlans", {})
         blob = result.content[0].text + json.dumps(result.structured_content)
         assert "[REDACTED]" in json.dumps(result.structured_content)
@@ -270,3 +365,66 @@ async def test_end_to_end_listed_tools_drop_the_synthetic_output_schema(
         tools = await client.list_tools()
         listed = {t.name: t for t in tools}
         assert listed["list_wlans"].outputSchema is None
+
+
+# ---------------------------------------------------------------------------
+# Settings surface
+# ---------------------------------------------------------------------------
+
+_RESPONSE_ENV_VARS = (
+    "MCP_UNIFI_COMPACT_RESPONSES",
+    "MCP_UNIFI_FORCE_FULL_TEXT_RESPONSES",
+    "FORCE_FULL_TEXT_RESPONSES",
+)
+
+
+@pytest.fixture
+def clean_response_env(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
+    for var in _RESPONSE_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
+    return monkeypatch
+
+
+def test_compact_responses_default_off(clean_response_env: pytest.MonkeyPatch) -> None:
+    """The default must be the shape that cannot lose data on a text-only host."""
+    settings = Settings(stub_mode=True, auth_required=False)
+    assert settings.compact_responses is False
+    assert settings.force_full_text_responses is False
+
+
+def test_compact_responses_reads_the_env_var(clean_response_env: pytest.MonkeyPatch) -> None:
+    clean_response_env.setenv("MCP_UNIFI_COMPACT_RESPONSES", "true")
+    assert Settings(stub_mode=True, auth_required=False).compact_responses is True
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "MCP_UNIFI_FORCE_FULL_TEXT_RESPONSES",  # the documented name
+        "FORCE_FULL_TEXT_RESPONSES",  # the name 0.19.0 shipped; must keep working
+    ],
+)
+def test_force_full_text_reads_both_env_names(
+    clean_response_env: pytest.MonkeyPatch, name: str
+) -> None:
+    clean_response_env.setenv(name, "true")
+    assert Settings(stub_mode=True, auth_required=False).force_full_text_responses is True
+
+
+def test_response_settings_appear_in_safe_repr() -> None:
+    """Operators need to see the response shape in the startup log line."""
+    shown = Settings(stub_mode=True, auth_required=False, compact_responses=True).safe_repr()
+    assert shown["compact_responses"] is True
+    assert shown["force_full_text_responses"] is False
+
+
+async def test_compact_env_var_reaches_the_wire(
+    stub_settings: Settings, clean_response_env: pytest.MonkeyPatch
+) -> None:
+    """The setting is wired through ``build_server``, not just parsed."""
+    server = build_server(
+        stub_settings.model_copy(update={"mcp_transport": "stdio", "compact_responses": True})
+    )
+    async with Client(server) as client:
+        result = await client.call_tool("list_devices", {})
+        assert result.content[0].text.endswith("Full result is in structuredContent.")

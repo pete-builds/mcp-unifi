@@ -1,27 +1,41 @@
-"""Adaptive tool responses: compact text for the model, full data alongside it.
+"""Adaptive tool responses: the data always in the text block, parsed alongside it.
 
-THE COST THIS EXISTS TO CUT
----------------------------
-Every tool in this server returns an indented JSON string. That string is the
-*entire* payload the model sees, and for a list tool it can run to thousands
-of tokens of ``{`` and whitespace before a single fact appears. With a large
-tool surface registered, the responses dominate context long before the tool
-definitions do.
+WHAT A CLIENT GETS
+------------------
+Every tool in this server returns an indented JSON string. MCP revision
+``2025-06-18`` added ``structuredContent`` to ``CallToolResult``: a place to
+put the same data as a parsed object. For a client that negotiated that
+revision this middleware sends:
 
-MCP revision ``2025-06-18`` added ``structuredContent`` to
-``CallToolResult``: a place to put machine-readable data that is *not* the
-text block. Clients that negotiated that revision read the structured field
-and can render or query it without the model paying for the JSON. So on those
-clients this middleware sends:
+* ``content``: the full JSON text, exactly as the tool returned it.
+* ``structuredContent``: the same payload, parsed, so a host that renders or
+  queries structured data does not have to re-parse a string.
 
-* ``content`` — a bounded, human-readable summary (a couple of hundred
-  characters, capped hard at :data:`MAX_COMPACT_TEXT_CHARS`).
-* ``structuredContent`` — the complete parsed object, losing nothing.
+That is the shape the MCP specification asks for: a tool that returns
+structured content should also return the serialized JSON in a text block,
+because a host is free to hand the model only the text. Claude Desktop and
+most bridged or proxied setups do exactly that.
 
 Clients that negotiated an older revision, or that cannot be identified, get
-exactly what they got before: the full JSON as text. That is the compatibility
-guarantee, and it is why the negotiation is a floor check rather than a
-feature flag — an unknown client is treated as an old client.
+the tool's result untouched.
+
+COMPACT MODE (OPT-IN)
+---------------------
+A list tool's JSON can run to thousands of tokens. A host that feeds
+``structuredContent`` to the model pays for the payload twice when the text
+block carries it too. For those deployments ``MCP_UNIFI_COMPACT_RESPONSES=true``
+replaces the text block with a bounded summary (capped hard at
+:data:`MAX_COMPACT_TEXT_CHARS`) and leaves the data in ``structuredContent``
+only.
+
+Compact mode was the default from 0.19.0 until issue #226: on a host that
+shows the model only the text block, every read tool answered "returned 10
+record(s). Full result is in structuredContent." and nothing else. The
+negotiated revision says what the client *library* can parse; it says nothing
+about what the *host* shows the model, and no handshake field does. Guessing
+wrong in one direction costs tokens, in the other it loses the data, so the
+default is the one that cannot lose data and the saving is the operator's
+choice.
 
 WHY MIDDLEWARE AND NOT A RETURN-TYPE CHANGE
 -------------------------------------------
@@ -31,14 +45,14 @@ tool manifest, to express one transport concern. The same reasoning that put
 per-client scoping in :mod:`mcp_unifi.scoping` applies here: the tools keep
 returning JSON strings, and the boundary decides how to frame them.
 
-WHAT IS DELIBERATELY NOT SUMMARIZED
------------------------------------
-The summary never invents facts. It reports the envelope's own shape — did it
-error, does it need confirmation, how many records, what did verification say
-— and nothing that requires interpreting domain data. If the envelope carries
-a ``verification`` block that failed, that goes in the summary verbatim,
-because a silently-failed write is exactly the thing a caller must not miss
-while skimming.
+WHAT THE COMPACT SUMMARY DELIBERATELY DOES NOT SAY
+--------------------------------------------------
+The summary never invents facts. It reports the envelope's own shape (did it
+error, does it need confirmation, how many records, what did verification
+say) and nothing that requires interpreting domain data. If the envelope
+carries a ``verification`` block that failed, that goes in the summary
+verbatim, because a silently-failed write is exactly the thing a caller must
+not miss while skimming.
 """
 
 from __future__ import annotations
@@ -195,16 +209,22 @@ def _structured_payload(result: ToolResult) -> Any | None:
 
 
 class AdaptiveResponseMiddleware(Middleware):
-    """Send a compact summary plus full ``structuredContent`` to new clients.
+    """Add parsed ``structuredContent`` to the full JSON text for new clients.
 
     Args:
-        force_full_text: When ``True``, every client gets the legacy
-            full-JSON-as-text response regardless of what it negotiated.
-            The operator escape hatch for a client that advertises
-            ``2025-06-18`` but does not actually read ``structuredContent``.
+        compact: When ``True``, a client that negotiated ``2025-06-18`` or
+            later gets a bounded summary as the text block and the data in
+            ``structuredContent`` only. Off by default: a host that shows the
+            model only the text block would see a record count and no
+            records (issue #226).
+        force_full_text: When ``True``, every client gets the tool's result
+            exactly as the tool returned it, with no ``structuredContent``
+            substitution and the synthesised output schema left in place.
+            Wins over ``compact``.
     """
 
-    def __init__(self, *, force_full_text: bool = False) -> None:
+    def __init__(self, *, compact: bool = False, force_full_text: bool = False) -> None:
+        self._compact = compact
         self._force_full_text = force_full_text
 
     async def on_list_tools(
@@ -248,13 +268,20 @@ class AdaptiveResponseMiddleware(Middleware):
         if payload is None:
             return result
 
-        summary = compact_content_text(payload, tool_name=context.message.name)
         # structuredContent must be a JSON object per the MCP schema, so a
         # list payload is wrapped rather than sent bare.
         structured = payload if isinstance(payload, dict) else {"result": payload}
+        # The text block is the only channel every host is guaranteed to show
+        # the model, so by default it keeps the tool's own JSON, byte for byte.
+        content: list[mt.ContentBlock] = result.content
+        if self._compact:
+            summary = compact_content_text(payload, tool_name=context.message.name)
+            content = [mt.TextContent(type="text", text=summary)]
         return ToolResult(
-            content=[mt.TextContent(type="text", text=summary)],
+            content=content,
             structured_content=structured,
+            meta=result.meta,
+            is_error=result.is_error,
         )
 
 

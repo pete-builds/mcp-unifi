@@ -33,6 +33,12 @@ modulesEnabled: "network"
 # than picking one.
 readOnly: false
 
+# Compact responses (opt-in). When true, clients on MCP 2025-06-18 or later
+# get a one-line summary as the text block and the data in structuredContent
+# only. Leave false unless every host using this server feeds structuredContent
+# to the model; a text-only host would see the summary and nothing else.
+compactResponses: false
+
 # HTTP transport authentication (v0.9.0+).
 # `tokens` is a comma-separated list of bearer tokens. Each entry is either a
 # bare token (auto-assigned client_id `client-N`) or a `name:token` pair.
