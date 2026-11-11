@@ -557,6 +557,43 @@ def test_pin_cert_honours_expected_fingerprint(console: Console, tmp_path: Path)
     assert out.exists()
 
 
+def test_pin_cert_without_expected_fingerprint_warns_it_trusted_on_first_use(
+    console: Console, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The docstring promised a compare-before-write the command never offered.
+
+    Without ``--expect-fingerprint`` it writes at once, so it now says on
+    stderr that it trusted the certificate on first use and how to check it.
+    """
+    out = tmp_path / "home.pem"
+    rc = pin_cert.main(_argv(console, out))
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "trusted on first use" in err
+    assert "--expect-fingerprint" in err
+    assert str(out) in err
+
+
+def test_pin_cert_with_matching_fingerprint_does_not_warn(
+    console: Console, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    out = tmp_path / "home.pem"
+    pretty = tls.format_fingerprint(console.fingerprint)
+    rc = pin_cert.main(_argv(console, out, "--expect-fingerprint", pretty))
+    assert rc == 0
+    assert "trusted on first use" not in capsys.readouterr().err
+
+
+def test_pin_cert_help_says_how_to_check_before_writing(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit):
+        pin_cert.main(["--help"])
+    text = " ".join(capsys.readouterr().out.split())
+    assert "trusted on first use" in text
+    assert "--expect-fingerprint to check before anything is written" in text
+
+
 def test_pin_cert_unreachable_console_writes_nothing(tmp_path: Path) -> None:
     out = tmp_path / "home.pem"
     rc = pin_cert.main(["127.0.0.1", "--port", "9", "--out", str(out), "--timeout", "1"])
