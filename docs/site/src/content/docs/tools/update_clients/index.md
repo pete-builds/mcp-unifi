@@ -32,14 +32,14 @@ Side effects:
 ## Example
 
 ```python
-update_clients(updates=[{"mac": "aa:bb:cc:00:00:02", "name": "Pete's iPhone"}, {"mac": "aa:bb:cc:00:00:04", "note": None}])
+update_clients(updates=[{"mac": "aa:bb:cc:00:00:02", "name": "Pete's iPhone"}, {"mac": "aa:bb:cc:00:00:04", "note": ""}])
 ```
 
 ## Parameters
 
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `updates` | `array` | yes | — | 1 to 100 items, each ``{"mac": ..., "name": ..., "note": ...}``. ``mac`` is required. Leave a field out to keep it; send ``null`` or ``""`` to clear it. Each item must name at least one of ``name`` (max 128) or ``note`` (max 1024). Surrounding whitespace is stripped, control characters are refused, other keys are refused. |
+| `updates` | `array` | yes | — | 1 to 100 items, each ``{"mac": ..., "name": ..., "note": ...}``. ``mac`` is required. Leave a field out (or send ``null``) to keep it; send ``""`` to clear it. Each item must set at least one of ``name`` (max 128) or ``note`` (max 1024). Surrounding whitespace is stripped, control characters are refused, other keys are refused. |
 | `controller` | `string` | no | "default" | Name of the UniFi controller to target. Defaults to ``"default"``. |
 | `dry_run` | `boolean` | no | false | Preview the change without applying it. Returns, per MAC, the ``{old, new}`` value of each field that would change (``noted`` marked ``dependent``), and flags MACs the controller has no record of. |
 

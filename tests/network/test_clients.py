@@ -327,8 +327,8 @@ async def test_real_update_clients_clear_sends_empty_string_and_unsets_noted(
         "update_clients",
         {
             "updates": [
-                {"mac": "aa:bb:cc:dd:ee:01", "name": None},
-                {"mac": "aa:bb:cc:dd:ee:02", "name": ""},
+                {"mac": "aa:bb:cc:dd:ee:01", "name": ""},
+                {"mac": "aa:bb:cc:dd:ee:02", "name": "", "note": None},
             ]
         },
     )
@@ -340,7 +340,7 @@ async def test_real_update_clients_clear_sends_empty_string_and_unsets_noted(
 async def test_update_clients_clear_removes_the_key_stub(
     stub_server: FastMCP, stub_state: StubState
 ) -> None:
-    result = await _call(stub_server, "update_clients", {"updates": [{"mac": _ECHO, "name": None}]})
+    result = await _call(stub_server, "update_clients", {"updates": [{"mac": _ECHO, "name": ""}]})
     assert result["results"][0]["status"] == "updated"
     record = _record(stub_state, _ECHO)
     assert "name" not in record
@@ -375,6 +375,46 @@ async def test_real_update_clients_omitted_field_is_not_sent(real_server: FastMC
         {"updates": [{"mac": "aa:bb:cc:dd:ee:01", "note": "rack 2"}]},
     )
     assert bodies == {"u1": {"note": "rack 2"}}
+
+
+@respx.mock
+async def test_real_update_clients_null_keeps_the_stored_value(real_server: FastMCP) -> None:
+    """A client that fills every optional property sends ``"note": null`` on
+    a plain rename. That is "keep", never "clear": only ``""`` clears."""
+    respx.get(f"{BASE}/list/user").mock(
+        return_value=_user_list(
+            {
+                "_id": "u1",
+                "mac": "aa:bb:cc:dd:ee:01",
+                "name": "Old",
+                "note": "rack 2",
+                "noted": True,
+            }
+        )
+    )
+    bodies: dict[str, Any] = {}
+    respx.put(f"{BASE}/rest/user/u1").mock(side_effect=_capture_puts(bodies))
+    result = await _call(
+        real_server,
+        "update_clients",
+        {"updates": [{"mac": "aa:bb:cc:dd:ee:01", "name": "New", "note": None}]},
+    )
+    assert bodies == {"u1": {"name": "New"}}
+    assert result["results"][0]["changes"] == {"name": {"old": "Old", "new": "New"}}
+
+
+async def test_update_clients_null_keeps_the_stored_value_stub(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    await _call(stub_server, "update_clients", {"updates": [{"mac": _IPHONE, "note": "work"}]})
+    await _call(
+        stub_server,
+        "update_clients",
+        {"updates": [{"mac": _IPHONE, "name": "Pete's phone", "note": None}]},
+    )
+    record = _record(stub_state, _IPHONE)
+    assert record["name"] == "Pete's phone"
+    assert record["note"] == "work"
 
 
 @respx.mock
@@ -535,7 +575,7 @@ async def test_update_clients_dry_run_shows_the_diff_and_writes_nothing_stub(
         "update_clients",
         {
             "updates": [
-                {"mac": _ECHO, "name": None},
+                {"mac": _ECHO, "name": ""},
                 {"mac": _IPHONE, "name": "iPhone 15"},
                 {"mac": "de:ad:be:ef:00:00", "note": "x"},
             ],
@@ -579,6 +619,7 @@ async def test_real_update_clients_dry_run_sends_no_put(real_server: FastMCP) ->
         ({"mac": _IPHONE, "name": "x", "use_fixedip": True}, "Extra inputs are not permitted"),
         ({"mac": _IPHONE, "name": "x", "network_id": "n1"}, "Extra inputs are not permitted"),
         ({"mac": _IPHONE}, "set at least one of name or note"),
+        ({"mac": _IPHONE, "name": None, "note": None}, "set at least one of name or note"),
         ({"mac": "not-a-mac", "name": "x"}, "is not a MAC address"),
         ({"mac": _IPHONE, "name": "line\nbreak"}, "control characters"),
         ({"mac": _IPHONE, "note": "tab\there"}, "control characters"),
@@ -589,6 +630,7 @@ async def test_real_update_clients_dry_run_sends_no_put(real_server: FastMCP) ->
         "extra-key",
         "traffic-field",
         "sets-nothing",
+        "only-nulls",
         "bad-mac",
         "newline",
         "tab",
@@ -667,8 +709,8 @@ async def test_update_clients_is_refused_in_readonly_mode(stub_state: StubState)
 async def test_update_clients_audit_event_records_the_updates_as_sent(
     stub_server: FastMCP, tmp_path: Path
 ) -> None:
-    """One event per call, carrying each item as plain JSON with explicit
-    nulls kept (so a clear stays distinguishable from "left out") and the
+    """One event per call, carrying each item as plain JSON (a clear as
+    ``""``, a field sent as null dropped because null means "keep") and the
     per-MAC outcome in the result. ``note`` is not a secret and is not
     scrubbed."""
     log_path = tmp_path / "audit.jsonl"
@@ -676,14 +718,19 @@ async def test_update_clients_audit_event_records_the_updates_as_sent(
     await _call(
         stub_server,
         "update_clients",
-        {"updates": [{"mac": _ECHO, "name": None}, {"mac": _IPHONE, "note": "work"}]},
+        {
+            "updates": [
+                {"mac": _ECHO, "name": ""},
+                {"mac": _IPHONE, "name": None, "note": "work"},
+            ]
+        },
     )
     events = [json.loads(line) for line in log_path.read_text().splitlines()]
     assert len(events) == 1
     event = events[0]
     assert event["tool"] == "update_clients"
     assert event["args"]["updates"] == [
-        {"mac": _ECHO, "name": None},
+        {"mac": _ECHO, "name": ""},
         {"mac": _IPHONE, "note": "work"},
     ]
     assert [(r["mac"], r["status"]) for r in event["result"]["results"]] == [
@@ -696,13 +743,13 @@ async def test_update_clients_audit_event_replays_with_the_same_effect(
     stub_server: FastMCP, tmp_path: Path
 ) -> None:
     """The recorded args are the tool's real arguments, so the replay tool can
-    re-run the call: a clear recorded as ``null`` replays as a clear."""
+    re-run the call: a clear recorded as ``""`` replays as a clear."""
     log_path = tmp_path / "audit.jsonl"
     set_audit_log(AuditLog(sink=FileSink(log_path)))
     await _call(
         stub_server,
         "update_clients",
-        {"updates": [{"mac": _ECHO, "name": None}, {"mac": _IPHONE, "note": "work"}]},
+        {"updates": [{"mac": _ECHO, "name": ""}, {"mac": _IPHONE, "note": "work"}]},
     )
     events = parse_jsonl(log_path.read_text().splitlines())
 

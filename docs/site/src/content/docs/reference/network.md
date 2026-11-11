@@ -65,10 +65,10 @@ Every tool returns a JSON string. Errors are returned as `{"error": "...", "stub
 | `reconnect_client` | write | yes | Force a client to reconnect (kick-sta). |
 | `update_clients` | write | yes | Set or clear the display name and note of up to 100 clients by MAC. Cosmetic only: no IP reservation. |
 
-`update_clients` takes a list of `{mac, name, note}` items. A field left out is kept, `null` or `""` clears it, and only fields that differ are sent, as a partial `PUT /rest/user/{_id}`. The controller's `noted` flag is updated alongside when it has to change. Each MAC gets its own `status` (`updated`, `unchanged`, `not_found` or `failed`), and one failure does not stop the rest. Clearing through this endpoint is not yet verified on real hardware.
+`update_clients` takes a list of `{mac, name, note}` items. A field left out (or sent as `null`) is kept, `""` clears it, and only fields that differ are sent, as a partial `PUT /rest/user/{_id}`. The controller's `noted` flag is updated alongside when it has to change. Each MAC gets its own `status` (`updated`, `unchanged`, `not_found` or `failed`), and one failure does not stop the rest. Clearing through this endpoint is not yet verified on real hardware.
 
 ```python
-update_clients(updates=[{"mac": "aa:bb:cc:00:00:02", "name": "Pete's iPhone"}, {"mac": "aa:bb:cc:00:00:04", "note": None}], dry_run=True)
+update_clients(updates=[{"mac": "aa:bb:cc:00:00:02", "name": "Pete's iPhone"}, {"mac": "aa:bb:cc:00:00:04", "note": ""}], dry_run=True)
 ```
 
 ## DHCP

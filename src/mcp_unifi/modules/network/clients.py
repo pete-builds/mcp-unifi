@@ -37,31 +37,32 @@ _TEXT_FIELDS: tuple[str, ...] = ("name", "note")
 
 
 def _clean_text(value: str | None) -> str | None:
-    """Strip ``value``; ``None`` for a clear (``None`` or empty after strip)."""
+    """Strip ``value``. ``None`` stays ``None`` (keep); ``""`` after strip is a clear."""
     if value is None:
         return None
     if any(unicodedata.category(ch) == "Cc" for ch in value):
         raise ValueError("must not contain control characters (newlines, tabs, escapes)")
-    stripped = value.strip()
-    return stripped or None
+    return value.strip()
 
 
 class ClientUpdate(BaseModel):
-    """One client's name and note change. A field left out is kept; null or "" clears it."""
+    """One client's name and note change. A field left out or null is kept; "" clears it."""
 
-    # ``model_fields_set`` is what tells "left out" from "sent as null", so
-    # neither text field may get a default that reads as "set". No other key
-    # is accepted: an item is never passed through to the controller.
+    # ``null`` means the same as leaving the field out, never "clear". Clients
+    # that fill every optional property (strict structured-output modes do)
+    # send ``"note": null`` on a plain rename, and that must not wipe the
+    # note. Only an explicit empty string clears. No other key is accepted:
+    # an item is never passed through to the controller.
     model_config = ConfigDict(extra="forbid")
 
     mac: str = Field(description='Client MAC in any common form, e.g. "aa:bb:cc:00:00:01".')
     name: BoundedName | None = Field(
         default=None,
-        description="New display name. Leave out to keep it; null or empty clears it.",
+        description='New display name. Leave out (or null) to keep it; "" clears it.',
     )
     note: BoundedNote | None = Field(
         default=None,
-        description="New note. Leave out to keep it; null or empty clears it.",
+        description='New note. Leave out (or null) to keep it; "" clears it.',
     )
 
     @field_validator("mac")
@@ -78,17 +79,17 @@ class ClientUpdate(BaseModel):
 
     @model_validator(mode="after")
     def _sets_something(self) -> ClientUpdate:
-        if not self.model_fields_set & set(_TEXT_FIELDS):
-            raise ValueError(f"{self.mac}: set at least one of name or note")
+        if all(getattr(self, f) is None for f in _TEXT_FIELDS):
+            raise ValueError(f'{self.mac}: set at least one of name or note ("" clears one)')
         return self
 
     def wanted(self) -> dict[str, str | None]:
         """``{field: new value}`` for the fields this update names; ``None`` clears."""
-        return {f: getattr(self, f) for f in _TEXT_FIELDS if f in self.model_fields_set}
+        return {f: (getattr(self, f) or None) for f in _TEXT_FIELDS if getattr(self, f) is not None}
 
     def as_audit_args(self) -> dict[str, Any]:
-        """The update as the caller sent it, explicit nulls kept, for the audit log."""
-        return self.model_dump(exclude_unset=True)
+        """The update as it will be applied, for the audit log: a clear stays ``""``."""
+        return self.model_dump(exclude_none=True)
 
 
 def _stored_text(record: dict[str, Any], field: str) -> str | None:
@@ -362,13 +363,13 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
           matched, the response is an error envelope that still carries
           every per-MAC result.
 
-        Example: update_clients(updates=[{"mac": "aa:bb:cc:00:00:02", "name": "Pete's iPhone"}, {"mac": "aa:bb:cc:00:00:04", "note": None}])
+        Example: update_clients(updates=[{"mac": "aa:bb:cc:00:00:02", "name": "Pete's iPhone"}, {"mac": "aa:bb:cc:00:00:04", "note": ""}])
 
         Args:
             updates: 1 to 100 items, each ``{"mac": ..., "name": ...,
-                "note": ...}``. ``mac`` is required. Leave a field out to
-                keep it; send ``null`` or ``""`` to clear it. Each item must
-                name at least one of ``name`` (max 128) or ``note``
+                "note": ...}``. ``mac`` is required. Leave a field out (or
+                send ``null``) to keep it; send ``""`` to clear it. Each
+                item must set at least one of ``name`` (max 128) or ``note``
                 (max 1024). Surrounding whitespace is stripped, control
                 characters are refused, other keys are refused.
             controller: Name of the UniFi controller to target. Defaults to
@@ -378,9 +379,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 change (``noted`` marked ``dependent``), and flags MACs the
                 controller has no record of.
         """
-        # Record the updates as plain dicts with explicit nulls kept. The
-        # pydantic items would otherwise reach the audit sink as their repr,
-        # which neither reads back as JSON nor replays.
+        # Record the updates as plain dicts (a clear as ``""``, a kept field
+        # absent). The pydantic items would otherwise reach the audit sink as
+        # their repr, which neither reads back as JSON nor replays.
         annotate_audit(updates=[u.as_audit_args() for u in updates])
         for i, update in enumerate(updates):
             for earlier in updates[:i]:
