@@ -29,6 +29,22 @@ async def test_get_credential_by_id(
     assert "card_id" in cred
 
 
+async def test_get_credential_redacts_the_card_number(
+    access_registry: FastMCP, stub_access_state: AccessStubState
+) -> None:
+    """The NFC card number is what a cloner needs, so it comes back redacted.
+
+    The key stays, so the caller can still see the credential is an NFC card
+    with a number on file; the credential's ``id`` is the handle other tools take.
+    """
+    cred = stub_access_state.credentials[0]
+    number = cred["card_id"]
+    raw = await access_registry.call_tool("get_credential", {"credential_id": cred["id"]})
+    text = raw.content[0].text
+    assert number not in text
+    assert json.loads(text)["card_id"] == "[REDACTED]"
+
+
 async def test_get_credential_not_found(access_registry: FastMCP) -> None:
     result = await _call(access_registry, "get_credential", {"credential_id": "nope"})
     assert "error" in result

@@ -50,6 +50,33 @@ def test_json_formatter_emits_valid_json() -> None:
     assert parsed["extra"]["extra_field"]["ok"] == 1
 
 
+def test_json_formatter_redacts_a_top_level_sensitive_extra() -> None:
+    """``extra={"api_key": k}`` names the secret with the extra's own key.
+
+    The formatter used to scrub each extra's value, which only walks what sits
+    under it, so a sensitive key at the top level of ``extra`` passed through.
+    """
+    formatter = JsonFormatter()
+    logger = logging.getLogger("test.extras")
+    record = logger.makeRecord(
+        "test.extras",
+        logging.INFO,
+        "x",
+        1,
+        "connecting",
+        None,
+        None,
+        extra={"api_key": "SUPERSECRET-top", "password": "hunter2-top", "controller": "home"},
+    )
+    line = formatter.format(record)
+    parsed = json.loads(line)
+    assert "SUPERSECRET-top" not in line
+    assert "hunter2-top" not in line
+    assert parsed["extra"]["api_key"] == "[REDACTED]"
+    assert parsed["extra"]["password"] == "[REDACTED]"
+    assert parsed["extra"]["controller"] == "home"
+
+
 def test_configure_logging_replaces_handlers() -> None:
     configure_logging(level="DEBUG", fmt="json")
     root = logging.getLogger()
