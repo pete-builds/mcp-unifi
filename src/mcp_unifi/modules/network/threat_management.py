@@ -101,7 +101,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     @audited("set_threat_management", mutates=True)
     async def set_threat_management(
         enabled: bool,
-        mode: str = "ids",
+        mode: str = "",
         signature_categories: list[str] | None = None,
         controller: str = "default",
         dry_run: bool = False,
@@ -113,21 +113,26 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
           ``enabled=False`` the mode is forced to ``off``; the controller
           then disables packet inspection on every network. When
           ``enabled=True``, ``mode`` selects detection-only (``ids``) or
-          inline blocking (``ips``).
+          inline blocking (``ips``). With no ``mode``, a site already on
+          ``ids`` or ``ips`` keeps its mode, so changing only the categories
+          never downgrades IPS to IDS; a site that was off comes on as
+          ``ids``.
         - Untouched fields (signature categories, network bindings, ad
           blocking, DNS filtering) are preserved by the controller's merge
           semantics. Supplying ``signature_categories`` replaces the active
           list wholesale; ``None`` leaves it unchanged.
-        - Mutates controller state. Use dry_run=True to preview the change.
+        - Mutates controller state. Use dry_run=True to preview the change;
+          the preview shows the current and resulting mode and categories.
 
         Example: set_threat_management(enabled=True, mode="ips")
 
         Args:
             enabled: ``True`` activates inspection; ``False`` sets ``mode=off``
                 and overrides any ``mode`` argument.
-            mode: When ``enabled=True``, one of ``"ids"`` (detection-only,
-                default) or ``"ips"`` (inline blocking). Ignored when
-                ``enabled=False``.
+            mode: When ``enabled=True``, one of ``"ids"`` (detection-only)
+                or ``"ips"`` (inline blocking). Empty (default) keeps the
+                current mode, or ``"ids"`` if inspection is off. Ignored
+                when ``enabled=False``.
             signature_categories: Optional replacement list of UniFi
                 signature-category strings (e.g. ``["emerging-malware",
                 "tor", "dshield"]``). Pass ``None`` to leave the active
@@ -135,27 +140,55 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             controller: Name of the UniFi controller to target. Defaults to
                 ``"default"``.
             dry_run: Preview the change without applying it. Returns the
-                predicted patch envelope.
+                predicted patch plus the current (``before``) and resulting
+                (``after``) mode and categories.
         """
-        if not enabled:
-            effective_mode = "off"
-        elif mode in _ALLOWED_MODES and mode != "off":
-            effective_mode = mode
-        else:
+        if enabled and mode and (mode not in _ALLOWED_MODES or mode == "off"):
             return err(
                 f"mode {mode!r} not allowed; expected one of {sorted(_ALLOWED_MODES - {'off'})}"
             )
+
+        current: dict[str, Any] | None = None
+        if dry_run or (enabled and not mode):
+            try:
+                backend = resolve_backend(registry, controller)
+                current = await backend.get_setting("ips")
+            except UniFiError as exc:
+                logger.exception("set_threat_management lookup failed")
+                return err(str(exc))
+
+        if not enabled:
+            effective_mode = "off"
+        elif mode:
+            effective_mode = mode
+        else:
+            # No mode asked for: keep the one the site runs. Defaulting to
+            # "ids" here silently downgraded an IPS site whenever an agent
+            # only meant to change the categories.
+            current_mode = str((current or {}).get("ips_mode", "off"))
+            effective_mode = current_mode if current_mode in {"ids", "ips"} else "ids"
 
         patch: dict[str, Any] = {"ips_mode": effective_mode}
         if signature_categories is not None:
             patch["enabled_categories"] = list(signature_categories)
 
         if dry_run:
+            before = _project_get(current or {})
             return format_json(
                 {
                     "dry_run": True,
                     "controller": controller,
                     "would_patch": {"setting_key": "ips", "patch": patch},
+                    "before": {
+                        "mode": before["mode"],
+                        "enabled_signature_categories": before["enabled_signature_categories"],
+                    },
+                    "after": {
+                        "mode": effective_mode,
+                        "enabled_signature_categories": patch.get(
+                            "enabled_categories", before["enabled_signature_categories"]
+                        ),
+                    },
                     "summary": (
                         f"Would set Threat Management mode={effective_mode}"
                         + (
