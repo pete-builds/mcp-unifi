@@ -179,3 +179,79 @@ async def test_a_failed_lookup_at_preview_makes_the_token_unconfirmable(
 def test_fastmcp_with_no_request_reports_no_identity_rather_than_failing() -> None:
     """Pins the assumption that makes failing closed safe on stdio."""
     assert _pending.current_client_id() is None
+
+
+# ---------------------------------------------------------------------------
+# The registry is bounded, per issuer (review 2026-11, finding A7)
+#
+# Each preview holds a resource snapshot for five minutes and restore_config
+# holds a whole plan, and nothing capped how many a caller could open. The
+# caps refuse rather than evict, so one client reaching its limit cannot cost
+# another client a pending action.
+# ---------------------------------------------------------------------------
+
+
+async def _noop() -> str:
+    return "{}"
+
+
+def _put(registry: _pending.PendingActionsRegistry) -> _pending.PendingAction:
+    return registry.put(
+        action="delete_vlan", controller="default", resource={"_id": "x"}, executor=_noop
+    )
+
+
+def test_one_client_at_its_cap_is_refused_and_others_carry_on(identity: _Identity) -> None:
+    registry = reset_pending_actions(max_per_client=2, max_total=10)
+
+    identity.client_id = "alice"
+    alice_tokens = [_put(registry).token, _put(registry).token]
+    with pytest.raises(_pending.PendingActionsFullError, match="limit 2"):
+        _put(registry)
+
+    identity.client_id = "bob"
+    bob_token = _put(registry).token
+
+    assert all(t in registry for t in alice_tokens), "alice's previews were evicted"
+    assert bob_token in registry
+    identity.client_id = "alice"
+    assert registry.claim(alice_tokens[0]) is not None
+
+
+def test_the_registry_wide_cap_refuses_without_evicting(identity: _Identity) -> None:
+    registry = reset_pending_actions(max_per_client=2, max_total=3)
+    tokens = []
+    for client in ("alice", "alice", "bob"):
+        identity.client_id = client
+        tokens.append(_put(registry).token)
+
+    identity.client_id = "carol"
+    with pytest.raises(_pending.PendingActionsFullError, match="limit 3"):
+        _put(registry)
+    assert all(t in registry for t in tokens)
+
+
+def test_an_expired_preview_frees_its_slot(
+    identity: _Identity, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registry = reset_pending_actions(ttl_seconds=10, max_per_client=1, max_total=10)
+    identity.client_id = "alice"
+    _put(registry)
+    now = _pending.time.time()
+    monkeypatch.setattr(_pending.time, "time", lambda: now + 11)
+    assert _put(registry).token in registry
+
+
+async def test_a_refused_preview_reaches_the_caller_and_touches_nothing(
+    stub_server: FastMCP, stub_state: StubState, identity: _Identity
+) -> None:
+    reset_pending_actions(max_per_client=1)
+    identity.client_id = "alice"
+    first, second = stub_state.networks[0]["_id"], stub_state.networks[1]["_id"]
+    token = (await _call(stub_server, "delete_vlan", {"network_id": first}))["token"]
+
+    with pytest.raises(Exception, match="destructive previews waiting"):
+        await _call(stub_server, "delete_vlan", {"network_id": second})
+
+    assert token in get_pending_actions()
+    assert any(n["_id"] == second for n in stub_state.networks)
