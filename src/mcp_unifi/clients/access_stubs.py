@@ -10,10 +10,12 @@ pattern used by :class:`StubState` and :class:`ProtectStubState`.
 
 from __future__ import annotations
 
+import copy
 import time
 import uuid
 from collections import defaultdict, deque
 
+from mcp_unifi.clients.ids import path_segment
 from mcp_unifi.models import UniFiRecord
 
 
@@ -351,47 +353,57 @@ class AccessStubState:
             raise queue.popleft()
 
     # ----- Doors ----------------------------------------------------------
-    def list_doors(self) -> list[UniFiRecord]:
-        return self.doors
-
-    def get_door(self, door_id: str) -> UniFiRecord | None:
-        for door in self.doors:
-            if door.get("id") == door_id:
-                return door
+    # Every read hands back a copy, so a caller that edits a returned record
+    # cannot edit the stub's state through it (the real client returns freshly
+    # parsed JSON). Every id and filter value goes through ``path_segment``
+    # first, as it does in :class:`AccessClient`, so a tool that forwards a
+    # malformed id fails here the way it would against a console. An unknown
+    # but well-formed id is "not found": ``None``.
+    def _lookup(self, records: list[UniFiRecord], record_id: str, name: str) -> UniFiRecord | None:
+        path_segment(record_id, name)
+        for record in records:
+            if record.get("id") == record_id:
+                return copy.deepcopy(record)
         return None
 
+    def list_doors(self) -> list[UniFiRecord]:
+        self._check_failure("list_doors")
+        return copy.deepcopy(self.doors)
+
+    def get_door(self, door_id: str) -> UniFiRecord | None:
+        self._check_failure("get_door")
+        return self._lookup(self.doors, door_id, "door_id")
+
     def list_door_groups(self) -> list[UniFiRecord]:
-        return self.door_groups
+        self._check_failure("list_door_groups")
+        return copy.deepcopy(self.door_groups)
 
     # ----- Policies -------------------------------------------------------
     def list_access_policies(self) -> list[UniFiRecord]:
-        return self.access_policies
+        self._check_failure("list_access_policies")
+        return copy.deepcopy(self.access_policies)
 
     def get_access_policy(self, policy_id: str) -> UniFiRecord | None:
-        for policy in self.access_policies:
-            if policy.get("id") == policy_id:
-                return policy
-        return None
+        self._check_failure("get_access_policy")
+        return self._lookup(self.access_policies, policy_id, "policy_id")
 
     # ----- Credentials ----------------------------------------------------
     def list_credentials(self) -> list[UniFiRecord]:
-        return self.credentials
+        self._check_failure("list_credentials")
+        return copy.deepcopy(self.credentials)
 
     def get_credential(self, credential_id: str) -> UniFiRecord | None:
-        for cred in self.credentials:
-            if cred.get("id") == credential_id:
-                return cred
-        return None
+        self._check_failure("get_credential")
+        return self._lookup(self.credentials, credential_id, "credential_id")
 
     # ----- Visitors -------------------------------------------------------
     def list_visitors(self) -> list[UniFiRecord]:
-        return self.visitors
+        self._check_failure("list_visitors")
+        return copy.deepcopy(self.visitors)
 
     def get_visitor(self, visitor_id: str) -> UniFiRecord | None:
-        for visitor in self.visitors:
-            if visitor.get("id") == visitor_id:
-                return visitor
-        return None
+        self._check_failure("get_visitor")
+        return self._lookup(self.visitors, visitor_id, "visitor_id")
 
     # ----- Events ---------------------------------------------------------
     def list_events(
@@ -402,6 +414,11 @@ class AccessStubState:
         result: str = "",
         door_id: str = "",
     ) -> list[UniFiRecord]:
+        self._check_failure("list_events")
+        if result:
+            path_segment(result, "result")
+        if door_id:
+            path_segment(door_id, "door_id")
         out: list[UniFiRecord] = []
         for evt in self.events:
             ts = evt.get("timestamp", 0)
@@ -413,24 +430,25 @@ class AccessStubState:
                 continue
             out.append(evt)
         out.sort(key=lambda e: e.get("timestamp", 0), reverse=True)
-        return out[:limit]
+        return copy.deepcopy(out[:limit])
 
     # ----- Devices --------------------------------------------------------
     def list_devices(self) -> list[UniFiRecord]:
-        return self.devices
+        self._check_failure("list_devices")
+        return copy.deepcopy(self.devices)
 
     def get_device(self, device_id: str) -> UniFiRecord | None:
-        for device in self.devices:
-            if device.get("id") == device_id:
-                return device
-        return None
+        self._check_failure("get_device")
+        return self._lookup(self.devices, device_id, "device_id")
 
     # ----- System ---------------------------------------------------------
     def get_system_info(self) -> UniFiRecord:
-        return self.system_info
+        self._check_failure("get_system_info")
+        return copy.deepcopy(self.system_info)
 
     def list_users(self) -> list[UniFiRecord]:
-        return self.users
+        self._check_failure("list_users")
+        return copy.deepcopy(self.users)
 
 
 def make_access_stub_state() -> AccessStubState:

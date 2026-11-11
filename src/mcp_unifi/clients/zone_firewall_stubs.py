@@ -37,6 +37,10 @@ _REQUIRED: tuple[str, ...] = (
 )
 
 
+#: Index the first user-defined policy receives; later ones count up from here.
+_FIRST_POLICY_INDEX = 10000
+
+
 def v1_network_id(network: UniFiRecord) -> str | None:
     """A stub network's Integration API id: its ``external_id``, else its ``_id``."""
     ext = network.get("external_id")
@@ -53,6 +57,10 @@ class ZoneFirewallStubState:
         self.state: ZoneFirewallState = "legacy"
         self.zone_ids: dict[str, str] = {}
         self.policies: list[UniFiRecord] = []
+        # Next policy ``index``. A counter rather than ``len(self.policies)``,
+        # which hands a new policy the index of one still in the list as soon
+        # as an earlier policy has been deleted.
+        self._next_index = _FIRST_POLICY_INDEX
 
     def migrate(self) -> None:
         """Turn this site zone-based, with the default zones and no user policies."""
@@ -111,9 +119,10 @@ class ZoneFirewallStubState:
         record: UniFiRecord = {
             **body,
             "id": str(uuid.uuid4()),
-            "index": 10000 + len(self.policies),
+            "index": self._next_index,
             "metadata": {"origin": USER_DEFINED},
         }
+        self._next_index += 1
         self.policies.append(record)
         return record
 
