@@ -12,10 +12,17 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
+import respx
 
+from mcp_unifi import audit
 from mcp_unifi.audit import AuditEvent
 from mcp_unifi.cli import replay as replay_mod
+from mcp_unifi.clients.stubs import StubState
+from mcp_unifi.config import Settings
+from mcp_unifi.redaction import REDACTED
+from mcp_unifi.server import build_server
 
 
 class _StubServer:
@@ -310,8 +317,11 @@ class _EnvelopeServer:
 
 @pytest.mark.parametrize("as_text", [False, True])
 async def test_replay_treats_error_envelope_as_failure(as_text: bool) -> None:
+    # The token is a stale value rather than the audit sentinel: an event
+    # carrying ``***`` is now skipped before it reaches the server (finding
+    # A2), and this test is about what happens once a call is made.
     results = await replay_mod.replay_events(
-        [_event("confirm_destructive_action", token="***")],
+        [_event("confirm_destructive_action", token="0b7c2e1a-expired")],
         stub_mode=True,
         target_controller=None,
         i_mean_it=False,
@@ -321,3 +331,240 @@ async def test_replay_treats_error_envelope_as_failure(as_text: bool) -> None:
     assert results[0].success is False
     assert results[0].error is not None
     assert "unknown or expired token" in results[0].error
+
+
+# ---------------------------------------------------------------------------
+# Redacted secrets are never replayed (review 2026-11, finding A2)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        {"wlan_id": "w1", "updates": {"x_passphrase": REDACTED}},
+        {"wlan_id": "w1", "updates": {"radius": [{"x_secret": REDACTED}]}},
+        {"token": REDACTED},
+    ],
+    ids=["nested-dict", "nested-list", "top-level"],
+)
+async def test_replay_skips_an_event_whose_arguments_were_redacted(args: dict[str, Any]) -> None:
+    server = _StubServer()
+    results = await replay_mod.replay_events(
+        [_event("update_wlan", **args)],
+        stub_mode=True,
+        target_controller=None,
+        i_mean_it=False,
+        server=server,
+    )
+    assert server.calls == []
+    assert results[0].skipped is True
+    assert results[0].success is False
+    assert "redacted" in (results[0].skip_reason or "")
+    assert "cannot be replayed faithfully" in (results[0].skip_reason or "")
+
+
+async def test_replayed_wlan_update_never_writes_the_sentinel_passphrase(
+    stub_settings: Settings, tmp_path: Path
+) -> None:
+    """The replay_secret shape, end to end against a spied stub.
+
+    A real ``update_wlan`` is captured to a file sink, which scrubs the
+    passphrase to ``***``. Replaying that capture used to send ``***`` as the
+    new passphrase and count it a success.
+    """
+    state = StubState()
+    patches: list[dict[str, Any]] = []
+    original = state.update_wlan
+
+    def spy(wlan_id: str, patch: dict[str, Any]) -> Any:
+        patches.append(dict(patch))
+        return original(wlan_id, patch)
+
+    state.update_wlan = spy  # type: ignore[method-assign]
+    capture = tmp_path / "capture.jsonl"
+    audit.set_audit_log(audit.AuditLog(audit.FileSink(capture)))
+    server = build_server(stub_settings, stub=state)
+    wlan = state.wlans[0]
+    await server.call_tool(
+        "update_wlan", {"wlan_id": wlan["_id"], "updates": {"x_passphrase": "CorrectHorse9"}}
+    )
+    assert patches == [{"x_passphrase": "CorrectHorse9"}]
+
+    events = audit.parse_jsonl(capture.read_text().splitlines())
+    results = await replay_mod.replay_events(
+        events, stub_mode=True, target_controller=None, i_mean_it=False, server=server
+    )
+
+    assert patches == [{"x_passphrase": "CorrectHorse9"}], "the backend saw a replayed write"
+    assert [(r.tool, r.skipped) for r in results] == [("update_wlan", True)]
+
+
+# ---------------------------------------------------------------------------
+# The CLI builds its own server from a clean environment (finding A3)
+# ---------------------------------------------------------------------------
+
+
+def _write_log(path: Path, events: list[dict[str, Any]]) -> bytes:
+    path.write_text("\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8")
+    return path.read_bytes()
+
+
+def _logged(tool: str, controller: str = "default", **args: Any) -> dict[str, Any]:
+    return {
+        "ts": "2026-05-14T00:00:00Z",
+        "controller": controller,
+        "tool": tool,
+        "args": args,
+        "result": None,
+        "success": True,
+        "latency_ms": 1.0,
+    }
+
+
+@pytest.fixture
+def clean_replay_env(
+    clean_unifi_env: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> Path:
+    """No auth, sink or deployment variables, and a cwd with no ``.env``.
+
+    The cwd matters twice: Settings reads ``.env`` from it, and the default
+    audit sink is ``./audit.jsonl`` in it.
+    """
+    for var in (audit.ENV_SINK, audit.ENV_PATH, audit.ENV_SYSLOG_ADDRESS, "MCP_UNIFI_READONLY"):
+        monkeypatch.delenv(var, raising=False)
+    workdir = tmp_path / "cwd"
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)
+    audit.set_audit_log(None)
+    return workdir
+
+
+def test_main_stub_replay_runs_in_a_clean_environment(
+    clean_replay_env: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No ``_build_server`` patch: the server is the one the CLI really builds.
+
+    Before the fix the settings defaulted to the HTTP transport, which
+    refuses to build without a bearer token, so the CLI died with a raw
+    ``ValueError`` traceback in exactly the environment an operator runs it.
+    """
+    log = tmp_path / "input.jsonl"
+    before = _write_log(
+        log,
+        [
+            _logged("list_networks"),
+            _logged("create_vlan", name="Office", vlan_id=51, subnet="10.0.51.0/24"),
+        ],
+    )
+
+    rc = replay_mod.main([str(log)])
+
+    assert rc == 0, capsys.readouterr()
+    assert "succeeded=2" in capsys.readouterr().out
+    assert log.read_bytes() == before
+    # A stub replay is a rehearsal: nothing reaches the configured sink.
+    assert not (clean_replay_env / "audit.jsonl").exists()
+
+
+def test_main_stub_replay_is_not_refused_by_client_scoping(
+    clean_replay_env: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """With scoped tokens configured, every in-process call was refused.
+
+    The scope middleware found no identity on an in-process call and failed
+    closed, so a replay inside a scoped deployment reported every event failed.
+    """
+    monkeypatch.setenv("MCP_UNIFI_AUTH_TOKENS", "ops:0123abcd:protect")
+    log = tmp_path / "input.jsonl"
+    _write_log(log, [_logged("list_networks")])
+
+    rc = replay_mod.main([str(log)])
+
+    assert rc == 0, capsys.readouterr()
+    assert "succeeded=1" in capsys.readouterr().out
+
+
+def test_main_stub_replay_still_honours_read_only_mode(
+    clean_replay_env: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MCP_UNIFI_READONLY", "true")
+    log = tmp_path / "input.jsonl"
+    _write_log(
+        log,
+        [
+            _logged("list_networks"),
+            _logged("create_vlan", name="Office", vlan_id=51, subnet="10.0.51.0/24"),
+        ],
+    )
+
+    rc = replay_mod.main([str(log), "--json"])
+
+    assert rc == 1
+    lines = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
+    assert lines[0]["success"] is True
+    assert lines[1]["success"] is False
+    assert "read-only mode" in lines[1]["error"]
+
+
+@pytest.fixture
+def real_replay_env(clean_replay_env: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    monkeypatch.setenv("UNIFI_HOST", "gateway.test")
+    monkeypatch.setenv("UNIFI_API_KEY", "test-api-key-1234")
+    sink_path = clean_replay_env / "configured-audit.jsonl"
+    monkeypatch.setenv(audit.ENV_SINK, "file")
+    monkeypatch.setenv(audit.ENV_PATH, str(sink_path))
+    return sink_path
+
+
+@respx.mock
+def test_main_real_replay_is_audited_and_marked_as_a_replay(
+    real_replay_env: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A real replay is a real call: it lands in the configured sink, marked."""
+    respx.get("https://gateway.test:443/proxy/network/api/s/default/rest/networkconf").mock(
+        return_value=httpx.Response(200, json={"data": []})
+    )
+    log = tmp_path / "input.jsonl"
+    before = _write_log(log, [_logged("list_networks")])
+
+    rc = replay_mod.main([str(log), "--real", "--target-controller", "default", "--i-mean-it"])
+
+    assert rc == 0, capsys.readouterr()
+    assert log.read_bytes() == before
+    records = audit.parse_jsonl(real_replay_env.read_text().splitlines())
+    assert [(r.tool, r.client_id) for r in records] == [
+        ("list_networks", replay_mod.REPLAY_CLIENT_ID)
+    ]
+
+
+def test_main_real_replay_refuses_to_replay_the_sink_it_appends_to(
+    real_replay_env: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    before = _write_log(real_replay_env, [_logged("list_networks")])
+
+    rc = replay_mod.main(
+        [str(real_replay_env), "--real", "--target-controller", "default", "--i-mean-it"]
+    )
+
+    assert rc == 2
+    assert "audit sink appends to" in capsys.readouterr().err
+    assert real_replay_env.read_bytes() == before
+
+
+def test_main_reports_bad_configuration_without_a_traceback(
+    clean_replay_env: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Real mode with no controller configured is an operator error, not a crash."""
+    log = tmp_path / "input.jsonl"
+    _write_log(log, [_logged("list_networks")])
+
+    rc = replay_mod.main([str(log), "--real", "--target-controller", "default", "--i-mean-it"])
+
+    assert rc == 2
+    assert "Real mode requires controller config" in capsys.readouterr().err

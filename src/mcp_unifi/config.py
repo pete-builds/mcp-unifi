@@ -32,11 +32,14 @@ Design credit: the ``_default_tls_policy`` validator in PR #154 by
 from __future__ import annotations
 
 import logging
+import os
 import ssl
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
+from dotenv import dotenv_values
 from pydantic import (
     AliasChoices,
     BaseModel,
@@ -923,6 +926,72 @@ def log_legacy_shape_warnings(settings: Settings) -> None:
             "Supported through 0.x; it becomes mandatory only at a major release. See %s.",
             ADR_0007,
         )
+
+
+#: Bare names that are documented and stay supported, so they get no warning.
+#: ``FORCE_FULL_TEXT_RESPONSES`` is the name 0.19.0 shipped.
+_DOCUMENTED_BARE_NAMES: frozenset[str] = frozenset({"FORCE_FULL_TEXT_RESPONSES"})
+
+_PREFIX = "MCP_UNIFI_"
+
+
+def _bare_name_aliases() -> list[tuple[str, str]]:
+    """``(prefixed, bare)`` variable names for every setting with an undocumented bare name.
+
+    A field declared ``AliasChoices("MCP_UNIFI_X", "x")`` lists the field name
+    as its second choice so ``Settings(x=...)`` keeps working. Environment
+    matching is case-insensitive, so that choice also binds the bare variable
+    ``X``. Derived from the model rather than listed, so a setting added the
+    same way later is covered without anyone remembering to add it here.
+    """
+    pairs: list[tuple[str, str]] = []
+    for field_info in Settings.model_fields.values():
+        alias = field_info.validation_alias
+        if not isinstance(alias, AliasChoices):
+            continue
+        names = [choice.upper() for choice in alias.choices if isinstance(choice, str)]
+        prefixed = next((n for n in names if n.startswith(_PREFIX)), None)
+        if prefixed is None or any(n in _DOCUMENTED_BARE_NAMES for n in names):
+            continue
+        pairs.extend((prefixed, n) for n in names if not n.startswith(_PREFIX))
+    return pairs
+
+
+def log_bare_name_warnings(
+    env: Mapping[str, str] | None = None,
+    env_file: str | Path | None = None,
+) -> list[str]:
+    """Warn once per setting that was supplied only through its bare name.
+
+    ``READONLY``, ``AUTH_REQUIRED``, ``CLIENT_ID`` and the rest are read as
+    ``MCP_UNIFI_READONLY`` and so on (see :func:`_bare_name_aliases`), and are
+    documented nowhere. A stray ``CLIENT_ID`` left by unrelated tooling aborts
+    boot, and a stray ``AUTH_REQUIRED=false`` turns authentication off.
+    They are still read in this release, because dropping one silently could
+    fail open (a deployment relying on ``READONLY=true`` would start
+    writing). Each warning names the variable to use instead and never the
+    value.
+
+    Looks at the process environment and at the ``.env`` file Settings reads,
+    since either can supply a bare name. Returns the bare names warned about.
+    """
+    source = os.environ if env is None else env
+    present = {key.upper() for key in source}
+    dotenv_path = Path(env_file if env_file is not None else str(Settings.model_config["env_file"]))
+    if dotenv_path.is_file():
+        present |= {key.upper() for key in dotenv_values(dotenv_path)}
+    warned: list[str] = []
+    for prefixed, bare in _bare_name_aliases():
+        if bare in present and prefixed not in present:
+            logger.warning(
+                "%s is set and is being read as %s. The bare name is undocumented and "
+                "will stop being read in a later release; set %s instead.",
+                bare,
+                prefixed,
+                prefixed,
+            )
+            warned.append(bare)
+    return warned
 
 
 def _load_controllers_from_yaml(path: Path) -> list[ControllerConfig]:

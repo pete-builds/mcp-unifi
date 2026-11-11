@@ -13,16 +13,18 @@ this file verifies the integration:
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
 
 import pytest
-from fastmcp import FastMCP
+from fastmcp import Client, FastMCP
 
-from mcp_unifi.audit import REDACTED, AuditLog, FileSink, set_audit_log
+from mcp_unifi.audit import REDACTED, AuditEvent, AuditLog, FileSink, set_audit_log
 from mcp_unifi.clients.stubs import StubState
 from mcp_unifi.config import Settings
+from mcp_unifi.modules import _audit
 from mcp_unifi.modules._audit import audited
 from mcp_unifi.server import build_server
 
@@ -310,3 +312,99 @@ async def test_confirm_event_links_to_preview_without_the_token(
     assert confirm_ev["args"]["action"] == "delete_vlan"
     assert confirm_ev["controller"] == preview_ev["controller"]
     assert confirm_ev["result"]["deleted"] is True
+
+
+# ---------------------------------------------------------------------------
+# A cancelled call is still recorded (review 2026-11, finding A1)
+# ---------------------------------------------------------------------------
+
+
+class _SlowSink:
+    """Sink whose write yields to the loop, the way a real file or syslog write does.
+
+    The pause is what makes the test honest: an emit that is not shielded from
+    the cancellation is interrupted right here and never lands.
+    """
+
+    def __init__(self) -> None:
+        self.events: list[AuditEvent] = []
+
+    async def write(self, event: AuditEvent) -> None:
+        await asyncio.sleep(0.05)
+        self.events.append(event)
+
+    async def aclose(self) -> None:
+        return None
+
+
+async def _wait_for(predicate: Any, timeout: float = 3.0) -> None:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while not predicate() and loop.time() < deadline:
+        await asyncio.sleep(0.02)
+
+
+async def test_cancelled_call_through_client_is_recorded_once() -> None:
+    """The cancel_e2e shape: a real FastMCP Client cancels a write mid-flight.
+
+    The tool has sent its request (``sent`` is recorded) when the client
+    cancels. Before the fix the decorator only caught ``Exception``, so the
+    ``CancelledError`` skipped the emit and the write left no audit line.
+    """
+    sink = _SlowSink()
+    set_audit_log(AuditLog(sink=sink))
+    side_effects: list[str] = []
+    mcp = FastMCP("cancel-test")
+
+    @mcp.tool()
+    @audited("synthetic_cancelled_delete", mutates=True)
+    async def synthetic_cancelled_delete(rule_id: str) -> str:
+        side_effects.append("sent")
+        await asyncio.sleep(2)
+        side_effects.append("answered")
+        return json.dumps({"deleted": True})
+
+    async with Client(mcp) as client:
+        call = asyncio.create_task(client.call_tool("synthetic_cancelled_delete", {"rule_id": "x"}))
+        await _wait_for(lambda: bool(side_effects))
+        call.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await call
+        await _wait_for(lambda: bool(sink.events))
+        # Give a second, wrongly duplicated record time to land too.
+        await asyncio.sleep(0.2)
+
+    assert side_effects == ["sent"], "the server-side call should have been cancelled"
+    assert len(sink.events) == 1
+    event = sink.events[0]
+    assert event.tool == "synthetic_cancelled_delete"
+    assert event.success is False
+    assert event.error == _audit.CANCELLED_ERROR
+    assert "unknown" in event.error
+    assert event.result is None
+    assert event.args["rule_id"] == "x"
+
+
+async def test_cancelled_call_is_recorded_and_cancellation_propagates() -> None:
+    """Direct task cancellation: one record, then the CancelledError comes back out."""
+    sink = _SlowSink()
+    set_audit_log(AuditLog(sink=sink))
+    started = asyncio.Event()
+
+    @audited("synthetic_cancelled_write", mutates=True)
+    async def synthetic_cancelled_write(controller: str = "default") -> str:
+        started.set()
+        await asyncio.sleep(2)
+        return "{}"
+
+    task = asyncio.create_task(synthetic_cancelled_write(controller="office"))
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert task.cancelled()
+    assert len(sink.events) == 1
+    assert sink.events[0].success is False
+    assert sink.events[0].error == _audit.CANCELLED_ERROR
+    assert sink.events[0].controller == "office"

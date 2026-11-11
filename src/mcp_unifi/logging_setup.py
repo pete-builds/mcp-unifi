@@ -87,12 +87,17 @@ class JsonFormatter(logging.Formatter):
         }
         if record.exc_info:
             payload["exc_info"] = self.formatException(record.exc_info)
-        # Surface any structured extras the caller passed through.
-        extras = {
-            key: _scrub(value)
-            for key, value in record.__dict__.items()
-            if key not in _RESERVED_LOGRECORD_FIELDS and not key.startswith("_")
-        }
+        # Surface any structured extras the caller passed through. The whole
+        # dict goes through the scrub, not each value: scrubbing values only
+        # walked what sat UNDER each key and never looked at the extra's own
+        # name, so ``extra={"api_key": k}`` logged ``k`` in clear.
+        extras = _scrub(
+            {
+                key: value
+                for key, value in record.__dict__.items()
+                if key not in _RESERVED_LOGRECORD_FIELDS and not key.startswith("_")
+            }
+        )
         if extras:
             payload["extra"] = extras
         return json.dumps(payload, default=str)

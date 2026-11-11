@@ -52,6 +52,11 @@ SECRET_KEYS = [
     "x_iapp_key",  # wlanconf: IAPP (inter-AP roaming) key, leaked until 0.26.1
     "private_preshared_keys",  # wlanconf: the per-client PSK list
     "backup_json",  # restore_config argument: a whole backup, pasted by the caller
+    "pin_code",  # access credential: the PIN itself
+    "card_id",  # access credential: the NFC card number a cloner needs
+    "nfc_id",  # access credential (alternate spelling)
+    "rtspAlias",  # protect camera channel: the bearer secret in the stream URL
+    "rtspUrl",  # protect camera channel: the stream URL with the alias in it
     "api_key",
     "X-API-Key",  # the header spelling; api_key does not contain it
     "auth_token",
@@ -76,6 +81,8 @@ NON_SECRET_KEYS = [
     "auth_required",
     # ruled out a bare ``pin`` pattern
     "pin_length",  # access credential: digits in the PIN, not the PIN
+    # ruled out a bare ``rtsp`` pattern: a flag, not the stream
+    "isRtspEnabled",
     "mapping",  # substring-matches "pin" straight through the middle
     # ruled out a bare ``code`` pattern (hence the exact pass-code spellings)
     "status_code",
@@ -207,6 +214,42 @@ def test_redact_walks_nested_and_listed_records() -> None:
     assert out["raw"][0]["x_secret"] == REDACTED_OUTPUT
     assert isinstance(out["raw"], tuple)
     assert "leak" not in repr(out)
+
+
+def test_redact_covers_access_credentials_and_protect_stream_handles() -> None:
+    """A PIN, a card number and a camera stream URL are credentials, not labels."""
+    record = {
+        "credentials": [
+            {"id": "c1", "type": "pin", "pin_code": "482913", "pin_length": 6},
+            {"id": "c2", "type": "nfc", "card_id": "04A2B9C1D2", "nfc_id": "04A2B9C1D2"},
+        ],
+        "camera": {
+            "id": "cam1",
+            "channels": [
+                {
+                    "id": 0,
+                    "isRtspEnabled": True,
+                    "rtspAlias": "Zq81mWv3",
+                    "rtspUrl": "rtsps://192.0.2.1:7441/Zq81mWv3",
+                }
+            ],
+        },
+    }
+    out = redact(record)
+    pin, nfc = out["credentials"]
+    channel = out["camera"]["channels"][0]
+    assert pin["pin_code"] == REDACTED_OUTPUT
+    assert pin["pin_length"] == 6
+    assert nfc["card_id"] == REDACTED_OUTPUT
+    assert nfc["nfc_id"] == REDACTED_OUTPUT
+    assert channel["rtspAlias"] == REDACTED_OUTPUT
+    assert channel["rtspUrl"] == REDACTED_OUTPUT
+    assert channel["isRtspEnabled"] is True
+    # The handles a caller passes back stay visible.
+    assert pin["id"] == "c1"
+    assert out["camera"]["id"] == "cam1"
+    for secret in ("482913", "04A2B9C1D2", "Zq81mWv3"):
+        assert secret not in str(out)
 
 
 def test_redact_does_not_mutate_its_input() -> None:

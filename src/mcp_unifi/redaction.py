@@ -85,7 +85,9 @@ from typing import Any
 #: key (``x_preshared_key``) alongside ``x_private_key``, the device
 #: management and mesh keys (``x_authkey``, ``x_inform_authkey``,
 #: ``x_vwirekey``), the ``passwd`` spelling of a stored password, the
-#: Access visitor pass code in both its spellings, and the five OpenVPN key
+#: Access visitor pass code in both its spellings, the Access PIN and NFC
+#: card number (``pin_code``, ``card_id``, ``nfc_id``), the Protect RTSP
+#: alias and stream URL (``rtspAlias``, ``rtspUrl``), and the five OpenVPN key
 #: fields a ``remote-user-vpn`` network record carries (``x_ca_key``,
 #: ``x_server_key``, ``x_dh_key``, ``x_shared_client_key``, ``x_auth_key``).
 #:
@@ -154,6 +156,19 @@ SENSITIVE_KEY_PATTERNS: frozenset[str] = frozenset(
         # secrets before it emits an envelope, but the argument is whatever
         # the caller pasted, and the audit log would otherwise keep it whole.
         "backup_json",
+        # Access credential material: a PIN is the credential itself, and an
+        # NFC card number is what a cloner needs. No tool takes either back
+        # as an argument; credentials are addressed by their ``id``. The PIN
+        # record's ``pin_length`` matches none of these and stays visible.
+        "pin_code",
+        "card_id",
+        "nfc_id",
+        # Protect stream handles. An RTSP alias is the bearer secret in the
+        # stream URL (anyone holding it can watch the camera), and the URL
+        # embeds it. No tool here serves live RTSP or takes either back.
+        # ``isRtspEnabled`` is a flag and matches neither spelling.
+        "rtspalias",
+        "rtspurl",
     }
 )
 

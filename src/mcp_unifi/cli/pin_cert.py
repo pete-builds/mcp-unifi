@@ -10,9 +10,15 @@ This is the whole bootstrap for certificate pinning, and it is deliberately
 a command an operator runs rather than something the server does on its
 first connection. Trust-on-first-use inside a long-running process is a
 silent decision made by whichever process happened to start first; this
-command prints the fingerprint so the operator can compare it against the
-console before the file is written, and refuses to replace an existing pin
+command makes it a visible one, and refuses to replace an existing pin
 unless told to.
+
+To check the certificate before anything is written, pass the fingerprint
+read off the console as ``--expect-fingerprint``: the file is written only
+on a match. Without it the command trusts whatever certificate the console
+presented on this connection, writes it, and says so on stderr with the
+fingerprint to compare afterwards. A mismatch then means the pin is wrong:
+delete the file and run again with ``--expect-fingerprint``.
 
 Exit codes: ``0`` written, ``1`` refused (file exists without ``--force``, or
 the fingerprint did not match ``--expect-fingerprint``), ``2`` the console
@@ -42,6 +48,11 @@ def _build_parser() -> argparse.ArgumentParser:
         description=(
             "Fetch a UniFi console's TLS certificate, print its SHA-256 fingerprint, "
             "and write it as PEM for the controller's pinned_cert setting."
+        ),
+        epilog=(
+            "Without --expect-fingerprint the certificate is trusted on first use: it "
+            "is written immediately and the fingerprint is printed for you to compare "
+            "afterwards. Pass --expect-fingerprint to check before anything is written."
         ),
     )
     parser.add_argument("host", help="Console IP or hostname (what the server connects to).")
@@ -99,6 +110,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(ssl.DER_cert_to_PEM_cert(der), encoding="utf-8")
     print(f"written:     {out}")
+    if not args.expect_fingerprint:
+        print(
+            f"warning: no --expect-fingerprint given, so this certificate was trusted on "
+            f"first use: it is whatever {args.host}:{args.port} presented on this "
+            f"connection. Compare the sha256 above with the fingerprint the console "
+            f"itself shows. If they differ, delete {out} and run again with "
+            f"--expect-fingerprint <that fingerprint>.",
+            file=sys.stderr,
+        )
     print(f"next:        set pinned_cert: {out} on this controller (or UNIFI_PINNED_CERT)")
     return 0
 

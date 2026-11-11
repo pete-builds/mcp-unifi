@@ -400,11 +400,14 @@ async def test_call_tool_denied_when_client_id_is_none() -> None:
         pytest.fail("call_next must not run when identity is unresolved")
         return "unreachable"
 
+    # list_networks is a real network tool in the client's own scope, so only
+    # the identity check can refuse it. These tests used to call list_vlans,
+    # which does not exist and was refused whatever the identity logic did.
     with (
         patch("mcp_unifi.scoping._current_client_id", return_value=None),
         pytest.raises(ToolError, match="not available"),
     ):
-        await mw.on_call_tool(_StubCallContext("list_vlans", tools), call_next)
+        await mw.on_call_tool(_StubCallContext("list_networks", tools), call_next)
 
 
 @pytest.mark.asyncio
@@ -423,7 +426,7 @@ async def test_call_tool_denied_when_client_id_not_in_scope_map() -> None:
         patch("mcp_unifi.scoping._current_client_id", return_value="mystery-client"),
         pytest.raises(ToolError, match="not available"),
     ):
-        await mw.on_call_tool(_StubCallContext("list_vlans", tools), call_next)
+        await mw.on_call_tool(_StubCallContext("list_networks", tools), call_next)
 
 
 # ---------------------------------------------------------------------------

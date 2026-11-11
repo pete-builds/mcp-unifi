@@ -33,6 +33,10 @@ Design notes
   store is enough. ``reset_pending_actions()`` exists for test isolation.
 * Lazy cleanup: every ``put``, ``pop``, and ``get`` sweeps expired tokens
   first. No background task, no thread, no signal handler.
+* Bounded: ``put`` refuses a new preview once the issuing client holds
+  :data:`MAX_PENDING_PER_CLIENT` of them, or the registry holds
+  :data:`MAX_PENDING_TOTAL`. It never evicts, so one client at its cap
+  cannot cost another client a pending action.
 * The executor is captured as an ``async`` callable rather than serialised
   args. The delete tool body builds a tiny closure that does the actual
   backend call, then hands it to the registry. This keeps the registry
@@ -70,9 +74,29 @@ from mcp_unifi.redaction import redact
 #: How long a preview token stays valid before it's swept. Tracks the spec.
 TOKEN_TTL_SECONDS: float = 300.0  # 5 minutes
 
+#: Most previews one issuing client may hold unconfirmed at once. Each entry
+#: keeps a resource snapshot alive for the TTL, and a ``restore_config``
+#: preview keeps a whole restore plan, so without a cap one caller looping
+#: on previews grows the process without bound. Counted per issuer, so one
+#: client at its cap is refused while every other client carries on.
+MAX_PENDING_PER_CLIENT: int = 50
+
+#: Backstop across every issuer. Only reachable when many distinct clients
+#: are each near their own cap at once; one client alone never gets here.
+MAX_PENDING_TOTAL: int = 500
+
 
 class IdentityUnavailableError(RuntimeError):
     """The caller's identity could not be determined, as opposed to absent."""
+
+
+class PendingActionsFullError(RuntimeError):
+    """A new preview was refused because a pending-action cap is reached.
+
+    Raised rather than evicting an older entry: an evicted token would fail
+    at confirm time as "unknown or expired" with nothing pointing at why,
+    while a refusal here tells the caller at preview time what to do.
+    """
 
 
 def current_client_id() -> str | None:
@@ -135,9 +159,17 @@ class PendingActionsRegistry:
     being purely synchronous.
     """
 
-    def __init__(self, ttl_seconds: float = TOKEN_TTL_SECONDS) -> None:
+    def __init__(
+        self,
+        ttl_seconds: float = TOKEN_TTL_SECONDS,
+        *,
+        max_per_client: int = MAX_PENDING_PER_CLIENT,
+        max_total: int = MAX_PENDING_TOTAL,
+    ) -> None:
         self._actions: dict[str, PendingAction] = {}
         self._ttl_seconds = ttl_seconds
+        self._max_per_client = max_per_client
+        self._max_total = max_total
 
     @property
     def ttl_seconds(self) -> float:
@@ -169,13 +201,38 @@ class PendingActionsRegistry:
         Returns:
             The newly-created :class:`PendingAction`, with its generated
             token and ISO expiration available on the instance.
+
+        Raises:
+            PendingActionsFullError: The issuing client already holds
+                ``max_per_client`` unconfirmed previews, or the registry holds
+                ``max_total``. Nothing is evicted, so no other client's
+                pending action is touched.
         """
         self._sweep()
-        token = str(uuid.uuid4())
         try:
             issuer, issuer_known = current_client_id(), True
         except IdentityUnavailableError:
             issuer, issuer_known = None, False
+        held = sum(
+            1
+            for act in self._actions.values()
+            if act.issuer == issuer and act.issuer_known == issuer_known
+        )
+        if held >= self._max_per_client:
+            raise PendingActionsFullError(
+                f"this client already has {held} destructive previews waiting for "
+                f"confirmation (limit {self._max_per_client}). Confirm the ones you "
+                f"want with confirm_destructive_action, or wait for them to expire "
+                f"({int(self._ttl_seconds)} seconds after issue), then preview again."
+            )
+        if len(self._actions) >= self._max_total:
+            raise PendingActionsFullError(
+                f"the server is holding {len(self._actions)} destructive previews "
+                f"(limit {self._max_total}). Confirm pending previews or wait for "
+                f"them to expire ({int(self._ttl_seconds)} seconds after issue), "
+                f"then preview again."
+            )
+        token = str(uuid.uuid4())
         pending = PendingAction(
             token=token,
             action=action,
@@ -245,16 +302,25 @@ def get_pending_actions() -> PendingActionsRegistry:
     return _REGISTRY
 
 
-def reset_pending_actions(ttl_seconds: float = TOKEN_TTL_SECONDS) -> PendingActionsRegistry:
+def reset_pending_actions(
+    ttl_seconds: float = TOKEN_TTL_SECONDS,
+    *,
+    max_per_client: int = MAX_PENDING_PER_CLIENT,
+    max_total: int = MAX_PENDING_TOTAL,
+) -> PendingActionsRegistry:
     """Replace the global registry. Test-only entry point.
 
     Args:
         ttl_seconds: TTL for the fresh registry. Defaults to the production
             5-minute value but tests can shrink it to assert expiration paths
             without ``time.sleep``.
+        max_per_client: Per-issuer cap. Tests shrink it to reach it cheaply.
+        max_total: Registry-wide cap.
     """
     global _REGISTRY
-    _REGISTRY = PendingActionsRegistry(ttl_seconds=ttl_seconds)
+    _REGISTRY = PendingActionsRegistry(
+        ttl_seconds=ttl_seconds, max_per_client=max_per_client, max_total=max_total
+    )
     return _REGISTRY
 
 
@@ -306,8 +372,11 @@ def format_preview_envelope(pending: PendingAction) -> str:
 
 
 __all__ = [
+    "MAX_PENDING_PER_CLIENT",
+    "MAX_PENDING_TOTAL",
     "TOKEN_TTL_SECONDS",
     "PendingAction",
+    "PendingActionsFullError",
     "PendingActionsRegistry",
     "build_preview_envelope",
     "format_preview_envelope",
