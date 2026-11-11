@@ -8,9 +8,7 @@ mcp-unifi's two safety primitives are **dry-run** (preview a destructive op with
 
 ## Dry-run
 
-Every destructive tool accepts `dry_run: bool = False`. When `True`, the tool computes the change it *would* apply, returns it as JSON, and does not write to the controller.
-
-There are 30 dry-run-aware tools across the Network module and 5 in the Protect module. Read-only tools (list, get, observability, audit) don't need dry-run; they never write.
+Tools that change controller state accept `dry_run: bool = False`. When `True`, the tool computes the change it *would* apply, returns it as JSON, and does not write to the controller. Two state-changing tools take no `dry_run`: `trigger_speedtest`, which starts a speed test rather than editing configuration, and `confirm_destructive_action`, which applies a delete you already previewed. Read-only tools (list, get, observability, audit) don't need dry-run; they never write.
 
 ### Example: `create_vlan(dry_run=True)`
 
@@ -19,38 +17,74 @@ There are 30 dry-run-aware tools across the Network module and 5 in the Protect 
   "dry_run": true,
   "controller": "default",
   "would_create": {
-    "name": "iot",
-    "vlan": 50,
-    "ip_subnet": "10.50.0.0/24",
-    "purpose": "corporate",
-    "dhcpd_enabled": true,
-    "dhcpd_start": "10.50.0.100",
-    "dhcpd_stop": "10.50.0.200"
+    "network": {
+      "name": "iot",
+      "purpose": "corporate",
+      "vlan_enabled": true,
+      "vlan": 50,
+      "ip_subnet": "10.50.0.1/24",
+      "dhcpd_enabled": true,
+      "dhcpd_start": "10.50.0.100",
+      "dhcpd_stop": "10.50.0.200",
+      "enabled": true
+    }
   },
-  "summary": "Would create VLAN 'iot' (id=50, subnet=10.50.0.0/24) on controller 'default'"
+  "summary": "Would create VLAN 'iot' (id=50) on 10.50.0.0/24"
 }
 ```
 
-Re-issue the call with `dry_run=False` (or omit it) to apply.
+That is the response to `create_vlan(name="iot", vlan_id=50, subnet="10.50.0.0/24", dry_run=True)` from the in-memory stub. Re-issue the call with `dry_run=False` (or omit it) to apply.
 
 ### Composite dry-runs
 
-Composites like `create_iot_network` and `provision_homelab_service` return the full multi-step preview with placeholder IDs:
+Composites like `create_iot_network` and `provision_homelab_service` return the full multi-step preview with placeholder IDs. This is the response to `create_iot_network(name="iot", vlan_id=50, passphrase="hunter2hunter2", dry_run=True)` from the stub; the passphrase comes back as `[REDACTED]`:
 
 ```json
 {
   "dry_run": true,
   "controller": "default",
   "would_create": {
-    "network": { "name": "iot", "vlan": 50, "..." },
-    "wlan":    { "name": "iot-wifi", "network_id": "<dry-run-network-id>", "..." },
-    "rule":    { "name": "Block iot to LAN", "src_networkconf_id": "<dry-run-network-id>", "..." }
+    "network": {
+      "name": "iot",
+      "purpose": "corporate",
+      "vlan_enabled": true,
+      "vlan": 50,
+      "ip_subnet": "10.0.50.1/24",
+      "dhcpd_enabled": true,
+      "dhcpd_start": "10.0.50.100",
+      "dhcpd_stop": "10.0.50.200",
+      "enabled": true
+    },
+    "wlan": {
+      "name": "iot",
+      "enabled": true,
+      "security": "wpapsk",
+      "wpa_mode": "wpa2",
+      "x_passphrase": "[REDACTED]",
+      "networkconf_id": "<dry-run-network-id>",
+      "is_guest": false,
+      "hide_ssid": false,
+      "wlan_band": "both",
+      "ap_group_ids": ["<auto-resolve-default>"],
+      "ap_group_mode": "all"
+    },
+    "firewall_rule": {
+      "name": "Block iot -> Main LAN",
+      "ruleset": "LAN_IN",
+      "rule_index": 20050,
+      "action": "drop",
+      "protocol": "all",
+      "enabled": true,
+      "src_address": "10.0.50.0/24",
+      "dst_address": "192.168.1.0/24"
+    }
   },
-  "summary": "Would create IoT network + SSID + isolation rule on controller 'default'"
+  "summary": "Would create IoT network 'iot' (VLAN 50) on 10.0.50.1/24, SSID, and isolation rule",
+  "note": "WLAN.networkconf_id and downstream IDs are placeholders; the real apply substitutes the controller-assigned _id."
 }
 ```
 
-Composites guarantee that real applies (with `dry_run=False`) **roll back on partial failure**. If step 2 fails, step 1 is undone before the error returns. The response includes `partial` and `rolled_back` keys describing exactly what was undone.
+On a site that uses the Zone-Based Firewall, the isolation step creates a zone policy instead of a legacy `firewall_rule`. Composites roll back on partial failure. If a later step fails on a real apply (`dry_run=False`), the steps that already succeeded are undone before the error returns, and the error response carries `partial` (what the controller had already created, secrets redacted) and `rolled_back` (what was undone).
 
 ## Audit log
 
@@ -58,30 +92,71 @@ Every tool call lands in a JSONL audit log. One line per call, regardless of suc
 
 ### Record shape
 
+This is the record the stub wrote for `create_vlan(name="iot", vlan_id=50, subnet="10.50.0.0/24", dry_run=True)`. The file holds each record on a single line with the keys sorted alphabetically; it is pretty-printed here:
+
 ```json
 {
-  "ts": "2026-05-15T13:42:07.123Z",
-  "tool": "create_vlan",
-  "controller": "default",
   "args": {
+    "controller": "default",
+    "dhcp_start": "",
+    "dhcp_stop": "",
+    "dry_run": true,
     "name": "iot",
-    "vlan_id": 50,
-    "subnet": "10.50.0.0/24"
+    "purpose": "corporate",
+    "subnet": "10.50.0.0/24",
+    "vlan_id": 50
   },
+  "client_id": null,
+  "controller": "default",
+  "denied_by": null,
+  "error": null,
+  "latency_ms": 0.044,
+  "result": {
+    "controller": "default",
+    "dry_run": true,
+    "summary": "Would create VLAN 'iot' (id=50) on 10.50.0.0/24",
+    "would_create": {
+      "network": {
+        "dhcpd_enabled": true,
+        "dhcpd_start": "10.50.0.100",
+        "dhcpd_stop": "10.50.0.200",
+        "enabled": true,
+        "ip_subnet": "10.50.0.1/24",
+        "name": "iot",
+        "purpose": "corporate",
+        "vlan": 50,
+        "vlan_enabled": true
+      }
+    }
+  },
+  "schema": "1",
   "success": true,
-  "latency_ms": 87,
-  "stub_mode": false,
-  "dry_run": false,
-  "result_shape": { "kind": "ok", "ids": ["65f..."] }
+  "tool": "create_vlan",
+  "ts": "2026-11-10T23:59:45.420Z"
 }
 ```
 
 Field notes:
 
-- **`ts`**: UTC, ISO 8601 with milliseconds.
-- **`args`**: any field name containing `passphrase`, `api_key`, `x_passphrase`, `password`, or `secret` is replaced with `"<scrubbed>"` before emission. The original kwargs are never written to the log.
-- **`latency_ms`**: end-to-end tool latency including controller round-trip in real mode.
-- **`result_shape`**: structured summary (success/error kind, returned IDs) — not the full response body.
+- **`ts`**: UTC, ISO 8601 with milliseconds and a `Z` suffix.
+- **`tool`**, **`controller`**: the tool the caller invoked and the controller it targeted (`default` when the call named none).
+- **`args`**: every argument the tool received, including defaults the caller did not set. Any key matching one of the sensitive-key patterns (`SENSITIVE_KEY_PATTERNS` in `mcp_unifi/redaction.py`: for example `passphrase`, `password`, `secret`, `token`, `api_key`) has its value replaced with `"***"` before the record is written. The patterns match as case-insensitive substrings of the key.
+- **`result`**: the tool's response, parsed back into JSON and scrubbed the same way, so a WLAN `x_passphrase` in a response is also `"***"`. It is `null` when the tool raised or the call was refused. The scrub marker in the log is `"***"`; tool responses sent to the client use `"[REDACTED]"` instead.
+- **`success`**: `true` when the tool body returned, `false` when it raised or the call was refused. A tool that returns an error envelope, which is how a controller rejection usually surfaces, is recorded with `success: true`. Read `result` for the outcome.
+- **`error`**: the exception text when the tool raised, or the refusal message for a refused call. Otherwise `null`.
+- **`latency_ms`**: wall-clock milliseconds around the tool body, including the controller round-trip in real mode. `0.0` for a refused call, because nothing ran.
+- **`client_id`**: the authenticated client on the HTTP transport. `null` on stdio or when auth is off.
+- **`denied_by`**: which control refused the call before it reached the tool, or `null` (see below).
+- **`schema`**: the record format version, currently `"1"`.
+
+Here is what the scrub does to a secret. The stub wrote this for `create_wlan(..., passphrase="hunter2hunter2", dry_run=True)`; the remaining fields are omitted:
+
+```json
+{
+  "args": { "name": "iot-wifi", "passphrase": "***" },
+  "result": { "would_create": { "wlan": { "name": "iot-wifi", "x_passphrase": "***" } } }
+}
+```
 
 ### Refused calls
 
@@ -98,9 +173,9 @@ A call that a control turned away never reaches a tool body, so it would otherwi
 jq -c 'select(.denied_by) | {ts, client_id, tool, denied_by}' audit.jsonl
 ```
 
-Refused records carry `success: false` and `result: null`, and their `args` are scrubbed on exactly the same path as a dispatched call — a refused `create_wlan` does not write the passphrase the caller supplied.
+Refused records carry `success: false`, `result: null`, `latency_ms: 0.0` and the refusal message in `error`, and their `args` are scrubbed on exactly the same path as a dispatched call: a refused `create_wlan` does not write the passphrase the caller supplied.
 
-Don't key off `success` alone: it is already `false` when a tool raised or the controller returned an error. `denied_by` is the only field that distinguishes "the call was never made" from "the call was made and failed". `mcp-unifi-replay` reads it too, and skips refused events rather than re-issuing them.
+Don't key off `success` alone: it is also `false` when a tool raised. `denied_by` is the only field that distinguishes "the call was never made" from "the call was made and failed". `mcp-unifi-replay` reads it too, and skips refused events rather than re-issuing them.
 
 ### Configure the sink
 
@@ -112,25 +187,35 @@ Don't key off `success` alone: it is already `false` when a tool raised or the c
 
 ## Replay
 
-The package ships an `mcp-unifi-replay` console script that re-issues calls from a JSONL log. Useful for:
-
-- **Migrations**: capture an audit from controller A, replay against controller B to converge state.
-- **Reproducing test scenarios**: capture a buggy session locally, replay it in CI against the stub backend.
-- **Disaster recovery drill**: confirm that a saved audit can rebuild your config end-to-end.
+The package ships an `mcp-unifi-replay` console script that re-issues the calls in a JSONL log, in order, against a fresh in-process server. It is useful for reproducing a captured session: capture a buggy session locally, then replay it in CI against the stub backend. Replay does not go through the HTTP transport, so it runs without a bearer token and ignores per-client module scopes; treat it as an operator tool (see the [Authentication guide](/mcp-unifi/guides/auth/)).
 
 ```bash
-# Replay every call in the log against the configured controllers
-mcp-unifi-replay audit.jsonl
+# Replay every event in the log against the in-memory stub (the default)
+MCP_TRANSPORT=stdio mcp-unifi-replay audit.jsonl
 
-# Filter to one tool
-mcp-unifi-replay audit.jsonl --tool create_vlan
+# The same, with one JSON result per event on stdout
+MCP_TRANSPORT=stdio mcp-unifi-replay audit.jsonl --json
 
-# Replay against a specific controller (overrides the per-call value)
-mcp-unifi-replay audit.jsonl --controller home
+# Real-mode replay needs all three flags
+MCP_TRANSPORT=stdio mcp-unifi-replay audit.jsonl --real --target-controller home --i-mean-it
 ```
 
-Replay skips entries with `success: false` by default and honors `dry_run` exactly as captured. Pass `--apply` to force `dry_run=False` on replay (useful when the original capture was a planning session).
+The flags, from `mcp-unifi-replay --help`:
+
+| Flag | Meaning |
+|---|---|
+| `log_path` | Path to the audit log (JSONL, one event per line). Required. |
+| `--real` | Replay against a real controller instead of the stub. Requires `--target-controller` and `--i-mean-it`. |
+| `--target-controller NAME` | Real mode only: the one controller allowed to receive replayed calls. Events whose `controller` field differs are skipped, not failed. |
+| `--i-mean-it` | Real mode only: second confirmation. Without it, `--real` exits with status 2 before any call is made. |
+| `--json` | Print one JSON object per event (`tool`, `controller`, `success`, `error`, `skipped`, `skip_reason`) instead of the summary line. |
+
+Without `--json` the command prints `replay complete: N events (succeeded=…, failed=…, skipped=…)`. The exit status is `0` when nothing failed, `1` when at least one event failed, and `2` for a usage or log-file error. Events recorded with a `denied_by` value are skipped, never re-issued. There is no flag to filter by tool, override the controller, or force `dry_run`: replay passes each event's recorded `args` to the tool as captured.
+
+`MCP_TRANSPORT=stdio` appears in every example because replay builds its server from the normal settings, whose default transport is Streamable HTTP and needs a bearer token; without it the command stops with `HTTP transport requires MCP_UNIFI_AUTH_TOKENS`. In real mode the server is built from the controllers your environment configures (see the [Configuration reference](/mcp-unifi/reference/configuration/)).
+
+Because the log stores scrubbed arguments, a secret such as a WLAN passphrase is recorded as `***`; the log does not hold the real value.
 
 ## Why this matters
 
-The design assumption: the LLM **will** propose changes that need a second look, and you **will** want a forensic trail when something goes sideways at 11 pm. Dry-run lets the model and the human cooperate on a preview before any mutation. The audit log makes "what did Claude touch?" a one-grep question, and `mcp-unifi-replay` makes those captures executable against any controller.
+The design assumption: the LLM **will** propose changes that need a second look, and you **will** want a forensic trail when something goes sideways at 11 pm. Dry-run lets the model and the human cooperate on a preview before any mutation. The audit log makes "what did Claude touch?" a one-grep question, and `mcp-unifi-replay` can re-run a capture against the stub.

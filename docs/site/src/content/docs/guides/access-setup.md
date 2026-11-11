@@ -12,7 +12,7 @@ UniFi Access has a wrinkle that Network and Protect do not: mutations require a 
 
 The Access module sticks with API-key reads so the project's API-key-first security posture stays intact. No admin password ever sits in env. The read-only tools cover forensics, audits, summaries, and visibility, which is the bulk of LLM use cases for Access.
 
-When write tools land in a later release, they will require setting `UNIFI_ACCESS_USERNAME` and `UNIFI_ACCESS_PASSWORD` alongside the API key. The bearer token still gates the MCP transport unchanged.
+If write tools land in a later release, they are expected to need a session login alongside the API key. No setting for that exists today: the server reads no Access username or password, so there is nothing to configure for it. The bearer token still gates the MCP transport unchanged.
 
 ## Enabling the module
 

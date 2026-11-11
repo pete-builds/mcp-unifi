@@ -4,7 +4,7 @@ title: Claude Code
 description: Register mcp-unifi with Claude Code over Streamable HTTP or stdio.
 ---
 
-Claude Code is the fastest path to a working tool call. It supports both **Streamable HTTP** (point it at a running Docker container) and **stdio** (spawn `uvx mcp-unifi` per session).
+Claude Code is the fastest path to a working tool call. It supports both **Streamable HTTP** (point it at a running Docker container) and **stdio** (spawn the server with `uvx` per session).
 
 ## Streamable HTTP (Docker)
 
@@ -39,10 +39,11 @@ unifi: http://localhost:3714/mcp (http) - Connected
 
 ## Stdio (uvx)
 
-For when you'd rather not run a container. Claude Code spawns the server as a subprocess for each session:
+For when you'd rather not run a container. Claude Code spawns the server as a subprocess for each session. `MCP_TRANSPORT=stdio` is required: the server's default transport is Streamable HTTP, which refuses to start without a bearer token.
 
 ```bash
 claude mcp add --transport stdio --scope user unifi \
+  --env MCP_TRANSPORT=stdio \
   --env STUB_MODE=true \
   -- uvx --from git+https://github.com/pete-builds/mcp-unifi mcp-unifi
 ```
@@ -51,6 +52,7 @@ For real mode, pass gateway env vars instead:
 
 ```bash
 claude mcp add --transport stdio --scope user unifi \
+  --env MCP_TRANSPORT=stdio \
   --env STUB_MODE=false \
   --env UNIFI_HOST=192.168.1.1 \
   --env UNIFI_API_KEY=<your-local-api-key> \
