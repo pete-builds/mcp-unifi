@@ -80,9 +80,10 @@ after 5 minutes.</p>
 <p>Side effects:</p>
 <ul>
 <li>None until <code dir="auto">confirm_destructive_action</code> runs against the token.</li>
-<li>On confirm: rewrites the <code dir="auto">ips</code> setting’s <code dir="auto">honeypot</code> list with
-the entry removed and sets <code dir="auto">honeypot_enabled</code> based on whether
-the resulting list is empty.</li>
+<li>On confirm: re-reads the <code dir="auto">ips</code> setting, rewrites its
+<code dir="auto">honeypot</code> list with only this entry removed (honeypots added
+since the preview are kept), and sets <code dir="auto">honeypot_enabled</code> based
+on whether the resulting list is empty.</li>
 <li><code dir="auto">dry_run=True</code> returns the legacy <code dir="auto">would_delete</code> envelope
 with no token (informational only).</li>
 </ul>

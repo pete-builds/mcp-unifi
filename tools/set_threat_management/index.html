@@ -79,12 +79,16 @@
 <code dir="auto">enabled=False</code> the mode is forced to <code dir="auto">off</code>; the controller
 then disables packet inspection on every network. When
 <code dir="auto">enabled=True</code>, <code dir="auto">mode</code> selects detection-only (<code dir="auto">ids</code>) or
-inline blocking (<code dir="auto">ips</code>).</li>
+inline blocking (<code dir="auto">ips</code>). With no <code dir="auto">mode</code>, a site already on
+<code dir="auto">ids</code> or <code dir="auto">ips</code> keeps its mode, so changing only the categories
+never downgrades IPS to IDS; a site that was off comes on as
+<code dir="auto">ids</code>.</li>
 <li>Untouched fields (signature categories, network bindings, ad
 blocking, DNS filtering) are preserved by the controller’s merge
 semantics. Supplying <code dir="auto">signature_categories</code> replaces the active
 list wholesale; <code dir="auto">None</code> leaves it unchanged.</li>
-<li>Mutates controller state. Use dry_run=True to preview the change.</li>
+<li>Mutates controller state. Use dry_run=True to preview the change;
+the preview shows the current and resulting mode and categories.</li>
 </ul>
 <div class="sl-heading-wrapper level-h2"><h2 id="example">Example</h2><a class="sl-anchor-link" href="#example"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore>Section titled “Example”</span></a></div>
 <div class="expressive-code"><link rel="stylesheet" href="/mcp-unifi/_astro/ec.w36nc.css"><script type="module" src="/mcp-unifi/_astro/ec.0vx5m.js"></script><figure class="frame not-content"><figcaption class="header"></figcaption><pre data-language="python"><code><div class="ec-line"><div class="code"><span style="--0:#B2CCD6;--1:#096E72">set_threat_management</span><span style="--1:#403F53"><span style="--0:#D6DEEB">(</span><span style="--0:#D7DBE0">enabled</span></span><span style="--0:#C792EA;--1:#8844AE">=</span><span style="--0:#FF6A83;--1:#A24848">True</span><span style="--0:#D9F5DD;--1:#111111">,</span><span style="--0:#82AAFF;--1:#3B61B0"> </span><span style="--0:#D7DBE0;--1:#403F53">mode</span><span style="--0:#C792EA;--1:#8844AE">=</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#ECC48D;--1:#984E4D">ips</span><span style="--0:#D9F5DD;--1:#111111">"</span><span style="--0:#D6DEEB;--1:#403F53">)</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="set_threat_management(enabled=True, mode=&quot;ips&quot;)"><div></div></button></div></figure></div>
@@ -111,8 +115,8 @@ list wholesale; <code dir="auto">None</code> leaves it unchanged.</li>
 <td><code dir="auto">mode</code></td>
 <td><code dir="auto">string</code></td>
 <td>no</td>
-<td>“ids”</td>
-<td>When <code dir="auto">enabled=True</code>, one of <code dir="auto">"ids"</code> (detection-only, default) or <code dir="auto">"ips"</code> (inline blocking). Ignored when <code dir="auto">enabled=False</code>.</td>
+<td>“”</td>
+<td>When <code dir="auto">enabled=True</code>, one of <code dir="auto">"ids"</code> (detection-only) or <code dir="auto">"ips"</code> (inline blocking). Empty (default) keeps the current mode, or <code dir="auto">"ids"</code> if inspection is off. Ignored when <code dir="auto">enabled=False</code>.</td>
 </tr>
 <tr>
 <td><code dir="auto">signature_categories</code></td>
@@ -133,7 +137,7 @@ list wholesale; <code dir="auto">None</code> leaves it unchanged.</li>
 <td><code dir="auto">boolean</code></td>
 <td>no</td>
 <td>false</td>
-<td>Preview the change without applying it. Returns the predicted patch envelope.</td>
+<td>Preview the change without applying it. Returns the predicted patch plus the current (<code dir="auto">before</code>) and resulting (<code dir="auto">after</code>) mode and categories.</td>
 </tr>
 </tbody>
 </table>

@@ -123,7 +123,7 @@ controller accepted the write but did not store it exactly — that is
 <td><code dir="auto">object</code></td>
 <td>yes</td>
 <td>—</td>
-<td>Partial network record. Common keys: <code dir="auto">name</code>, <code dir="auto">vlan</code>, <code dir="auto">ip_subnet</code>, <code dir="auto">dhcpd_start</code>, <code dir="auto">dhcpd_stop</code>, <code dir="auto">enabled</code>, <code dir="auto">mdns_enabled</code> (toggle the per-VLAN mDNS reflector independently of network creation), <code dir="auto">purpose</code>.</td>
+<td>Partial network record. Common keys: <code dir="auto">name</code>, <code dir="auto">vlan</code> (1-4094), <code dir="auto">ip_subnet</code> (network form <code dir="auto">10.50.0.0/24</code> is promoted to gateway form, as in <code dir="auto">create_vlan</code>), <code dir="auto">dhcpd_start</code>, <code dir="auto">dhcpd_stop</code>, <code dir="auto">enabled</code>, <code dir="auto">mdns_enabled</code> (toggle the per-VLAN mDNS reflector independently of network creation), <code dir="auto">purpose</code>.</td>
 </tr>
 <tr>
 <td><code dir="auto">controller</code></td>

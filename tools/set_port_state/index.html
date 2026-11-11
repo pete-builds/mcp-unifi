@@ -79,6 +79,8 @@
 <code dir="auto">portconf_id</code> on the named switch without touching the others.</li>
 <li>Disabling a port immediately drops the link; powered devices on
 that port (PoE cameras, APs) will go offline.</li>
+<li>Refused when <code dir="auto">port_idx</code> is not in the device’s own port table
+(<code dir="auto">port_table</code> from <code dir="auto">list_devices</code>), dry run included.</li>
 <li>Mutates controller state. Use dry_run=True to preview the change
 without applying.</li>
 </ul>
