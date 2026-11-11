@@ -243,6 +243,10 @@ def test_subnet_vlan_and_flags_update() -> None:
     [
         {},
         {"purpose": "guest"},
+        # No v1 field holds either: a PUT would drop it and report success.
+        {"purpose": "corporate"},
+        {"vlan_enabled": True},
+        {"name": "IoT-2", "purpose": "corporate"},
         {"ipv6_interface_type": "pd"},
         {"dhcpd_enabled": False, "dhcpd_start": "10.20.30.5"},
         {"dhcpd_enabled": "no"},
@@ -252,6 +256,36 @@ def test_subnet_vlan_and_flags_update() -> None:
 )
 def test_network_put_refuses_what_it_cannot_map(patch: dict[str, Any]) -> None:
     assert tr.network_put_body(V1_NETWORK_READBACK, patch) is None
+
+
+@pytest.mark.parametrize(
+    ("record", "maps"),
+    [
+        ({"purpose": "corporate", "vlan_enabled": True}, True),
+        ({"purpose": "guest", "vlan_enabled": True}, False),
+        ({"purpose": "corporate", "vlan_enabled": False}, False),
+        ({"purpose": "corporate"}, False),
+        ({"purpose": "wan"}, False),
+    ],
+)
+def test_network_update_maps_only_what_v1_could_have_created(
+    record: dict[str, Any], maps: bool
+) -> None:
+    assert tr.network_update_maps(record) is maps
+
+
+@pytest.mark.parametrize(
+    ("record", "maps"),
+    [
+        ({"is_guest": False, "security": "wpapsk"}, True),
+        ({"is_guest": True, "security": "wpapsk"}, False),
+        ({"is_guest": False, "security": "wpaeap"}, False),
+        ({"is_guest": False, "security": "open"}, False),
+        ({"security": "wpapsk"}, False),
+    ],
+)
+def test_wlan_update_maps_refuses_guest_and_enterprise(record: dict[str, Any], maps: bool) -> None:
+    assert tr.wlan_update_maps(record) is maps
 
 
 def test_network_put_refuses_non_gateway_networks() -> None:

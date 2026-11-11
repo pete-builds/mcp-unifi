@@ -410,6 +410,12 @@ async def test_isolation_falls_back_to_internal_and_says_so(
     stub_server: FastMCP, stub_state: StubState
 ) -> None:
     zones = _migrate(stub_state)
+    # The trusted subnet must belong to a network on the site (finding C4),
+    # so use one the zone list leaves out: the stub puts VPN networks in no
+    # zone, which stands in for a network the console has not placed yet.
+    stub_state.networks.append(
+        {"_id": "vpn-net", "name": "Site VPN", "purpose": "site-vpn", "ip_subnet": "172.16.0.1/24"}
+    )
     result = await _call(
         stub_server,
         "create_iot_network",

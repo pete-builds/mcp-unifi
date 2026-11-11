@@ -32,6 +32,7 @@ private-path failure would.
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal
 
 from mcp_unifi.clients import integration_translate as tr
@@ -79,6 +80,26 @@ class IntegrationRejectedError(UniFiError):
         self.code = code
         #: The console's own ``message`` field: names the fields it wanted.
         self.detail = detail
+
+
+class CreatedButUnreadError(UniFiError):
+    """A v1 create landed, but its private record could not be read back.
+
+    The object exists on the console. Returning a record without a private
+    ``_id`` would leave the caller nothing to address it by, and falling back
+    to the private API would create it twice, so this carries the v1 id
+    instead: a caller that rolls back can find the private record by its
+    ``external_id`` once the private API shows it.
+    """
+
+    def __init__(self, what: str, v1_id: str, reason: str) -> None:
+        super().__init__(
+            f"the {what} was created through the Integration API (v1 id {v1_id}) but its "
+            f"private record could not be read back ({reason}); it exists on the console "
+            f"and was not created a second time"
+        )
+        self.what = what
+        self.v1_id = v1_id
 
 
 class IntegrationWrites:
@@ -162,6 +183,26 @@ class IntegrationWrites:
                 return record
         return None
 
+    @staticmethod
+    def _by_private(records: list[UniFiRecord], private_id: str) -> UniFiRecord | None:
+        for record in records:
+            if record.get("_id") == private_id:
+                return record
+        return None
+
+    async def _read_back_created(
+        self, lister: Callable[[], Awaitable[list[UniFiRecord]]], v1_id: str, what: str
+    ) -> UniFiRecord:
+        """The private record a v1 create just made, or :class:`CreatedButUnreadError`."""
+        try:
+            records = await lister()
+        except UniFiError as exc:
+            raise CreatedButUnreadError(what, v1_id, f"list failed: {exc}") from exc
+        record = self._by_external(records, v1_id)
+        if record is None or not isinstance(record.get("_id"), str) or not record["_id"]:
+            raise CreatedButUnreadError(what, v1_id, "no private record carries that id yet")
+        return record
+
     async def _default_ap_group(self) -> str | None:
         for group in await self.client.list_ap_groups():
             if isinstance(group, dict) and group.get("attr_hidden_id") == "default":
@@ -203,8 +244,9 @@ class IntegrationWrites:
                     created = await self._request("POST", f"/sites/{site}/networks", json=body)
                     v1_id = _created_id(created, "network")
                     self._used("create", "networks", v1_id)
-                    record = self._by_external(await self.client.list_networks(), v1_id)
-                    return record if record is not None else {"external_id": v1_id, **payload}
+                    return await self._read_back_created(
+                        self.client.list_networks, v1_id, "network"
+                    )
             except IntegrationRejectedError as exc:
                 self._fallback("create", exc, "networks")
         return await self.client.create_network(payload)
@@ -212,7 +254,15 @@ class IntegrationWrites:
     async def update_network(self, network_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
         if self._enabled("networks"):
             try:
-                v1_id = self._external_id(await self.client.list_networks(), network_id)
+                # A v1 PUT replaces the record from a v1 readback, which has no
+                # field for anything private-only (a guest purpose, say). Only a
+                # record v1 could have created is safe to send that way.
+                record = self._by_private(await self.client.list_networks(), network_id)
+                v1_id = (
+                    self._external_id([record], network_id)
+                    if record is not None and tr.network_update_maps(record)
+                    else None
+                )
                 site = await self._site() if v1_id else None
                 if v1_id and site:
                     url = f"/sites/{site}/networks/{path_segment(v1_id, 'network_id')}"
@@ -270,8 +320,7 @@ class IntegrationWrites:
                     )
                     v1_id = _created_id(created, "WLAN")
                     self._used("create", "wifi", v1_id)
-                    record = self._by_external(await self.client.list_wlans(), v1_id)
-                    return record if record is not None else {"external_id": v1_id, **payload}
+                    return await self._read_back_created(self.client.list_wlans, v1_id, "WLAN")
             except IntegrationRejectedError as exc:
                 self._fallback("create", exc, "wifi")
         return await self.client.create_wlan(payload)
@@ -279,7 +328,14 @@ class IntegrationWrites:
     async def update_wlan(self, wlan_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
         if self._enabled("wifi"):
             try:
-                v1_id = self._external_id(await self.client.list_wlans(), wlan_id)
+                # Same rule as networks: a guest or enterprise WLAN carries
+                # settings a v1 readback cannot round-trip, so it stays private.
+                record = self._by_private(await self.client.list_wlans(), wlan_id)
+                v1_id = (
+                    self._external_id([record], wlan_id)
+                    if record is not None and tr.wlan_update_maps(record)
+                    else None
+                )
                 site = await self._site() if v1_id else None
                 v1_net: str | None = None
                 if isinstance(patch.get("networkconf_id"), str):
@@ -334,19 +390,30 @@ class IntegrationWrites:
         ``configured`` when ``firewall/zones`` answers 200; ``legacy`` when it
         answers 400 ``api.firewall.zone-based-firewall-not-configured`` (seen
         live on Network 10.6.106 before migration); ``unsupported`` when the
-        route or the site is missing; ``disabled`` under ``write_api=private``,
-        which never sends the request. Not cached: a site can migrate while the
-        server runs. A 5xx or timeout raises, so a caller about to write
-        stops before writing anything.
+        route or the site is missing, including a console whose ``/sites``
+        answers 404 because it has no Integration API at all; ``disabled``
+        under ``write_api=private``, which never sends the request. Not
+        cached: a site can migrate while the server runs. A 401 or 403 raises
+        as a credential problem, and a 5xx or timeout raises, so a caller
+        about to write stops before writing anything.
         """
         if self.write_api != "auto":
             return "disabled"
-        site = await self._site()
-        if site is None:
-            return "unsupported"
         try:
+            site = await self._site()
+            if site is None:
+                return "unsupported"
             await self._request("GET", f"/sites/{site}/firewall/zones?limit=1")
         except IntegrationRejectedError as exc:
+            if exc.status in (401, 403):
+                raise IntegrationRejectedError(
+                    f"Integration API refused this controller's credentials ({exc.status}) "
+                    f"while reading the firewall model; check that the API key may use "
+                    f"the Integration API: {exc}",
+                    exc.status,
+                    exc.code,
+                    exc.detail,
+                ) from exc
             if exc.code == ZBF_NOT_CONFIGURED:
                 return "legacy"
             if exc.status == 404:
