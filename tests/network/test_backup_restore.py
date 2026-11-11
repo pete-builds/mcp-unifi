@@ -1437,3 +1437,53 @@ async def test_restore_never_plans_a_delete_of_an_attr_no_delete_network(
     result = await _restore_applying(stub_server, backup_json)
     assert "error" not in result, result
     assert any(n["_id"] == wan["_id"] for n in stub_state.list_networks())
+
+
+# ---------------------------------------------------------------------------
+# A section the envelope does not have
+# ---------------------------------------------------------------------------
+
+
+async def test_restore_leaves_alone_every_type_the_backup_has_no_section_for(
+    fresh_state: StubState, fresh_server: FastMCP
+) -> None:
+    """An envelope trimmed by hand to one section ("just put the WLANs back")
+    used to read every other section as an empty list, so the plan deleted
+    every network, rule, profile, lease and port forward on the site."""
+    envelope = await _call(fresh_server, "backup_config", {})
+    kept = "wlans"
+    dropped = sorted(k for k in envelope["resources"] if k != kept)
+    envelope["resources"] = {kept: envelope["resources"][kept]}
+    before = _resource_snapshot(fresh_state)
+    assert any(before[rtype] for rtype in dropped if rtype != "firewall_groups")
+
+    dry = await _call(
+        fresh_server, "restore_config", {"backup_json": json.dumps(envelope), "dry_run": True}
+    )
+    assert not [a for a in dry["would_apply"] if a["action"] == "delete"], dry["would_apply"]
+    assert not [a for a in dry["would_apply"] if a["type"] != kept], dry["would_apply"]
+    warning = next(w for w in dry["warnings"] if "no section for" in w)
+    for rtype in dropped:
+        if rtype != "firewall_groups":
+            assert rtype in warning
+
+    result = await _restore_applying(fresh_server, json.dumps(envelope))
+    assert "error" not in result, result
+    assert _resource_snapshot(fresh_state) == before
+
+
+async def test_restore_still_deletes_when_a_section_is_an_explicit_empty_list(
+    fresh_state: StubState, fresh_server: FastMCP
+) -> None:
+    """The other half: an empty list is a statement, a missing key is not."""
+    envelope = await _call(fresh_server, "backup_config", {})
+    assert fresh_state.port_forwards, "the stub needs a port forward for this to mean anything"
+    envelope["resources"]["port_forwards"] = []
+
+    dry = await _call(
+        fresh_server, "restore_config", {"backup_json": json.dumps(envelope), "dry_run": True}
+    )
+    deletes = [a for a in dry["would_apply"] if a["action"] == "delete"]
+    assert {a["type"] for a in deletes} == {"port_forwards"}
+    assert len(deletes) == len(fresh_state.port_forwards)
+    assert not any("no section for" in w for w in dry["warnings"])

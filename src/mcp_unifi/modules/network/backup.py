@@ -390,6 +390,10 @@ def _plan(
 
     # Deletes first — children before parents.
     for rtype in DELETE_ORDER:
+        if rtype not in backup_resources:
+            # The backup has no section for this type, so it has no opinion
+            # on it: nothing of the type is deleted.
+            continue
         for live in current_with_ids.get(rtype, []):
             ident = _identity(rtype, live)
             if not ident:
@@ -424,9 +428,6 @@ def _plan(
                 )
                 continue
             if rtype in _NEVER_DELETED:
-                if rtype not in backup_resources:
-                    # The backup predates this type; it has no opinion on it.
-                    continue
                 actions.append(
                     {
                         "action": "skip",
@@ -865,16 +866,19 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         if not isinstance(backup_resources_raw, dict):
             return err("backup envelope is missing the 'resources' object")
 
-        # Coerce each section to a list of dicts; missing sections become [].
-        # The one exception is firewall_groups: envelopes taken before groups
-        # were backed up have no such key, and that means "not in this
-        # backup", not "the site should have none". The plan leaves the type
-        # out entirely.
+        # Coerce each section to a list of dicts. A section the envelope does
+        # not have means "not in this backup", not "the site should have
+        # none": the plan leaves that type out entirely. It used to read as
+        # an empty list, so an envelope trimmed by hand to one section
+        # planned the delete of every record of every other type. An explicit
+        # empty list still means "the site should have none".
         backup_resources: dict[str, list[dict[str, Any]]] = {}
+        missing_sections: list[str] = []
         for rtype in CREATE_ORDER:
-            if rtype in _NEVER_DELETED and rtype not in backup_resources_raw:
+            if rtype not in backup_resources_raw:
+                missing_sections.append(rtype)
                 continue
-            section = backup_resources_raw.get(rtype, [])
+            section = backup_resources_raw[rtype]
             if not isinstance(section, list):
                 return err(f"backup resources.{rtype} must be a list")
             cleaned: list[dict[str, Any]] = []
@@ -896,7 +900,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         carries_sentinel = any(
             _carries_sentinel(rec)
             for rtype in ("wlans", "networks")
-            for rec in backup_resources[rtype]
+            for rec in backup_resources.get(rtype, [])
         )
         if secrets_stripped or carries_sentinel:
             if not secrets_stripped:
@@ -921,6 +925,14 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 "This backup has no firewall_groups section (taken before groups "
                 "were backed up). Groups on the site are left as they are, and any "
                 "rule that references a group is blocked."
+            )
+        other_missing = [s for s in missing_sections if s != "firewall_groups"]
+        if other_missing:
+            warnings.append(
+                f"This backup has no section for: {', '.join(other_missing)}. Records "
+                "of those types on the site are left as they are: nothing is created "
+                "or deleted. An empty list for a section says the site should have "
+                "none."
             )
 
         try:
