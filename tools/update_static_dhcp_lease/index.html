@@ -78,9 +78,14 @@ has a user record on the controller (any client that has ever
 connected). The controller rejects POST <code dir="auto">/rest/user</code> for known MACs
 with <code dir="auto">api.err.MacUsed</code>; this tool resolves the existing <code dir="auto">_id</code> and
 PUTs an update to <code dir="auto">/rest/user/{_id}</code> instead.</p>
+<p>This always reserves an IP. To rename a client or set its note with
+no reservation, use <code dir="auto">update_clients</code>.</p>
 <p>Side effects:</p>
 <ul>
 <li>Sets <code dir="auto">use_fixedip=true</code> and pins <code dir="auto">fixed_ip</code> on the user record.</li>
+<li><code dir="auto">network_id</code> is sent only when given. Left out, the record keeps
+the network it already has, as the Art-of-WiFi client’s
+<code dir="auto">edit_client_fixedip</code> treats it. Omitting it is not live-verified.</li>
 <li>If <code dir="auto">local_dns_record</code> is supplied, also sets
 <code dir="auto">local_dns_record_enabled=true</code> so the name resolves on the LAN
 (controller version permitting).</li>
@@ -120,9 +125,9 @@ error. In that case use <code dir="auto">create_static_dhcp_lease</code> instead
 <tr>
 <td><code dir="auto">network_id</code></td>
 <td><code dir="auto">string</code></td>
-<td>yes</td>
-<td>—</td>
-<td><code dir="auto">_id</code> of the network/VLAN the IP belongs to.</td>
+<td>no</td>
+<td>“”</td>
+<td><code dir="auto">_id</code> of the network/VLAN the IP belongs to (optional). Leave it out to keep the record’s current network.</td>
 </tr>
 <tr>
 <td><code dir="auto">name</code></td>
