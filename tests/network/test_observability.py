@@ -496,7 +496,7 @@ async def test_real_and_stub_speedtest_rows_share_the_documented_keys(
 
 @respx.mock
 async def test_real_list_top_talkers(real_server: FastMCP) -> None:
-    respx.get(f"{BASE}/stat/sitedpi").mock(
+    respx.get(f"{BASE}/stat/sta").mock(
         return_value=httpx.Response(
             200, json={"data": [{"mac": "aa", "rx_bytes": 100}, {"mac": "bb", "rx_bytes": 50}]}
         )
@@ -517,7 +517,7 @@ async def test_real_list_top_talkers_ranks_and_projects_the_controllers_rows(
     unsorted, carry a numeric-string counter, a missing counter and an extra
     field the documented shape does not include.
     """
-    respx.get(f"{BASE}/stat/sitedpi").mock(
+    respx.get(f"{BASE}/stat/sta").mock(
         return_value=httpx.Response(
             200,
             json={
@@ -546,12 +546,56 @@ async def test_real_list_top_talkers_ranks_and_projects_the_controllers_rows(
 
 
 @respx.mock
+async def test_real_list_top_talkers_reads_the_client_list_not_the_dpi_report(
+    real_server: FastMCP,
+) -> None:
+    """The ranking comes from ``/stat/sta``, where a real console has rows.
+
+    ``/stat/sitedpi`` is a per-application report with no client in it and was
+    empty on the probed gateway, so the tool returned ``[]`` live. It is mocked
+    here with a decoy row: if the client ever reads it again, the decoy shows
+    up. Wired clients report ``wired-*`` counters and may have only an alias.
+    """
+    respx.get(f"{BASE}/stat/sitedpi").mock(
+        return_value=httpx.Response(200, json={"data": [{"mac": "decoy", "tx_bytes": 10**15}]})
+    )
+    respx.get(f"{BASE}/stat/sta").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"mac": "wifi", "hostname": "phone", "tx_bytes": 300, "rx_bytes": 200},
+                    {
+                        "mac": "wired",
+                        "name": "NAS",
+                        "is_wired": True,
+                        "wired-tx_bytes": 4000,
+                        "wired-rx_bytes": 5000,
+                    },
+                ]
+            },
+        )
+    )
+    result = await _call(real_server, "list_top_talkers", {"limit": 5})
+
+    assert [r["mac"] for r in result] == ["wired", "wifi"]
+    assert result[0] == {
+        "mac": "wired",
+        "hostname": "NAS",
+        "ip": None,
+        "tx_bytes": 4000,
+        "rx_bytes": 5000,
+        "total_bytes": 9000,
+    }
+
+
+@respx.mock
 async def test_real_and_stub_top_talkers_share_one_shape(
     real_server: FastMCP, stub_server: FastMCP, stub_state: StubState
 ) -> None:
     """Fed the same client rows, the real path and the stub answer identically."""
     rows = [dict(c) for c in stub_state.clients]
-    respx.get(f"{BASE}/stat/sitedpi").mock(return_value=httpx.Response(200, json={"data": rows}))
+    respx.get(f"{BASE}/stat/sta").mock(return_value=httpx.Response(200, json={"data": rows}))
     real = await _call(real_server, "list_top_talkers", {"limit": 4})
     stub = await _call(stub_server, "list_top_talkers", {"limit": 4})
     assert real == stub
@@ -561,9 +605,7 @@ async def test_real_and_stub_top_talkers_share_one_shape(
 async def test_real_list_top_talkers_reports_a_non_json_body_as_an_error(
     real_server: FastMCP,
 ) -> None:
-    respx.get(f"{BASE}/stat/sitedpi").mock(
-        return_value=httpx.Response(200, text="<html>login</html>")
-    )
+    respx.get(f"{BASE}/stat/sta").mock(return_value=httpx.Response(200, text="<html>login</html>"))
     result = await _call(real_server, "list_top_talkers", {"limit": 3})
     assert "not JSON" in result["error"]
     assert "login" not in result["error"]

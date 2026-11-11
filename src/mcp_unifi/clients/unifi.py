@@ -764,9 +764,18 @@ class UniFiClient:
         return shape_speedtest_results(records, limit)
 
     async def list_top_talkers(self, limit: int) -> list[UniFiRecord]:
-        # DPI by-station report; aggregated bytes per client. The controller
-        # returns the rows unranked, so rank, cut and project them here.
-        results = await self._get("/stat/sitedpi") or []
+        """Rank the currently connected clients by bytes moved this session.
+
+        Reads ``/stat/sta``, the same list ``list_clients`` returns. This used
+        to read ``/stat/sitedpi``, which is a site-wide per-application report
+        with no client in it, and which the 2026-06-12 live probe found empty
+        on a UCG-Fiber (see :mod:`mcp_unifi.modules.network.stats`), so the
+        tool answered ``[]`` on a real console. ``/stat/sta`` rows were probed
+        the same day and carry ``tx_bytes``/``rx_bytes`` (wireless) and
+        ``wired-tx_bytes``/``wired-rx_bytes`` (wired). The rows come back
+        unranked, so rank, cut and project them here.
+        """
+        results = await self._get("/stat/sta") or []
         return shape_top_talkers(results, limit)
 
     # ------------------------------------------------------------------

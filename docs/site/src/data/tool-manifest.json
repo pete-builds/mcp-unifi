@@ -2595,7 +2595,7 @@
       "name": "list_smart_detections"
     },
     {
-      "description": "List top clients by total bytes (DPI by-station report).\n\nSide effects: None (read-only).\n\nReturns one record per client ranked by ``total_bytes`` descending,\nwith ``mac``, ``hostname``, ``ip``, ``tx_bytes``, ``rx_bytes``, and\n``total_bytes``.\n\nExample: list_top_talkers(limit=10)",
+      "description": "List the connected clients that have moved the most data.\n\nSide effects: None (read-only).\n\nRanks the clients connected right now by bytes sent plus received\nsince each one connected, so it is not a per-day or per-month total\nand a client that has left is not listed. Returns one record per\nclient, highest ``total_bytes`` first, with ``mac``, ``hostname``,\n``ip``, ``tx_bytes``, ``rx_bytes``, and ``total_bytes``.\n\nExample: list_top_talkers(limit=10)",
       "input_schema": {
         "additionalProperties": false,
         "properties": {

@@ -1,18 +1,20 @@
 ---
 title: list_top_talkers
-description: "List top clients by total bytes (DPI by-station report)."
+description: "List the connected clients that have moved the most data."
 draft: false
 ---
 
 # `list_top_talkers`
 
-List top clients by total bytes (DPI by-station report).
+List the connected clients that have moved the most data.
 
 Side effects: None (read-only).
 
-Returns one record per client ranked by ``total_bytes`` descending,
-with ``mac``, ``hostname``, ``ip``, ``tx_bytes``, ``rx_bytes``, and
-``total_bytes``.
+Ranks the clients connected right now by bytes sent plus received
+since each one connected, so it is not a per-day or per-month total
+and a client that has left is not listed. Returns one record per
+client, highest ``total_bytes`` first, with ``mac``, ``hostname``,
+``ip``, ``tx_bytes``, ``rx_bytes``, and ``total_bytes``.
 
 ## Example
 

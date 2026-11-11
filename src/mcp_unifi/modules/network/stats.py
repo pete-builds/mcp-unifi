@@ -9,9 +9,9 @@ surface on this firmware were deferred rather than shipped as phantom tools:
   ``/rest/ips`` (400), ``/stat/threat`` (404). No working route → no tool.
 * DPI app/category traffic — ``/stat/dpi``, ``/stat/sitedpi``, ``/stat/stadpi``
   all return empty (DPI not populated on this gateway) and the reference dicts
-  ``/stat/dpiapp`` / ``/stat/dpigroup`` 404. The existing ``list_top_talkers``
-  already wraps the by-station ``/stat/sitedpi`` view, so a ``get_top_clients``
-  would duplicate it. No DPI tools built.
+  ``/stat/dpiapp`` / ``/stat/dpigroup`` 404. No DPI tools built.
+  ``list_top_talkers`` used to read ``/stat/sitedpi`` and so returned nothing
+  here; it now ranks the ``/stat/sta`` client list by its byte counters.
 * Per-subsystem health — already covered by ``get_site_health`` (it passes the
   full ``/stat/health`` record through), so a separate ``get_network_health``
   is omitted to avoid duplication.

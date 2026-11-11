@@ -92,7 +92,7 @@ Every tool returns a JSON string. Errors are returned as `{"error": "...", "stub
 | `list_alarms` | read | — | Active or archived alarms. |
 | `trigger_speedtest` | write | — | Kick off a UniFi WAN speed test. (Read-side-effects only; no config mutation.) |
 | `get_speedtest_results` | read | — | Recent speed-test results, newest first. |
-| `list_top_talkers` | read | — | Top clients by total bytes (DPI by-station report). |
+| `list_top_talkers` | read | — | Connected clients ranked by bytes moved since each connected. |
 
 ## Composites (with rollback)
 

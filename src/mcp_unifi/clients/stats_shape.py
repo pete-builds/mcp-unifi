@@ -187,13 +187,16 @@ def _byte_count(value: Any) -> int:
 
 
 def shape_top_talkers(rows: Any, limit: int) -> list[UniFiRecord]:
-    """Rank client traffic rows and project them to one documented shape.
+    """Rank ``/stat/sta`` client rows and project them to one documented shape.
 
-    The controller's report comes back unsorted, so ranking and ``limit`` are
+    The controller's list comes back unsorted, so ranking and ``limit`` are
     applied here, in our code, for the real client and the stub alike. Every
     row becomes ``mac``, ``hostname``, ``ip``, ``tx_bytes``, ``rx_bytes`` and
-    ``total_bytes`` (their sum), highest ``total_bytes`` first. A field the row
-    does not carry is ``None`` for the identity keys and ``0`` for the counters.
+    ``total_bytes`` (their sum), highest ``total_bytes`` first. A wired client
+    reports its counters as ``wired-tx_bytes``/``wired-rx_bytes``, which are
+    read when the plain ones are absent, and ``hostname`` falls back to the
+    alias in ``name``. A field the row does not carry is ``None`` for the
+    identity keys and ``0`` for the counters.
     """
     if not isinstance(rows, list):
         return []
@@ -201,12 +204,12 @@ def shape_top_talkers(rows: Any, limit: int) -> list[UniFiRecord]:
     for row in rows:
         if not isinstance(row, dict):
             continue
-        tx = _byte_count(row.get("tx_bytes"))
-        rx = _byte_count(row.get("rx_bytes"))
+        tx = _byte_count(row["tx_bytes"] if "tx_bytes" in row else row.get("wired-tx_bytes"))
+        rx = _byte_count(row["rx_bytes"] if "rx_bytes" in row else row.get("wired-rx_bytes"))
         shaped.append(
             {
                 "mac": row.get("mac"),
-                "hostname": row.get("hostname"),
+                "hostname": row.get("hostname") or row.get("name"),
                 "ip": row.get("ip"),
                 "tx_bytes": tx,
                 "rx_bytes": rx,
