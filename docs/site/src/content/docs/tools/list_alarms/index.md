@@ -10,12 +10,15 @@ List controller alarms, active or archived.
 
 Side effects: None (read-only).
 
-Returns the most recent ``limit`` alarm records.
+Does not work on UniFi Network 10.5 or 10.6: those controllers answer
+400 ``api.err.InvalidObject`` on every alarm route, so the call
+returns an unsupported-feature error and never an empty list. Do not
+read that error as "no alarms"; the alarms cannot be read from that
+controller at all. It works on 10.4 and older. Stub mode returns
+sample alarms either way, so a stub result says nothing about a real
+controller.
 
-Not available on every firmware: UniFi Network 10.5 and 10.6 answer
-400 ``api.err.InvalidObject`` on every alarm route, so on those
-controllers this tool returns an error saying the feature is
-unsupported rather than an empty list. It works on 10.4 and older.
+Returns the most recent ``limit`` alarm records.
 
 ## Example
 
