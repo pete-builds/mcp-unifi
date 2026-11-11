@@ -62,10 +62,11 @@ The HTTP transport refuses to start without a bearer token. All Docker / Helm ex
   </Card>
 
   <Card title="uvx / pipx" icon="seti:python">
-    Quick one-off runs straight from GitHub.
+    Quick one-off stdio runs straight from GitHub.
 
     ```bash
-    uvx --from git+https://github.com/pete-builds/mcp-unifi mcp-unifi
+    MCP_TRANSPORT=stdio uvx --from \
+      git+https://github.com/pete-builds/mcp-unifi mcp-unifi
     ```
 
     [uvx install guide →](/mcp-unifi/install/uvx/)
@@ -107,7 +108,7 @@ The HTTP transport refuses to start without a bearer token. All Docker / Helm ex
              │ stdio  /  Streamable HTTP     │
              ▼                               ▼
         ┌────────────────────────────────────────────────┐
-        │  mcp-unifi server  (FastMCP, Python 3.14)      │
+        │  mcp-unifi server  (FastMCP, Python 3.13)      │
         │  ┌───────────────────────────────────────────┐ │
         │  │  Tool dispatcher (per-module)             │ │
         │  ├───────────────┬──────────────┬────────────┤ │

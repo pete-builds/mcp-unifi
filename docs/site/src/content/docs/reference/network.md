@@ -110,9 +110,9 @@ These tools chain primitive operations into one call and roll back on partial fa
 
 | Tool | Type | dry_run | Description |
 |---|---|---|---|
-| `audit_network_drift` | read | — | Compare current controller state to a declared YAML spec; returns structured diff. |
-| `backup_config` | read | — | Snapshot controller state into a versioned JSON envelope (`schema=1`). WLAN passphrases stripped to a sentinel; envelope flagged `secrets_stripped: true`. |
-| `restore_config` | write | yes | Compute an action plan from a backup envelope and apply it with rollback on partial failure. Restored WLANs from a secrets-stripped envelope are recreated with `enabled=False` so the operator resets passphrases before they go live. |
+| `audit_network_drift` | read | — | Compare current controller state to a declared YAML spec; returns structured diff. Anything in the spec it cannot compare (an unknown section or key) is listed in `not_compared`, and `in_sync` is `true` only when that list is empty too. A name the controller holds twice is reported as a duplicate. |
+| `backup_config` | read | — | Snapshot controller state into a versioned JSON envelope (`schema=1`): networks, firewall groups, WLANs, legacy firewall rules, port profiles, DHCP reservations and port forwards. Secrets are stripped to a sentinel and the envelope is flagged `secrets_stripped: true`. `not_included` names what the envelope does not hold, zone-based firewall policies among them. |
+| `restore_config` | write | yes | Compute an action plan from a backup envelope and apply it with rollback on partial failure. The first call returns the plan and a one-time token; nothing is written until `confirm_destructive_action`. References to a recreated network or firewall group are rewritten to its new id. A record the plan cannot place safely is `blocked` and not written (a reference it cannot resolve, a name held more than once); a record the controller will not delete is a `skip`. A type the envelope has no section for is left alone. Restored WLANs and networks carrying a stripped secret are recreated with `enabled=False` so the operator resets the secret before they go live. |
 
 ## Response envelope shape
 
@@ -188,7 +188,7 @@ Run it with `dry_run=true` first to inspect the predicted change set. Re-run wit
 { "tool": "backup_config", "args": { "controller": "default" } }
 
 // 2. Audit drift against a declared YAML spec
-{ "tool": "audit_network_drift", "args": { "spec_path": "./network-spec.yml" } }
+{ "tool": "audit_network_drift", "args": { "spec_yaml": "networks:\n  - name: IoT\n    vlan: 30\n" } }
 ```
 
 **Pin a homelab service: static lease + LAN-local accept rule + (optional) port forward.**

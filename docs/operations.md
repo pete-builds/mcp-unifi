@@ -18,8 +18,9 @@ Contents:
 4. [Error budget](#4-error-budget)
 5. [What pages a human, and what does not](#5-what-pages-a-human-and-what-does-not)
 6. [Latency distribution](#6-latency-distribution)
-7. [Cost per tool call](#7-cost-per-tool-call)
-8. [Example collector configuration](#8-example-collector-configuration)
+7. [Client sessions after a restart](#7-client-sessions-after-a-restart)
+8. [Cost per tool call](#8-cost-per-tool-call)
+9. [Example collector configuration](#9-example-collector-configuration)
 
 ---
 
@@ -103,11 +104,22 @@ Tracing is off unless you ask for it, and the OpenTelemetry SDK is not a
 dependency of this server.
 
 ```bash
-pip install 'mcp-unifi[otel]'
+pip install 'mcp-unifi[otel] @ git+https://github.com/pete-builds/mcp-unifi'
 export MCP_UNIFI_OTEL_ENABLED=true
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://collector.internal:4318
 opentelemetry-instrument mcp-unifi
 ```
+
+This project is not published on PyPI, and the package named `mcp-unifi` that
+PyPI does host is an unrelated project by another author, so installing that
+bare name from PyPI would install someone else's code. Install from this
+repository's git URL as above.
+
+The `otel` extra installs the OpenTelemetry API, SDK and OTLP/HTTP exporter
+that `pyproject.toml` lists for it. The `opentelemetry-instrument` launcher is
+not among them; it is a separate OpenTelemetry package, so install it
+yourself if you use that command, or configure a tracer provider in your own
+entrypoint.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -122,14 +134,22 @@ configure a provider in your own entrypoint.
 ### How "optional" is enforced, precisely
 
 Stated carefully because the imprecise version would be wrong:
-`opentelemetry-api` **is** already present in `requirements.lock`, pinned at
-1.44.0, because `fastmcp-slim` depends on it. The API on its own is inert:
+`opentelemetry-api` **is** already present in `requirements.lock`, because
+`fastmcp-slim` depends on it. The API on its own is inert:
 without an SDK-installed tracer provider it hands back a no-op tracer that
 creates no real spans and exports nothing.
 
 What the `otel` extra adds, and what a default install genuinely does not have,
 is the **SDK** and the **OTLP exporter**. Neither is in `requirements.in`,
 `requirements.lock`, or the `[project] dependencies` table.
+
+**In the published container image.** The image installs `requirements.lock`
+and the package itself without extras, so it has the API and nothing else, and
+its runtime stage removes `pip`. Setting `MCP_UNIFI_OTEL_ENABLED=true` there
+makes the server log `OpenTelemetry tracing enabled`, but the spans it creates
+are non-recording and nothing is exported. To trace from a container you have
+to build your own image that installs the `otel` extra; this project does not
+publish one.
 
 On top of that:
 
@@ -380,7 +400,7 @@ file. A Linux container on other hardware will differ; rerun the script there.
 Two things in that table are worth noticing.
 
 `list_devices` is the slowest at every percentile, and it is also the tool with
-the largest response record (section 7). The server's overhead tracks payload
+the largest response record (section 8). The server's overhead tracks payload
 size, which is what you would expect when the dominant costs are a redaction
 walk and two JSON serialisations over the same structure.
 
@@ -535,7 +555,7 @@ extra is not installed; everything else runs with the normal dev dependencies.
 
 ---
 
-## 8. Example collector configuration
+## 9. Example collector configuration
 
 **This is an example, not a supported deployment.** It is self-contained, it is
 not tested in CI, and it is here so you have somewhere to start rather than

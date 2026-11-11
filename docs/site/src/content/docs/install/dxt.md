@@ -4,7 +4,7 @@ title: Claude Desktop (.dxt)
 description: One-click install for Claude Desktop via the Desktop Extension bundle.
 ---
 
-The Desktop Extension bundle (`.dxt`) is the easiest way to get mcp-unifi into Claude Desktop. One file, double-click to install, configure through a built-in UI. No JSON editing, no separate runtime to install. The bundle ships the Python runtime and all dependencies inline.
+The Desktop Extension bundle (`.dxt`) is the easiest way to get mcp-unifi into Claude Desktop. One file, double-click to install, configure through a built-in UI. No JSON editing and no `uv` or `pipx`. The bundle includes the server and its Python dependencies, but not a Python interpreter: its manifest launches `python` and declares a requirement of Python 3.13 or newer, so install Python 3.13+ on the machine first.
 
 The bundle uses **stdio transport**: Claude Desktop spawns the server as a subprocess when the conversation starts and tears it down when the conversation ends. There is no long-running server to manage.
 
@@ -23,7 +23,7 @@ Click the extension's gear icon in **Settings → Extensions** to open the confi
 |---|---|---|
 | **Stub Mode** | Toggles `STUB_MODE`. On = mock data, no hardware needed. Off = real gateway. | On |
 | **UniFi Host** | `UNIFI_HOST`. IP or hostname (e.g. `192.168.1.1`). Required when Stub Mode is off. | (empty) |
-| **UniFi API Key** | `UNIFI_API_KEY`. Local API key from the gateway. Stored encrypted by Claude Desktop. | (empty) |
+| **UniFi API Key** | `UNIFI_API_KEY`. Local API key from the gateway. The bundle manifest marks this field sensitive. | (empty) |
 | **Modules Enabled** | `MCP_UNIFI_MODULES_ENABLED`. Comma-separated. Use `network,protect,access` to enable all three. | `network` |
 
 To get the API key, log into the gateway UI, go to **Settings → Control Plane → Integrations**, and click **Create API Key**.
@@ -36,10 +36,10 @@ If tools don't appear, check **Settings → Extensions** for an enable toggle an
 
 ## Why .dxt over manual config
 
-The .dxt bundle ships the Python runtime alongside the server code. You don't need `uv`, `pipx`, or `python3` installed on your machine. Compared to a hand-edited `claude_desktop_config.json` pointing at `uvx`, the bundle:
+The .dxt bundle ships the server code and its Python dependencies, but not the interpreter. You need Python 3.13 or newer installed; you don't need `uv` or `pipx`. Compared to a hand-edited `claude_desktop_config.json` pointing at `uvx`, the bundle:
 
-- Survives system-wide Python upgrades.
-- Stores the API key encrypted, not in plaintext in a user config file.
-- Updates atomically when you install a newer .dxt.
+- Needs no JSON editing. Settings are entered in the extension's configuration UI.
+- Marks the API key field sensitive in its manifest, so the key is not something you paste into a plaintext config file.
+- Sets `MCP_TRANSPORT=stdio` for you, so there is no transport setting to get wrong.
 
 If you'd rather hand-edit `claude_desktop_config.json` (for example, to share one config across machines), see the [Claude Desktop recipe](/mcp-unifi/recipes/claude-desktop/).

@@ -12,12 +12,12 @@ consistent with the others without anyone stating the rule they shared:
 
 | Surface | Where | Default | Release |
 |---|---|---|---|
-| `stub_mode` | `src/mcp_unifi/config.py:115` | `True`: the server talks to no real gateway until told to | since 0.1 |
-| `readonly` | `src/mcp_unifi/config.py:126` | `False`: "existing deployments are unaffected" | 0.21.0 |
-| `verify_ssl` | `src/mcp_unifi/config.py:60`, `:203` | `False`, per [ADR 0003](0003-verify-ssl-defaults-off.md) | 0.20.0 |
-| `protect_api` | `src/mcp_unifi/config.py:61`, `:204` | `internal`: "for backward compatibility" | 0.24.0 |
+| `stub_mode` | `Settings.stub_mode` in `src/mcp_unifi/config.py` | `True`: the server talks to no real gateway until told to | since 0.1 |
+| `readonly` | `Settings.readonly` in `src/mcp_unifi/config.py` | `False`: "existing deployments are unaffected" | 0.21.0 |
+| `verify_ssl` | `ControllerConfig.verify_ssl` and `Settings.unifi_verify_ssl` in `src/mcp_unifi/config.py` | `False`, per [ADR 0003](0003-verify-ssl-defaults-off.md) | 0.20.0 |
+| `protect_api` | `ControllerConfig.protect_api` and `Settings.unifi_protect_api` in `src/mcp_unifi/config.py` | `internal`: "for backward compatibility" | 0.24.0 |
 | `mutates=` on `@audited()` | [ADR 0001](0001-explicit-write-classification.md) | **no default; the server refuses to start** | 0.21.0 |
-| `auth_required` | `src/mcp_unifi/config.py:285`, `src/mcp_unifi/server.py:224` | **`True`: an HTTP listener with no tokens refuses to start** | 0.19 |
+| `auth_required` | `Settings.auth_required` in `src/mcp_unifi/config.py`, `_build_auth_provider` in `src/mcp_unifi/server.py` | **`True`: an HTTP listener with no tokens refuses to start** | 0.19 |
 
 Four are opt-in. Two are mandatory and fail closed. Both mandatory ones carry an
 explicit escape hatch: `MCP_UNIFI_AUTH_REQUIRED=false` logs a warning naming the

@@ -39,7 +39,7 @@ client gets admin-equivalent access to the controller.
 
 ### Claude Desktop (.dxt) — one-click
 
-Download `mcp-unifi-<version>.dxt` from the [latest release](https://github.com/pete-builds/mcp-unifi/releases) and double-click. Configuration is through a built-in UI in Claude Desktop. The bundle ships the Python runtime; no separate install needed. Uses stdio transport.
+Download `mcp-unifi-<version>.dxt` from the [latest release](https://github.com/pete-builds/mcp-unifi/releases) and double-click. Configuration is through a built-in UI in Claude Desktop. The bundle includes the server and its Python dependencies but not a Python interpreter: its manifest launches `python` and requires Python 3.13 or newer, so install that first. Uses stdio transport.
 
 ### Helm
 
@@ -57,13 +57,13 @@ appropriate for a trusted single-tenant cluster).
 
 ### uvx / pipx
 
-Quick one-off runs straight from the GitHub repo. Stdio transport.
+Quick one-off runs straight from the GitHub repo. Stdio transport: the server's default transport is Streamable HTTP, so set `MCP_TRANSPORT=stdio`.
 
 ```bash
-uvx --from git+https://github.com/pete-builds/mcp-unifi mcp-unifi
+MCP_TRANSPORT=stdio uvx --from git+https://github.com/pete-builds/mcp-unifi mcp-unifi
 ```
 
-Pin a release with `@v0.5.0-rc.2` (or any tag) appended to the URL.
+Pin a release by appending `@<tag>` to the URL, using a tag from the [releases page](https://github.com/pete-builds/mcp-unifi/releases). mcp-unifi is not published on PyPI, so install it from the git URL as shown.
 
 Full guides for each install path live in the [docs site](https://pete-builds.github.io/mcp-unifi/).
 
@@ -120,7 +120,7 @@ Generate the API key under **Settings → Control Plane → Integrations → Cre
 
 ## Configuration
 
-All config is read from environment variables (and `.env` when present). The six most common:
+All config is read from environment variables (and `.env` when present). The most common:
 
 | Variable | Default | Notes |
 |---|---|---|
@@ -172,17 +172,17 @@ Then set `pinned_cert: /etc/mcp-unifi/pins/home.pem` on the controller in the YA
 
 The engineering scaffolding around the tool surface (see the [Tool Manifest](https://pete-builds.github.io/mcp-unifi/tools/) for the current count), in case you want to know what's holding it up:
 
-**Test discipline.** ~880 tests across unit, integration, and property-based (Hypothesis) — see `pytest --collect-only` for the current count. HTTP is mocked with respx so tests don't hit a real controller. Coverage gated at 80% branch coverage in CI; current floor is 90%.
+**Test discipline.** Unit, integration, and property-based (Hypothesis) tests; run `pytest --collect-only -q` for the current count. HTTP is mocked with respx so tests don't hit a real controller. Branch coverage is measured and CI fails below 80%.
 
 **Code quality gates.** Ruff (pycodestyle, pyflakes, isort, flake8-bugbear, pyupgrade, simplify, flake8-bandit security ruleset, comprehensions) plus mypy strict (no implicit Any, unreachable code flagged, unused ignores flagged). Pre-commit hooks run lint, format, types, and regenerate the tool manifest with a drift check, so bad code never reaches CI.
 
-**CI pipeline (5 gated jobs).** Every PR runs lockfile-drift check → lint + type check → tests + coverage → multi-arch Docker build → Trivy filesystem and image scan (HIGH/CRITICAL fails the build). Each gates the next.
+**CI pipeline (5 jobs).** Every PR runs a lockfile-drift check, a version-surfaces check, lint + type check, and tests + coverage, independently of each other. A fifth job builds the Docker image (single-arch, not pushed) and runs the Trivy filesystem and image scans (HIGH/CRITICAL fails the build); it starts only after lint + type check and tests have passed. The multi-arch build happens in the release pipeline below.
 
-**Release pipeline.** A `git tag vX.Y.Z` push triggers a multi-arch (linux/amd64 + linux/arm64) Docker build, cosign keyless signing via sigstore OIDC, SLSA build provenance attestation, CycloneDX SBOM via Syft attached to the GitHub release, a .dxt bundle for Claude Desktop one-click install, GHCR push with `vX.Y.Z` / `X.Y` / `latest` tags, and an auto-bump of the example `docker-compose.yml` on main.
+**Release pipeline.** A `git tag vX.Y.Z` push triggers a multi-arch (linux/amd64 + linux/arm64) Docker build, cosign keyless signing via sigstore OIDC, SLSA build provenance attestation, CycloneDX SBOM via Syft attached to the GitHub release, a .dxt bundle for Claude Desktop one-click install, GHCR push with `vX.Y.Z` / `X.Y` / `latest` tags, and a check that the version in `docker-compose.yml`, the Helm chart, `manifest.json`, `server.json` and `pyproject.toml` already matches the tag. The release workflow does not bump any of them; it fails the release if one does not already match.
 
 **Dependency hygiene.** Hash-pinned via `pip install --require-hashes`. A custom CI step verifies every pinned dep in `requirements.in` matches `requirements.lock` so no one can bump one without the other. Dependabot auto-merges safe patches. The base image is digest-pinned, not tag-pinned.
 
-**Container hardening.** Runs as non-root UID 1000, no shell, no home directory. Read-only root filesystem enforced via Docker / Helm. `/tmp` is a 16MiB tmpfs. `no-new-privileges` set. All Linux capabilities dropped. Dedicated `/health` endpoint keeps the streamable-HTTP transport from logging 406 noise on every Docker healthcheck.
+**Container hardening.** Runs as non-root UID 1000 with its login shell set to `nologin` and no home directory (the image still contains `/bin/sh`). The runtime protections come from the Compose file and the Helm chart, not from the image: read-only root filesystem, a 16MiB `/tmp` tmpfs, `no-new-privileges`, and, in the Helm chart, all Linux capabilities dropped (a plain `docker run` applies none of these; see [SECURITY.md](SECURITY.md)). Dedicated `/health` endpoint keeps the streamable-HTTP transport from logging 406 noise on every Docker healthcheck.
 
 **Security posture.** Bearer-token authentication on the HTTP transport, secure by default (refuses to start without tokens). Audit log records each authenticated `client_id` per call with secret scrubbing on `api_key`, `passphrase`, `password`, `secret`, `token` substring matches. API keys wrapped in pydantic `SecretStr`. `SECURITY.md` with a private disclosure path.
 
@@ -227,6 +227,7 @@ python scripts/generate_tool_manifest.py --check  # CI-style drift check
 - [Multi-site setup](https://pete-builds.github.io/mcp-unifi/guides/multi-site/)
 - [Access setup](https://pete-builds.github.io/mcp-unifi/guides/access-setup/)
 - [Dry-run and audit log](https://pete-builds.github.io/mcp-unifi/guides/dry-run-audit/)
+- [Authentication](https://pete-builds.github.io/mcp-unifi/guides/auth/)
 - [Security model](https://pete-builds.github.io/mcp-unifi/guides/security/)
 - [Migration from v0.x](https://pete-builds.github.io/mcp-unifi/guides/migration/)
 - [Changelog](CHANGELOG.md)

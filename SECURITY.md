@@ -90,8 +90,9 @@ Behavior depends on transport:
 
 The published image (`ghcr.io/pete-builds/mcp-unifi`) contributes:
 
-- Runs as a **non-root user (UID 1000)** with **no shell** and **no home
-  directory** (baked into the Dockerfile).
+- Runs as a **non-root user (UID 1000)** whose login shell is
+  `/usr/sbin/nologin` and which has **no home directory** (baked into the
+  Dockerfile). The image itself still contains `/bin/sh`.
 - **Base image pinned by digest**. Debian security upgrades are applied on
   top of the pinned base at build time.
 - Python dependencies installed with **`pip --require-hashes`** from a

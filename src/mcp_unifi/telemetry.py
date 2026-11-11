@@ -16,10 +16,11 @@ So:
 * The OpenTelemetry **SDK** and the OTLP **exporter** are not dependencies at
   all. They are not in ``requirements.in``, not in ``requirements.lock``, and
   not in the ``[project] dependencies`` table. They live in the ``otel``
-  extra (``pip install mcp-unifi[otel]``), which nothing installs by default.
+  extra (``pip install 'mcp-unifi[otel] @ git+https://github.com/pete-builds/mcp-unifi'``;
+  this project is not on PyPI), which nothing installs by default.
   Stated precisely, because it matters: ``opentelemetry-api`` **is** already
-  present transitively (``fastmcp-slim`` depends on it, and it is pinned at
-  1.44.0 in ``requirements.lock``). The API on its own is inert. Without an
+  present transitively (``fastmcp-slim`` depends on it, and ``requirements.lock``
+  pins it). The API on its own is inert. Without an
   SDK-installed tracer provider it returns a no-op tracer, so a default
   deployment creates no real spans and exports nothing even if the flag were
   flipped on.
@@ -276,7 +277,8 @@ def get_tracer() -> Any:
     except ImportError:
         logger.warning(
             "%s is set but the opentelemetry packages are not installed, so tracing "
-            "stays off. Install them with: pip install 'mcp-unifi[otel]'. The server "
+            "stays off. Install them with: pip install "
+            "'mcp-unifi[otel] @ git+https://github.com/pete-builds/mcp-unifi'. The server "
             "is otherwise unaffected.",
             ENV_ENABLED,
         )

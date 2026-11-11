@@ -29,7 +29,7 @@ Four supported install paths. Pick the one that matches how you run Claude:
 - **[Docker](/mcp-unifi/install/docker/)** — long-running container, Streamable HTTP transport on port 3714. Best for homelab setups with multiple clients (Claude Code + Claude Desktop + Cursor sharing one server).
 - **[Claude Desktop (.dxt)](/mcp-unifi/install/dxt/)** — one-click install. Stdio transport. The server starts on demand, no separate container to run.
 - **[Helm](/mcp-unifi/install/helm/)** — Kubernetes deployment. Streamable HTTP behind a Service / Ingress. Multi-controller via a Secret. Helm repo at `https://pete-builds.github.io/mcp-unifi/`.
-- **[uvx / pipx](/mcp-unifi/install/uvx/)** — quick one-off runs straight from the GitHub repo. Stdio transport. Good for trying things out without committing to a deploy shape.
+- **[uvx / pipx](/mcp-unifi/install/uvx/)** — quick one-off runs straight from the GitHub repo. Stdio transport (set `MCP_TRANSPORT=stdio`; the default is Streamable HTTP). Good for trying things out without committing to a deploy shape.
 
 ## Fastest path to a working tool call
 

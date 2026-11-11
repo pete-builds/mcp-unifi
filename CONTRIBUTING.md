@@ -19,7 +19,7 @@ uv venv && source .venv/bin/activate
 uv pip sync requirements-dev.lock
 uv pip install -e . --no-deps
 
-# Test suite (currently ~880 tests; run `pytest --collect-only` for the exact
+# Test suite (~1900 tests; run `pytest --collect-only` for the exact
 # count). Coverage is gated at 80% branch coverage in CI.
 pytest
 

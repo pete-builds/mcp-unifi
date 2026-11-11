@@ -120,4 +120,4 @@ Each controller gets its own in-memory state. Creating a VLAN on `home` does not
 
 ## Helm
 
-In `values.yaml`, mount an `existingSecret` containing the API keys and a `ConfigMap` containing the YAML. The chart's `values.yaml.unifi.*` block is the **simple single-controller** path; for multi-site, prefer the existingSecret + ConfigMap pattern and mount the YAML into the pod. See the chart's `templates/` directory for the volume hooks.
+The chart's `unifi.*` values are the **simple single-controller** path. For multi-site, put the controllers YAML in a Secret (it holds API keys, so not a ConfigMap), mount it with the chart's `extraVolumes` and `extraVolumeMounts` values, and point `MCP_UNIFI_CONTROLLERS_FILE` at it through `extraEnv`. The [Helm install page](/mcp-unifi/install/helm/#multiple-controllers) has the worked example.

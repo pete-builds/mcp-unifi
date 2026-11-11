@@ -28,6 +28,7 @@ export default defineConfig({
             { label: 'Multi-Site Setup', link: '/guides/multi-site/' },
             { label: 'Access Setup', link: '/guides/access-setup/' },
             { label: 'Dry-Run & Audit Log', link: '/guides/dry-run-audit/' },
+            { label: 'Authentication', link: '/guides/auth/' },
             { label: 'Security Model', link: '/guides/security/' },
             { label: 'Migrate from v0.x', link: '/guides/migration/' },
           ],

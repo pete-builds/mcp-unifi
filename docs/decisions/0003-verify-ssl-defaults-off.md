@@ -20,10 +20,10 @@ An external fork, `adibirzu/mcp-unifi`, flipped the default to `true`.
 
 ## Decision
 
-`verify_ssl` defaults to `false` in both `ControllerConfig` and the legacy
-single-controller `Settings` fields, at `src/mcp_unifi/config.py:60` and
-`src/mcp_unifi/config.py:168`. Operators who terminate TLS with a real certificate
-set it to `true` per controller.
+`verify_ssl` defaults to `false` in `ControllerConfig.verify_ssl` and, for the legacy
+single-controller env form, in `Settings.unifi_verify_ssl` (unset there, and an unset
+value resolves to the controller default), both in `src/mcp_unifi/config.py`.
+Operators who terminate TLS with a real certificate set it to `true` per controller.
 
 ## Alternatives considered
 

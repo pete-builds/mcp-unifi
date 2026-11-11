@@ -4,7 +4,7 @@ title: Configuration
 description: Full env var reference for mcp-unifi.
 ---
 
-All configuration is read from environment variables (and a `.env` file when present). Pydantic validates values at startup; invalid config fails fast with a clear message.
+All configuration is read from environment variables (and a `.env` file when present, with three exceptions listed under [`.env` file](#env-file)). Pydantic validates values at startup; invalid config fails fast with a clear message.
 
 ## Mode toggle
 
@@ -53,6 +53,15 @@ Only required when `MCP_UNIFI_MODULES_ENABLED` includes `access` and `STUB_MODE=
 | `UNIFI_ACCESS_HOST` | string | `""` | access + real mode | Access hub IP or hostname. Often the same as `UNIFI_HOST`. |
 | `UNIFI_ACCESS_API_KEY` | string | `""` | access + real mode | Access API key. Separate from the Network API key; generated on the Access controller's developer settings. |
 | `UNIFI_ACCESS_PORT` | int (1-65535) | `12445` | no | HTTPS port for the Access hub (the direct Access app port). |
+
+## UniFi OS console session (optional)
+
+The Network API key does not authenticate UniFi OS's own endpoints, so tools that read them, such as `get_console_firmware`, need a console login. Without these two variables those tools return a "not configured" error; every other tool works. Use a dedicated local console admin rather than your Ubiquiti SSO account. For the password, `UNIFI_OS_PASSWORD_FILE` (below) is the file-backed form.
+
+| Variable | Type | Default | Required | Notes |
+|---|---|---|---|---|
+| `UNIFI_OS_USERNAME` | string | `""` | no | UniFi OS console username. Promoted onto the `default` controller, like the other legacy `UNIFI_*` variables. The username is not a secret and has no file form. |
+| `UNIFI_OS_PASSWORD` | string | `""` | no | UniFi OS console password. Or use `UNIFI_OS_PASSWORD_FILE`. |
 
 ## Transport
 
@@ -149,6 +158,15 @@ through 0.27.0; it is opt-in from 0.28.0.
 
 See the [Dry-Run & Audit Log guide](/mcp-unifi/guides/dry-run-audit/) for the JSONL record schema and `mcp-unifi-replay` usage.
 
+## Tracing (optional)
+
+One OpenTelemetry span per tool call. Off by default, and the OpenTelemetry SDK is not installed by default; see [Operating mcp-unifi](https://github.com/pete-builds/mcp-unifi/blob/main/docs/operations.md#2-turning-tracing-on) for how to turn it on and what a span carries.
+
+| Variable | Type | Default | Required | Notes |
+|---|---|---|---|---|
+| `MCP_UNIFI_OTEL_ENABLED` | bool | unset (off) | no | `true`, `1`, `yes` or `on` enables tracing. Read straight from the environment, not from `.env`. |
+| `MCP_UNIFI_OTEL_SERVICE_NAME` | string | `mcp-unifi` | no | Name passed to the tracer. |
+
 ## IoT defaults
 
 These shape the subnet and DHCP range that `create_iot_network` synthesizes when callers don't specify them.
@@ -165,12 +183,16 @@ These shape the subnet and DHCP range that `create_iot_network` synthesizes when
 - Invalid values fail with a clear message that names the field.
 - Real mode with no controller config (no `MCP_UNIFI_CONTROLLERS_FILE`, no legacy `UNIFI_HOST` + `UNIFI_API_KEY`) is a hard error.
 - Duplicate controller names in the YAML are rejected.
+- An unknown `MCP_UNIFI_AUDIT_SINK`, or the `stdout` sink on the stdio transport, stops startup. A `file` sink that cannot be written logs an ERROR and shows in `/health`, but does not stop startup.
+- Use the `MCP_UNIFI_`-prefixed names in this page. Several settings are also read from the same name without the prefix (`READONLY`, `AUTH_REQUIRED`, `CLIENT_ID` and so on). That was never documented, it still works in this release, and the server logs a warning naming the variable to set instead. The unprefixed names will stop being read in a later release.
 - `IOT_DHCP_STOP_OFFSET <= IOT_DHCP_START_OFFSET` is rejected.
 - `IOT_SUBNET_TEMPLATE` without the `{vlan_id}` placeholder is rejected.
 
 ## `.env` file
 
 The server reads `.env` from the process CWD if present. Values in the actual environment override `.env`. The repo's `.env.example` is a good starting template.
+
+Three groups of variables are read from the process environment only, and a `.env` file does not set them: `MCP_UNIFI_MODULES_ENABLED`, the `MCP_UNIFI_AUDIT_*` variables, and the `MCP_UNIFI_OTEL_*` variables. Export them in the shell, the service unit, `docker run -e` or the compose `environment:` block. The `mcp-unifi-healthcheck` command likewise reads `MCP_PORT` from the process environment only.
 
 ## Inspecting the resolved config
 

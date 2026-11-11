@@ -1588,7 +1588,7 @@
       "name": "get_content_filter_details"
     },
     {
-      "description": "Fetch one credential's full record by ID.\n\nSide effects: None (read-only).\n\nSame shape as one entry from ``list_credentials`` plus any\ntype-specific fields (``card_id`` for NFC, ``pin_length`` for PIN,\n``device_label`` for mobile).\n\nExample: get_credential(credential_id=\"cred...\", controller=\"default\")",
+      "description": "Fetch one credential's full record by ID.\n\nSide effects: None (read-only).\n\nSame shape as one entry from ``list_credentials`` plus any\ntype-specific fields (``pin_length`` for PIN, ``device_label`` for\nmobile). An NFC credential's ``card_id`` is present but redacted.\n\nExample: get_credential(credential_id=\"cred...\", controller=\"default\")",
       "input_schema": {
         "additionalProperties": false,
         "properties": {

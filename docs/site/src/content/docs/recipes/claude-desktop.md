@@ -64,24 +64,27 @@ Start a new conversation and ask "list my UniFi devices". You'll get two stubbed
 
 Get the API key in the gateway UI under **Settings → Control Plane → Integrations → Create API Key**.
 
-Note that `claude_desktop_config.json` is **plaintext on disk**. If the API key matters, prefer the [.dxt install](/mcp-unifi/install/dxt/) (encrypted storage) or the Docker / HTTP path below.
+Note that `claude_desktop_config.json` is **plaintext on disk**. If the API key matters, prefer the [.dxt install](/mcp-unifi/install/dxt/) (which marks the key field sensitive) or the Docker / HTTP path below.
 
 ## Streamable HTTP (remote container)
 
-Point Claude Desktop at a running Docker container (on this machine or another host on your network):
+Point Claude Desktop at a running Docker container (on this machine or another host on your network). The HTTP transport is secure by default, so every request needs an `Authorization: Bearer <token>` header, and the container must have been started with the same token (see the [Docker install guide](/mcp-unifi/install/docker/)):
 
 ```json
 {
   "mcpServers": {
     "unifi": {
       "transport": "streamable-http",
-      "url": "http://localhost:3714/mcp"
+      "url": "http://localhost:3714/mcp",
+      "headers": {
+        "Authorization": "Bearer <paste-token-from-openssl-rand-hex-32>"
+      }
     }
   }
 }
 ```
 
-If the container is on another host, replace `localhost` with that host's name or IP. The container's transport must be `streamable-http` (the default for the published image).
+If the container is on another host, replace `localhost` with that host's name or IP. The container's transport must be `streamable-http` (the default for the published image). Without the `Authorization` header the server answers `401`.
 
 ## .dxt one-click alternative
 
