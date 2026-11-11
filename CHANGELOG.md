@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-11-11
+
+### Added
+
+- **Every environment variable the server reads is on the configuration page,
+  and a test keeps it that way.** `UNIFI_OS_USERNAME`, `UNIFI_OS_PASSWORD`,
+  `MCP_UNIFI_OTEL_ENABLED` and `MCP_UNIFI_OTEL_SERVICE_NAME` were missing from
+  `reference/configuration.md`, and `.env.example` lacked the audit variables,
+  `MCP_UNIFI_MODULES_ENABLED`, `MCP_UNIFI_CONTROLLERS_FILE`,
+  `MCP_UNIFI_DEFAULT_CONTROLLER`, `UNIFI_PROTECT_API`, `UNIFI_WRITE_API`,
+  `UNIFI_ACCESS_API_KEY_FILE` and `UNIFI_OS_PASSWORD_FILE`. All are listed now.
+  The docs also say what was never written down: `MCP_UNIFI_MODULES_ENABLED`,
+  the `MCP_UNIFI_AUDIT_*` variables and `MCP_UNIFI_OTEL_*` are read from the
+  process environment only, so putting them in a `.env` file does nothing.
+  `UNIFI_ACCESS_USERNAME` and `UNIFI_ACCESS_PASSWORD`, which the Access setup
+  guide named, are read by nothing and are no longer mentioned as settings.
+- **`update_clients` sets or clears the display name and note of one or
+  more clients, and touches nothing else (#219).** Takes 1 to 100
+  `{mac, name, note}` items. A field left out, or sent as `null`, is kept;
+  an empty string clears it. `null` deliberately does not clear: clients
+  that fill in every optional property send `"note": null` on a plain
+  rename, and that must never wipe a note nobody mentioned. Each client
+  whose values differ gets one partial `PUT /rest/user/{_id}` carrying only
+  the changed fields, plus the controller's `noted` flag when it has to flip
+  (it is true exactly when the record has a name or a note, which is what a
+  UI rename was observed to do on Network 11.0.99). No `use_fixedip`,
+  `fixed_ip` or `network_id` is ever sent, so a rename cannot create a
+  reservation. The user records are read once for the whole batch. The same
+  MAC twice is refused before anything is written, a malformed MAC, a
+  control character, an unknown key or an item that sets nothing is refused
+  by the schema, and one client failing does not stop the rest: every MAC
+  gets its own `status` (`updated`, `unchanged`, `not_found`, `failed`).
+  When nothing was updated and nothing already matched, the response is an
+  error envelope that still carries the per-MAC results. `dry_run=True`
+  returns the `{old, new}` value of each field per client, with `noted`
+  marked as dependent, and flags MACs the controller has no record of. The
+  call writes one audit event that records the items as applied and
+  replays; one event per changed client is a follow-up. Not live-verified:
+  that the controller merges a body carrying only `name`, `note` and
+  `noted`, and that an empty string clears through this endpoint.
+
 ### Changed
 
 - **Tool results carry the full data in the text block again.** Since 0.19.0 a
@@ -30,6 +71,445 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `MCP_UNIFI_` prefix. It is now `MCP_UNIFI_FORCE_FULL_TEXT_RESPONSES`; the old
   name keeps working. Both response settings are in the configuration
   reference and in the startup log line.
+- **The Protect and Access stubs behave more like a console.** They validate
+  every id with `path_segment` as the real clients do, answer an unknown
+  camera, event or id with "not found" instead of success (`get_snapshot`,
+  `get_event_thumbnail` and `list_recordings` used to return data for any
+  id), return copies rather than live records so a caller cannot edit stub
+  state through a result, and honour `fail_next` on every method. The Network
+  stub honours `fail_next` on its mutating methods, and the zone policy stub
+  no longer gives a new policy the `index` of one still present after an
+  earlier policy was deleted. Test-only; no change against a real console.
+- **The audit log now reaches the container log in both shipped deployments. Operators will notice: audit lines now appear in `docker compose logs` and `kubectl logs`.** Both `docker-compose.yml` and the Helm chart run a read-only root filesystem with only `/tmp` writable, while the server's default audit sink is a file at `./audit.jsonl` under `/app`. Every write failed, the sink swallows failures by design, and an installed container recorded nothing. Both compose files now set `MCP_UNIFI_AUDIT_SINK=stdout`, and the chart has `audit.sink` (default `stdout`) and `audit.path` (used only with `sink: file`). An existing `.env` or `extraEnv` that sets the sink itself still wins in compose. Docs no longer say `/tmp` holds the audit log. A deployment that wants a file keeps it by setting the sink to `file` and mounting a writable volume.
+- **The chart's default memory limit is 256Mi, up from 128Mi. Operators will notice this on upgrade.** The server measures about 89 MiB at idle with every module loaded and no traffic, which left the old limit almost no headroom for real requests. The request is unchanged at 64Mi, so scheduling is unchanged; only the ceiling moves. Set `resources.limits.memory` to go back.
+- **Changing the chart-managed Secret now restarts the pod.** The Deployment had no checksum annotation, so `helm upgrade` with a new `unifi.apiKey` or `auth.tokens` updated the Secret and left the running pod on the old values. The pod now carries `checksum/secret` whenever the chart renders its own Secret. A Secret you supply with `existingSecret` is still not tracked. The default `podAnnotations` (a `prometheus.io/scrape: "false"` pair that pointed at a `/metrics` endpoint the server does not have) is now empty.
+- **`unifi.verifySSL` is unset by default instead of `false`.** The chart always sent `UNIFI_VERIFY_SSL=false`, which the server reads as an explicit choice, so a pinned certificate (`UNIFI_PINNED_CERT`) or a file-backed key (`UNIFI_API_KEY_FILE`) set through the new `extraEnv` failed startup or lost its verify-by-default. An existing install with an inline key behaves exactly as before, because the server's own default for that shape is also `false`. A values file that sets `verifySSL` explicitly renders the same as before.
+- **`update_static_dhcp_lease` no longer requires `network_id` (#219).** It
+  is sent only when given; left out, the record keeps the network it already
+  has, which is how the long-standing Art-of-WiFi client's
+  `edit_client_fixedip` treats it. The parameter keeps its position, so
+  existing callers are unaffected. The tool still always reserves an IP; its
+  description now points at `update_clients` for a rename with no
+  reservation. Not live-verified with `network_id` omitted.
+
+### Fixed
+
+- **A network or WLAN create accepted by the Integration API is never
+  replayed on the private API.** When the v1 POST answered 2xx but the body
+  carried no `id`, `IntegrationWrites.create_network` and `create_wlan` fell
+  through to the private-API create, so one tool call made two objects: a
+  VLAN or SSID the console now holds twice, with only the private copy known
+  to the composite's rollback. The fallback is for a 4xx, where the console
+  changed nothing. A 2xx with no id now raises instead, the same way
+  `create_firewall_policy` already did, and the three share one check.
+- **`provision_camera` changes only the settings you pass.** Its defaults
+  (`recording_mode="motion"`, `sensitivity=50`, `retention_days=7`,
+  `privacy_enabled=False`) were applied on every call, so
+  `provision_camera(camera_id=..., sensitivity=60)` also reset a camera's
+  recording mode to motion, its retention to 7 days and released an engaged
+  privacy mask. All four parameters now default to "leave alone", and only the
+  steps for the settings passed are sent. **Behaviour change:** a call with no
+  setting at all is now an error ("needs at least one of ..."), where before it
+  silently applied the four defaults. `dry_run=True` now reads the camera and
+  returns a `changes` list with the `before` and `after` value of each setting
+  it would change, instead of only the requested patch.
+- **`provision_camera` treats a step that returns no camera record as a failed
+  step.** `update_camera` returns `None` when the camera was not found or the
+  controller replied with an empty body, and the composite recorded that as
+  success and, worse, skipped that step when rolling back. Now a `None` stops
+  the run, the steps that applied (and the unconfirmed one, which may have
+  applied) are restored, and the error names the step in a new `failed_step`
+  key. A restore that gets no record back is reported as
+  `restore_unconfirmed` rather than `restored`. Not live-verified: if a real
+  Protect console answers a successful PATCH with an empty body, this makes
+  the composite fail on it.
+- **`list_motion_events` and `list_smart_detections` filter before they limit.**
+  The controller applied `limit` first, and the camera and detection-type
+  filters ran afterwards in this server, so asking for 10 vehicle detections
+  or 20 motion events from one camera returned nothing whenever newer events
+  from other cameras or types filled the first page. A camera or type filter
+  now asks the controller for the widest page (1000), filters, sorts newest
+  first here, and only then applies `limit`.
+- **`summarize_access_activity` counts agree and say when they are capped.**
+  `denied` was computed as `total - granted`, so any event whose `result` was
+  neither value counted as denied in the headline while the per-door and
+  per-user counts did not. `denied` now counts `result == "denied"`, and a new
+  `other` count holds the rest, so `granted + denied + other == total`. The
+  500-event cap used to truncate silently: the result now carries
+  `truncated` (and a `note`) when the window held more, and the cap keeps the
+  newest 500 whichever order the controller returned them in.
+- **`audit_expiring_credentials` no longer skips credentials it cannot place.**
+  A credential whose `expires_at` was already in the past, or was a float, a
+  string or epoch seconds, was dropped without a word, which reads as "not
+  expiring". The result now has `already_expired` (with `days_since_expiry`),
+  `unparseable_expiry` (id, type, label, user and the raw value) and
+  `no_expiry_count` beside the existing `credentials` list. Floats in
+  milliseconds are accepted. A number below 100000000000 (before 1973 as
+  milliseconds, so seconds or a 0 placeholder) is reported as unparseable
+  rather than as expired in 1970.
+- **`get_snapshot` and `get_event_thumbnail` check what they are about to
+  return.** The body went straight into base64 with no size limit and no check
+  that it was an image, so a login page or JSON error body came back as a
+  "jpeg" and a very large image went into the model's context whole. A body
+  over 4 MiB, or one that does not start with the JPEG signature, is now an
+  error. **Behaviour change** for a camera whose snapshot is over 4 MiB.
+- **`limit` and `hours_back` are bounded on the Protect and Access tools.**
+  A negative `limit` sliced the list from the end (`limit=-1` dropped the
+  newest event), `0` returned nothing, and `hours_back` accepted any value.
+  Both now follow the Network tools: `limit` must be 1 to 1000 and
+  `hours_back` 1 to 720, otherwise an error. **Behaviour change:**
+  `hours_back=0` is now an error instead of an empty window.
+- **A controller answer that is not JSON is now a normal tool error.** A 2xx response whose body was an HTML login page, a proxy's own page or a truncated reply escaped all five clients (Network legacy and v2, Integration, Protect, Access) as a raw `JSONDecodeError`, which no tool handler catches. It now raises `UniFiError` naming the call, the status, the content type and the size, for example `UniFi GET /api/s/default/stat/sitedpi returned 200 with a body that is not JSON (text/html, 312 bytes)`. None of the body is copied into the message, because a login page or proxy error can echo request headers.
+- **Access list tools no longer report "none" on a hub that wraps its answers.** `AccessClient` read an enveloped `{"code": "SUCCESS", "data": [...]}` body as an empty list, so `list_doors`, `list_credentials`, `list_visitors` and the rest returned nothing. Enveloped lists and records are now unwrapped; bare bodies behave as before, and a record that has its own `data` field is left alone. The Access base path and auth scheme are unchanged and still not verified against a real hub.
+- **`list_top_talkers` returns clients on a real console.** It read `/stat/sitedpi`, a site-wide per-application report with no client in it, which this project's own live probe (UCG-Fiber, Network 10.4.57) found empty, so the tool answered `[]` on real hardware while the stub returned a tidy ranked list. It now ranks the connected-client list (`/stat/sta`, the source of `list_clients`) by bytes sent plus received, reading the `wired-*` counters for wired clients, and returns `mac`, `hostname`, `ip`, `tx_bytes`, `rx_bytes` and `total_bytes` from the real client and the stub alike. **Behaviour change:** the numbers are bytes since each client connected, not a daily or monthly total, and a client that has left is not listed. The fields come from the recorded probe; the ranking itself is not live-verified.
+- **`get_speedtest_results` orders and limits in our code.** The real client returned the controller's rows as they arrived. Both the real client and the stub now sort newest first and apply `limit`. The stub's `trigger_speedtest` now returns only `{"started": true}`, like the real acknowledgement, and the measurement is read with `get_speedtest_results`.
+- **`get_console_health` no longer calls a failed probe an outage.** When the Network status endpoint reported no readiness fields and the confirming live API call timed out or got a 401, 403, 404 or 429, the tool reported `network_app_down`. It now reports `unknown` as inconclusive, with the probe's error in `summary`. A confirming probe that answered 5xx, and a status envelope that declares the app down itself, still report down.
+- **The console tools resolve the `default` controller alias.** `get_console_health`, `get_console_info` and `get_console_firmware` matched the controller name literally, so a deployment whose only controller is named something other than `default` failed these tools while every other tool worked. They now resolve the name the way the rest of the server does.
+- **`list_events` and `list_alarms` say plainly that they do not work on Network 10.5 and 10.6.** The descriptions now lead with that, tell the model not to read the error as "no events" or "no alarms", and note that stub mode returns sample data either way. The unsupported-route error is now one sentence.
+- **The Helm chart can configure everything its comments and docs said it could.** `values.yaml` and the install page promised multi-controller setups through "volume hooks" in `templates/` that did not exist: the Deployment had a fixed environment list and one volume, so no controllers file could be mounted, Access could not be configured, and none of `UNIFI_PROTECT_API`, `UNIFI_WRITE_API`, the `*_FILE` secret variables, `UNIFI_PINNED_CERT` or `LOG_*` could be set. The chart now has `extraEnv`, `extraEnvFrom`, `extraVolumes` and `extraVolumeMounts` (all empty by default, rendered only when set), and the install page shows a worked multi-controller example and an Access example that use them. The install page also no longer says an unconfigured chart falls back to stub mode: the chart sets `STUB_MODE=false`, the server refuses to start in real mode without controller config, and `unifi.stubMode=true` is how to ask for mock data.
+- **Changing `service.port` no longer crash-loops the pod.** The probes were hardcoded to port 3714 while the container port and `MCP_PORT` followed `service.port`. They now target the named container port.
+- **`existingSecret` no longer demands `UNIFI_API_KEY` when the key cannot be used.** With `existingSecret` set the chart required that key even in stub mode, or when `unifi.host` is empty and a controllers file carries the keys, so the pod stayed in `CreateContainerConfigError`. The reference is now optional in those two cases and still required for a real single-controller install.
+- **The `networkPolicy` values say what an empty policy does.** `networkPolicy.enabled=true` with empty rule lists renders deny-all ingress and egress, including DNS, so the pod can neither be reached nor resolve the gateway. `values.yaml` and the install page now say so and carry an example that allows the ingress controller in and DNS plus the gateway out. The template is unchanged.
+- **The MCP Registry entry describes an image that starts.** `server.json` said `STUB_MODE` defaults to true "so the image is functional out of the box", but the image serves streamable HTTP and exits at startup with "HTTP transport requires MCP_UNIFI_AUTH_TOKENS" unless a token is set, and the entry declared no auth variable. It now declares `MCP_UNIFI_AUTH_TOKENS` as a required secret, corrects the sentence, and adds `MCP_UNIFI_READONLY`, `UNIFI_API_KEY_FILE` and `UNIFI_PINNED_CERT`. The entry uses only fields it already used.
+- **The default compose file stays parseable when you follow its certificate-pinning hint.** The hint was a commented second `environment:` key beside the real one, so uncommenting it as instructed made the file fail to parse. The hint is now a commented entry inside the existing block. The docs also say what actually works: `docker-compose.yml` already pulls the published image (the install page told readers to change `build: .` to an image line that already existed), `docker compose up --build` needs `-f docker-compose.example.yml` because only that file has a `build:` key, and `cp .env.example .env` comes first because `env_file: .env` is mandatory.
+- **The Smithery stdio command keeps stdin open.** `smithery.yaml` ran `docker run --rm ... -e MCP_TRANSPORT=stdio` without `-i`, so the container's stdin was closed and a stdio server exited at once. The command now passes `-i`, and the module description no longer says "read-only in v0.10". Not verified against Smithery.
+- **`mcp-unifi-replay` runs in a plain shell, inside a scoped deployment, and
+  keeps rehearsals out of the audit log.** It built its server from the live
+  environment, which had three effects. With no auth variables set it died
+  with a raw `ValueError` traceback, because the default HTTP transport
+  refuses to build without a token. With scoped tokens configured, every
+  replayed call was refused, because an in-process call carries no identity
+  for the scope check. And every replayed call, stub or real, was written to
+  the environment's real audit sink, where a stub rehearsal looked exactly
+  like a real event. Replay now builds an in-process server that needs no
+  token and applies no client scoping, while still honouring
+  `MCP_UNIFI_READONLY`. **A stub replay writes nothing to the configured audit
+  sink.** A real replay (`--real` with `--i-mean-it`) is a real mutation and
+  is audited in the configured sink with `client_id` set to
+  `mcp-unifi-replay`; it refuses to run when the log being replayed is the
+  file that sink appends to. A missing controller configuration in real mode
+  is reported as a configuration error instead of a traceback. The CLI's
+  flags are unchanged.
+- **A mistyped audit sink fails at startup instead of on every call.** The
+  sink was built on the first tool call, so `MCP_UNIFI_AUDIT_SINK=files`
+  booted, reported healthy, and then failed every call. It now stops the
+  server at startup with the same message. **The stdout sink with
+  `MCP_TRANSPORT=stdio` also refuses to start**, since it would write audit
+  lines into the JSON-RPC stream.
+- **An audit log that cannot be written is reported, not silent.** A file
+  sink whose path cannot be written (the default `./audit.jsonl` on a
+  read-only root filesystem, which is what the shipped compose file and Helm
+  chart use) dropped every record while every tool call succeeded. Startup
+  now probes the path and logs one ERROR naming it and the fix
+  (`MCP_UNIFI_AUDIT_SINK=stdout`, or a writable `MCP_UNIFI_AUDIT_PATH`), and
+  `/health` carries `"audit": {"sink": "file", "writable": false}`. The server
+  still starts and `/health` still answers 200, so deployments that boot today
+  keep booting. **If you run the shipped compose file or chart unchanged, you
+  will see this error until you pick a sink.**
+- **Undocumented bare setting names now warn at startup.** `READONLY`,
+  `DEFAULT_CONTROLLER`, `CONTROLLERS_FILE`, `AUTH_TOKENS`, `AUTH_TOKEN_FILE`,
+  `CLIENT_ID`, `AUTH_REQUIRED` and `COMPACT_RESPONSES` were read as the
+  matching `MCP_UNIFI_` settings, because environment matching is
+  case-insensitive, though no document names them. A stray `CLIENT_ID` from
+  unrelated tooling could abort boot, and a stray `AUTH_REQUIRED=false` turned
+  authentication off. They are still read in this release, so nothing that
+  works stops working, but each one supplied only by its bare name (in the
+  environment or `.env`) now logs a warning naming the `MCP_UNIFI_` variable
+  to use, without its value. **The bare names will stop being read in a later
+  release.** `FORCE_FULL_TEXT_RESPONSES` is documented and gets no warning.
+- **The missing-token startup error tells a local user about stdio.** A
+  `uvx` or `pipx` install started without `MCP_TRANSPORT` lands on the HTTP
+  transport and stops with "HTTP transport requires MCP_UNIFI_AUTH_TOKENS".
+  The message now adds that a local stdio client (uvx, pipx, Claude Desktop)
+  needs `MCP_TRANSPORT=stdio` and no token. The default transport is
+  unchanged.
+- **`mcp-unifi-pin-cert` says when it trusted a certificate on first use.**
+  Its docstring said the operator could compare the fingerprint before the
+  file was written, but without `--expect-fingerprint` it wrote immediately.
+  It still does (the documented usage is unchanged), and now prints a warning
+  on stderr saying the certificate was trusted on first use and how to check
+  it; `--help` says to pass `--expect-fingerprint` to check before writing.
+- **A traced call names the controller it actually used.** A tool that
+  resolves its controller late (`confirm_destructive_action`) recorded the
+  right one in the audit log while its span kept the one from the arguments.
+  The span now carries the same controller as the audit record.
+- **Confirming a honeypot delete removes only that honeypot.** `delete_honeypot`
+  built the new `honeypot` list when the preview was made, and the confirm
+  step wrote that snapshot back. A honeypot created while the token was
+  outstanding was deleted with it, and if the snapshot was empty the feature
+  was switched off. The confirm step now re-reads the `ips` setting and
+  removes only the previewed entry; if that entry is already gone it reports
+  "not found" and writes nothing.
+- **Device and client tools find a MAC in any case or separator.** Only the
+  stats tools lower-cased the MAC, and none handled separators, so
+  `F4:E2:C6:00:00:02`, `f4-e2-c6-00-00-02` or `f4e2.c600.0002` came back
+  "device not found" from `get_device_radios`, `rename_device`, the
+  `set_radio_*` tools, `set_port_state`, `restart_device`, `locate_device`,
+  `block_client`, `unblock_client` and `reconnect_client`. Every MAC
+  comparison, stub and real, now goes through one normaliser, and the
+  `/cmd/stamgr` and `/cmd/devmgr` commands send the lower-case,
+  colon-separated form the controller stores.
+- **`set_threat_management` without `mode` no longer downgrades IPS to IDS.**
+  `mode` defaulted to `"ids"`, so changing only the signature categories on
+  an IPS site wrote `ips_mode=ids`. With no `mode`, the site's current mode is
+  kept; a site that was off comes on as `ids`, as before. The dry run now
+  also shows the current and resulting mode and categories. Behaviour
+  change: the `mode` parameter's default is now empty instead of `"ids"`.
+- **Dry runs report the "not found" the real call reports.** `restart_device`,
+  `locate_device`, `set_port_state`, `update_route`, `delete_route`,
+  `update_port_forward`, `delete_port_forward`, `update_port_profile`,
+  `delete_port_profile`, `update_dynamic_dns` and `delete_dynamic_dns`
+  previewed success for an id, MAC or port that does not exist. They now look
+  the target up first. The client tools (`block_client`, `unblock_client`,
+  `reconnect_client`) cannot know in advance, because a controller may accept
+  a block for a MAC it has never seen, so their dry run reports
+  `client_known` and a `note` instead of claiming either outcome.
+- **`restart_device` and `locate_device` report an unknown device on a real
+  controller.** The real path treated any devmgr answer as success, so both
+  tools reported success for a device that does not exist. They now
+  resolve the MAC against the device list first and send nothing when it is
+  unknown. `reconnect_client` on an unknown MAC returns the standard error
+  envelope instead of `{"reconnected": false}`. Behaviour change: callers
+  that checked `reconnected == false` now get an `error` key.
+- **`set_port_state` refuses a port the device does not have.** On a real
+  controller any `port_idx` on any device was written as a port override.
+  The port must now appear in the device's own `port_table`; a device with
+  no port table is refused. The stub already behaved this way.
+- **`create_honeypot` refuses an address the network cannot host.** Any
+  non-loopback IPv4 was accepted, including addresses outside the network
+  and its gateway, network and broadcast addresses. The address must now be
+  a host inside the network's `ip_subnet`, other than the gateway.
+- **`set_radio_channel` checks the channel and width against the band.**
+  Channel 36 on 2.4 GHz, channel 6 on 5 GHz or 320 MHz on 2.4 or 5 GHz were
+  sent to the controller. Channels must now be standard 20 MHz numbers for
+  the band (2.4 GHz 1-14; 5 GHz 36-64, 100-144, 149-165; 6 GHz 1-233 in
+  steps of 4), and widths must exist on the band. Country rules stay with the
+  controller.
+- **Network tools refuse inputs that cannot be valid before writing.**
+  `create_port_forward` checks that `fwd` is an IP address and that each port
+  is 1-65535 (ranges and comma lists still accepted). `create_route` and
+  `update_route` check the destination CIDR, the next hop address and the
+  1-255 distance. `create_dynamic_dns` requires `server` for
+  `service="custom"`. `set_guest_portal` checks each restricted subnet is a
+  CIDR (an empty string still clears the slot). `set_lan_ipv6` checks that
+  DNS servers are IPv6 addresses and that `prefix_id` is at most 65535.
+  Each refusal comes back as the usual error envelope, dry run included.
+- **A device write answered with an empty `data` list counts as applied.**
+  `rename_device` and the `set_radio_*` tools reported "device not found" when
+  the controller acknowledged a PUT with an empty body. The device record is
+  now re-read and returned.
+- **`update_vlan` normalises `ip_subnet` the way `create_vlan` does.** A
+  network-form subnet (`10.0.60.0/24`) was written verbatim; it is now
+  promoted to the gateway form UniFi stores (`10.0.60.1/24`). A `vlan` outside
+  1-4094 is refused.
+- **The composites and `restore_config` run on a console with no Integration
+  API.** `zone_firewall_state` looked up the v1 site outside its error
+  handling, so a console whose `/proxy/network/integration/v1/sites` answers
+  404 raised instead of answering, and `create_iot_network`,
+  `create_guest_network`, `provision_homelab_service` and `restore_config`
+  failed before their first write. A 404 there now means "unsupported", the
+  same answer as a missing `firewall/zones` route, and the legacy path runs.
+  A 401 or 403 on either route still stops the call, now with an error that
+  says the controller's credentials were refused.
+- **A rollback no longer clears a DHCP reservation the call did not create.**
+  `provision_homelab_service` upserts the lease, so for a MAC that already
+  held a reservation (the seeded NAS, say) step one edits that reservation.
+  A later failure then "rolled back" by clearing it, leaving the device with
+  no reservation at all. Rollback now clears only a reservation this call
+  created; for a record that existed it writes the previous `fixed_ip`,
+  `name`, `network_id` and `use_fixedip` back, and lists any key it could not
+  remove under `not_restored`. *Behaviour change:* the `rolled_back` entry for
+  an edited lease carries `restored_fields` and `restored` instead of
+  `deleted`.
+- **A firewall policy that cannot be built rolls the composite back.** On a
+  zone-based site, `PolicyBodyError` is a `ValueError`, so it escaped the
+  composites' `except UniFiError`: the tool failed with an exception, rollback
+  never ran, and the new SSID or reservation stayed live. The policy step now
+  rolls back on it like any other failure, and the inputs that cause it are
+  checked before the first write: `provision_homelab_service` refuses an `ip`
+  that is not IPv4 and any port outside 1-65535, and the isolation composites
+  refuse a `main_lan_subnet` that is not an IPv4 subnet. *Behaviour change:*
+  these inputs are now refused on legacy sites and in `dry_run` too.
+- **The isolation composites refuse to isolate from a subnet no network
+  uses.** `create_iot_network` and `create_guest_network` default
+  `main_lan_subnet` to `192.168.1.0/24` and reported "with isolation" even on
+  a site whose LAN is elsewhere (192.168.86.0/24, for example), where the drop
+  rule or BLOCK policy matches nothing. Before any write, and in `dry_run`,
+  they now check that `main_lan_subnet` overlaps at least one network on the
+  site and otherwise refuse with an error listing the site's subnets. No
+  subnet is guessed. *Behaviour change:* a call that relied on the default on
+  such a site now fails until `main_lan_subnet` is passed;
+  `create_iot_network` with `isolate=False` is not checked.
+- **A `vlan_id` that does not fit the subnet template is refused.**
+  `create_iot_network` and `create_guest_network` built the subnet by string
+  substitution, so `vlan_id=300` produced `10.0.300.1/24` and a DHCP range to
+  match, which reached the controller. The subnet and range are now parsed
+  before any write, `dry_run` included, and an invalid one is refused with an
+  error naming the subnet and where it came from.
+- **A network or WLAN update that v1 cannot express goes to the private API.**
+  A network patch carrying `purpose` or `vlan_enabled` was sent as a v1 PUT
+  that has no field for either, so `update_vlan(..., {"purpose": "corporate"})`
+  on a guest network reported success and changed nothing. Such a patch now
+  goes to the private API whole, as ADR 0008 intends. Updates to a network
+  that is not a VLAN-tagged corporate network, or to a guest or non-WPA
+  personal WLAN, also stay private: a v1 PUT replaces the record from a
+  readback that cannot carry their guest or RADIUS settings.
+- **A v1 create that cannot be read back no longer loses the new object.**
+  After a network or WLAN create through the Integration API, the private
+  record is re-read so the caller gets its `_id`. If that read failed, or did
+  not show the new record yet, the create either returned a record with no
+  `_id` or raised a plain error, although the object existed; the composites
+  then had nothing to roll back and left it on the console. The error now
+  names the object and its v1 id and says it exists, and the composites'
+  rollback finds it by `external_id` and deletes it. If it still cannot be
+  found, the `rolled_back` entry carries the v1 id with `deleted: false`.
+- **`audit_open_ports` reports a WAN accept rule that also admits new
+  connections.** Any `WAN_*` accept rule with `state_established` and
+  `state_related` set was dropped as the established/related boilerplate,
+  including one that also set `state_new` and so admitted inbound traffic
+  (an "SSH in" rule, for example). Only a rule without `state_new` is now
+  treated as boilerplate.
+- **`restore_config` remaps every reference to a recreated network or firewall
+  group, and refuses in the preview any record whose reference it cannot
+  resolve.** A restored network gets a new id, but only a WLAN's
+  `networkconf_id` and a lease's `network_id` were rewritten to it. A restored
+  firewall rule kept the source network's id in `src_networkconf_id` /
+  `dst_networkconf_id`, and a port profile kept it in `native_networkconf_id`
+  and `tagged_networkconf_ids`: a rule that matched nothing and a profile that
+  pointed at no VLAN, both reported as restored. Every `networkconf_id`,
+  `*_networkconf_id(s)`, lease `network_id` and `*firewallgroup_id(s)` field
+  is now rewritten to the id the target has after the restore. A reference to
+  a record the backup does not hold, that has no name, or whose name is shared
+  makes that record a `blocked` action in the plan, listed in the warnings and
+  the summary, and it is not written. Behaviour change: a WLAN or lease whose
+  network is missing from the backup used to be written with the old id; it is
+  now blocked. A confirm whose matched networks or groups were deleted after
+  the preview now applies nothing and says the site changed.
+- **`restore_config` no longer picks one of several records that share a
+  name.** Matching indexed each side by name and kept one record per name, so
+  a backup holding two firewall rules called "Block RFC1918" against a site
+  holding one restored neither, silently. Every record is now kept. A name
+  both the backup and the site hold, with a duplicate on either side, is a
+  `blocked` action that names the counts, and nothing under that name is
+  created or deleted. A name only one side holds is unaffected: all are
+  created, or all are deleted.
+- **A backup now says what it does not contain, and includes firewall
+  groups.** `backup_config` left out firewall groups and Zone-Based Firewall
+  policies without a word, so rules that used a group could not be restored.
+  Firewall groups are now backed up (keeping their `_id` for remapping) and
+  restored before the rules that use them. Extra groups on the site are never
+  deleted by a restore, since zone policies outside the backup can use them.
+  The envelope carries a `not_included` field naming everything else it does
+  not hold (zone policies and zones, routes, traffic rules and routes, content
+  filters, dynamic DNS, AP groups, site settings), and `restore_config`
+  repeats it as `not_restored` in its plan with a warning. Zone policy restore
+  is not covered. A backup taken before this change has no `firewall_groups`
+  section: restore leaves the site's groups alone and blocks any rule that
+  references one.
+- **`restore_config` force-disables a WLAN or network carrying a redaction
+  placeholder whatever the envelope's `secrets_stripped` flag says.** The
+  check trusted the flag, so an envelope that said `false` (trimmed or rebuilt
+  by hand) had `[REDACTED]` sent to the controller as the passphrase of an
+  enabled SSID. The values are now checked directly, and a warning names the
+  mismatch.
+- **`restore_config` never plans the delete of a record the controller marks
+  `attr_no_delete`.** A backup without the WAN network, such as one hand-built
+  for a single network, planned the WAN's delete; a real console refuses that
+  partway through, after earlier deletes have run and cannot be undone. Such a
+  record is now a `skip` with the reason. The stub's `delete_network` now
+  refuses an `attr_no_delete` network the way a console does, which is how
+  this was found.
+- **`restore_config` leaves alone every type the backup has no section
+  for.** A section missing from the envelope read as an empty list, so an
+  envelope trimmed by hand to one section ("just put the WLANs back") planned
+  the delete of every network, firewall rule, port profile, lease and port
+  forward on the site. A missing section now means the backup has no opinion
+  on that type: nothing of it is created or deleted, and a warning names the
+  types. An explicit empty list still means the site should have none. A
+  backup written by `backup_config` always carries every section, so it is
+  unaffected.
+- **`audit_network_drift` no longer reports `in_sync: true` over duplicates,
+  nameless extras, or spec keys it never compared.** The controller index kept
+  the last record per name and skipped nameless ones, so a second, wide-open
+  rule sharing a declared rule's name, or a rule with no name, left the audit
+  clean. Spec keys outside a section's field map (a typo such as `subnett`, or
+  `dst_port`) and unknown sections were dropped without a word. Now a name the
+  controller holds twice is a `_duplicate` drift and every copy is compared, a
+  nameless record is an extra named `<unnamed>` with its `id`, and every
+  uncompared key or section is listed in a new `not_compared` field that holds
+  `in_sync` false. Behaviour change: a spec carrying keys the audit cannot
+  compare now reports `in_sync: false`. WLAN `enabled` and firewall rule
+  `src_port` / `dst_port` are now compared.
+- **The uvx and pipx install commands now start the server.** The docs said
+  `MCP_TRANSPORT=stdio` was "set automatically" when `mcp-unifi` is launched
+  as a console script. It is not: the default transport is Streamable HTTP, and
+  without `MCP_UNIFI_AUTH_TOKENS` the server exits with "HTTP transport
+  requires MCP_UNIFI_AUTH_TOKENS", so every `uvx ... mcp-unifi`,
+  `pipx`-installed `mcp-unifi` and `claude mcp add --transport stdio` command in
+  the README and docs site gave a client a dead server. Every one of them now
+  sets `MCP_TRANSPORT=stdio`, the false sentence is gone, and a drift test
+  fails if a documented launch of the console script chooses no transport. The
+  Claude Desktop Streamable HTTP example also lacked the `Authorization`
+  header and would have got a 401; it has one now. **If you copied an install
+  command from an earlier README, add `MCP_TRANSPORT=stdio`.** (The default
+  transport is unchanged.)
+- **The tracing install command no longer installs someone else's package.**
+  `docs/operations.md` and the tracing warning in `telemetry.py` told you to
+  run `pip install 'mcp-unifi[otel]'`. This project is not published on PyPI,
+  and the package of that name there is an unrelated project by another
+  author. Both now say `pip install 'mcp-unifi[otel] @
+  git+https://github.com/pete-builds/mcp-unifi'`. The operations page also
+  states what the published container image does with tracing: it has only the
+  inert OpenTelemetry API, so `MCP_UNIFI_OTEL_ENABLED=true` there exports
+  nothing, and tracing from a container needs your own image with the `otel`
+  extra. A drift test now fails on any documented install of the bare package
+  name.
+- **The dry-run and audit guide describes what the server does.** The sample
+  audit record showed fields that do not exist (`stub_mode`, `dry_run`,
+  `result_shape`) and a `"<scrubbed>"` marker; the real record has `args`,
+  `result`, `success`, `error`, `latency_ms`, `client_id`, `denied_by` and
+  `schema`, and the scrub marker is `"***"`. The page now shows a record the
+  server wrote, and its `create_vlan` and `create_iot_network` previews are
+  real output. The replay section listed `--tool`, `--controller` and
+  `--apply`, none of which exist; it now lists `--real`, `--target-controller`,
+  `--i-mean-it` and `--json`, the exit codes, the three kinds of event replay
+  skips (refused at capture, recorded for another controller, or carrying
+  redacted arguments, which covers every `confirm_destructive_action`), that
+  replay honours read-only mode, and that a real replay is itself audited
+  under the client id `mcp-unifi-replay`. It also corrects `success`: a tool
+  that returns an error envelope is recorded with `success: true`, and a
+  cancelled call with `success: false`.
+- **Pinned and stale references in the docs are gone.** The SBOM download
+  pointed at a release asset that does not exist (`sbom.cdx.json` under
+  `v0.5.0-rc.2`; the asset is `sbom.cyclonedx.json`) and the uvx pin example
+  recommended a prerelease from before authentication existed. Both now use
+  `releases/latest/download/` and a `<tag>` placeholder. The `.dxt` pages said
+  the bundle ships a Python runtime; it ships the server and its dependencies
+  and needs Python 3.13 or newer on the machine. The README no longer claims
+  the release workflow auto-bumps `docker-compose.yml` (it verifies the
+  version is already right), that CI jobs gate one another, that the image has
+  no shell, or that the image drops all capabilities (the Helm chart does).
+  The Authentication guide is now in the docs sidebar, and ADRs 0003 and 0007
+  cite settings by name instead of by moved line number.
+
+- **The Network reference describes backup, restore and drift as they
+  behave, and its drift example runs.** The example passed `spec_path`, an
+  argument `audit_network_drift` does not take; it takes `spec_yaml`. The
+  rows for `backup_config`, `restore_config` and `audit_network_drift` now
+  cover blocked and skipped actions, firewall groups, `not_included`,
+  `not_compared`, and that a section missing from a backup is left alone. A
+  docs test now checks every tool-call example against the tool's real
+  arguments.
+- **Smaller corrections.** `/tmp` in the container does not hold the audit
+  log. The image has `/bin/sh`; what it lacks is a login shell and a home
+  directory for its user. The multi-site Helm paragraph pointed at volume
+  settings the chart does not have and now shows the Secret,
+  `extraVolumes` / `extraVolumeMounts` and `MCP_UNIFI_CONTROLLERS_FILE`
+  route. ADR 0005 says `list_events` reports an absent route as unsupported,
+  not as an empty list. `get_credential` documents `card_id` as present but
+  redacted. The configuration page covers the audit sink startup check and
+  the deprecation warning for unprefixed variable names. The pre-commit ruff
+  pin trailed the lockfile by two minor versions and now matches it.
 
 ### Security
 
@@ -70,17 +550,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   closed: if the identity lookup fails at preview time the token cannot be
   confirmed, and if it fails at confirm time the call is refused. Stdio and
   HTTP with auth off are unchanged, since both calls have no identity.
-
-### Fixed
-
-- **A network or WLAN create accepted by the Integration API is never
-  replayed on the private API.** When the v1 POST answered 2xx but the body
-  carried no `id`, `IntegrationWrites.create_network` and `create_wlan` fell
-  through to the private-API create, so one tool call made two objects: a
-  VLAN or SSID the console now holds twice, with only the private copy known
-  to the composite's rollback. The fallback is for a 4xx, where the console
-  changed nothing. A 2xx with no id now raises instead, the same way
-  `create_firewall_policy` already did, and the three share one check.
+- **A cancelled tool call is now in the audit log.** The audit decorator
+  caught `Exception`, and a cancellation raises `CancelledError`, which is not
+  one. A call cancelled after its request reached the controller (a delete
+  already sent, say) therefore left no record at all, and a client could
+  cancel on purpose to keep its own writes out of the log. A cancelled call
+  now writes exactly one record with `success: false` and an `error` saying
+  the call was cancelled and the outcome at the controller is unknown, then
+  the cancellation propagates unchanged. The audit write is run to completion
+  even while the request is being cancelled, so it cannot be cut off halfway.
+  Operators reading the log will see these records for the first time.
+- **`mcp-unifi-replay` no longer replays redacted secrets.** The audit log
+  scrubs secrets before writing, so a recorded `update_wlan` that set a
+  passphrase holds `***` in its arguments. Replay sent that as recorded: the
+  replayed call set the WLAN passphrase to the literal `***` and counted as a
+  success. Any event whose arguments hold the redaction sentinel anywhere
+  (nested objects and lists included) is now skipped with a reason saying its
+  secrets were redacted and it cannot be replayed faithfully. This includes
+  every recorded `confirm_destructive_action`, whose token is always redacted
+  and which could never succeed on replay anyway.
+- **Log records redact a sensitive `extra=` key at the top level.** The JSON
+  formatter scrubbed the value of each `extra=` field but never looked at the
+  field's own name, so `logger.info("x", extra={"api_key": k})` logged `k` in
+  clear (only a sensitive key nested inside an extra was caught). The whole
+  extras dict now goes through the shared redaction rules. No call in the
+  package passed such a key, so this closes a trap rather than a live leak.
+- **Access PINs, NFC card numbers and Protect stream handles are redacted.**
+  `pin_code`, `card_id`, `nfc_id`, `rtspAlias` and `rtspUrl` matched no
+  redaction pattern, so a PIN, a cloneable card number, or a camera stream URL
+  carrying its access alias reached the model and the audit log in clear. They
+  are now redacted on every output path. No tool takes any of them back as an
+  argument (credentials and cameras are addressed by `id`), and the PIN
+  record's `pin_length` and the `isRtspEnabled` flag stay visible.
+  **`get_credential` now shows `card_id` as `[REDACTED]`.**
+- **The preview-then-confirm registry is bounded.** Every destructive preview
+  holds a resource snapshot for five minutes and a `restore_config` preview
+  holds a whole restore plan, with no limit on how many one caller could
+  open. A client may now hold 50 unconfirmed previews and the server 500 in
+  total; past either limit the destructive tool refuses the new preview with
+  a message saying to confirm or let earlier ones expire. Nothing is evicted,
+  so one client at its limit never costs another client a pending action.
 
 ## [0.27.0] - 2026-10-20
 
