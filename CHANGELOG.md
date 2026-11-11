@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The release version check no longer fails on a long changelog section.**
+  `scripts/check_version_surfaces.sh` tested the section with
+  `printf "$notes" | grep -q` under `pipefail`. `grep -q` exits at the first
+  match; with a long section `printf` was still writing, took a broken pipe,
+  and the check reported "no non-empty section" on a correct tree. It stopped
+  the first 0.28.0 tag run (a re-run of the same commit passed, since it is a
+  race). The test is now a single `awk` call with no pipe.
+  `tests/test_version_surfaces.py` is the script's first test: it covers the
+  long section, a missing, empty or whitespace-only section, a disagreeing
+  surface, and the default version.
+
 ## [0.28.0] - 2026-11-11
 
 ### Added
