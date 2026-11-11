@@ -78,6 +78,8 @@ Apply plan order avoids the controller's referential constraints:
 * **Deletes** (extras the backup didn't authorize) execute first, in the
   order: firewall_rules -> port_forwards -> wlans -> dhcp_leases ->
   port_profiles -> networks.
+  A record the controller marks ``attr_no_delete`` (the WAN network, for
+  one) is never deleted; the plan reports it as a ``skip``.
   Firewall groups are never deleted as extras: zone policies and other
   objects this backup does not cover can reference them, so an extra group
   is reported as a ``skip``.
@@ -405,6 +407,21 @@ def _plan(
                 )
                 continue
             if ident in backup_groups[rtype]:
+                continue
+            if live.get("attr_no_delete"):
+                # The controller marks this record undeletable (the WAN
+                # network, built-in profiles). A backup that lacks it, such
+                # as one hand-built for a single network, used to plan its
+                # delete; a real console refuses that mid-plan, after earlier
+                # deletes have already run and cannot be undone.
+                actions.append(
+                    {
+                        "action": "skip",
+                        "type": rtype,
+                        "name": live.get("name") or ident,
+                        "reason": "not in the backup, but the controller marks it attr_no_delete",
+                    }
+                )
                 continue
             if rtype in _NEVER_DELETED:
                 if rtype not in backup_resources:

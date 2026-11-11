@@ -7,8 +7,8 @@ from collections.abc import Callable
 
 import pytest
 
+from mcp_unifi.clients.errors import UniFiError
 from mcp_unifi.clients.stubs import StubState
-from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.clients.zone_firewall_stubs import ZoneFirewallStubState
 
 
@@ -421,3 +421,11 @@ def test_zone_policy_index_is_not_reused_after_a_delete() -> None:
     assert len(set(indexes)) == len(indexes), indexes
     assert third["index"] != second["index"]
     assert third["index"] > second["index"]
+
+
+def test_delete_network_refuses_attr_no_delete(stub_state: StubState) -> None:
+    """A real console will not delete the WAN; the stub used to drop it."""
+    wan = next(n for n in stub_state.list_networks() if n.get("attr_no_delete"))
+    with pytest.raises(UniFiError, match="attr_no_delete"):
+        stub_state.delete_network(wan["_id"])
+    assert any(n["_id"] == wan["_id"] for n in stub_state.list_networks())

@@ -1410,3 +1410,30 @@ async def test_restore_disables_a_sentinel_wlan_when_the_flag_says_false(
     assert len(sent) == 1
     assert sent[0]["x_passphrase"] == REDACTED_OUTPUT
     assert sent[0]["enabled"] is False
+
+
+# ---------------------------------------------------------------------------
+# Records the controller marks attr_no_delete
+# ---------------------------------------------------------------------------
+
+
+async def test_restore_never_plans_a_delete_of_an_attr_no_delete_network(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """A backup without the WAN (here one hand-built for a single network)
+    used to plan the WAN's delete. A real console refuses it mid-plan, after
+    earlier deletes have already run."""
+    wan = next(n for n in stub_state.list_networks() if n.get("attr_no_delete"))
+    backup_json = json.dumps(_vpn_envelope(REDACTED_PASSPHRASE))
+
+    dry = await _call(stub_server, "restore_config", {"backup_json": backup_json, "dry_run": True})
+    assert not [
+        a for a in dry["would_apply"] if a["action"] == "delete" and a.get("id") == wan["_id"]
+    ]
+    skipped = [a for a in dry["would_apply"] if a.get("name") == wan["name"]]
+    assert [a["action"] for a in skipped] == ["skip"]
+    assert "attr_no_delete" in skipped[0]["reason"]
+
+    result = await _restore_applying(stub_server, backup_json)
+    assert "error" not in result, result
+    assert any(n["_id"] == wan["_id"] for n in stub_state.list_networks())

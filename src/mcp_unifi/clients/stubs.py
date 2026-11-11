@@ -968,6 +968,15 @@ class StubState:
 
     def delete_network(self, network_id: str) -> bool:
         self._check_failure("delete_network")
+        # A real console refuses to delete a record it marks attr_no_delete
+        # (the WAN network). The stub used to drop it, which let a restore
+        # plan that deleted the WAN pass the suite.
+        for net in self.networks:
+            if net.get("_id") == network_id and net.get("attr_no_delete"):
+                raise UniFiError(
+                    f"UniFi API error 400: network {network_id} is attr_no_delete "
+                    "and cannot be deleted"
+                )
         before = len(self.networks)
         self.networks = [n for n in self.networks if n.get("_id") != network_id]
         return len(self.networks) < before
