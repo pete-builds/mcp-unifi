@@ -183,8 +183,8 @@ async def _emit_to_completion(emit: Coroutine[Any, Any, Any]) -> asyncio.Cancell
         try:
             await asyncio.shield(task)
         except asyncio.CancelledError as exc:
-            if task.done():
-                break
+            # Kept even when the emit finished in the same step: dropping it
+            # there would let the cancelled call carry on as if nobody asked.
             cancelled = cancelled or exc
         except Exception:
             # AuditLog.emit already logs a failing sink. Anything else that
