@@ -17,6 +17,7 @@ from typing import Any, Protocol, runtime_checkable
 from mcp_unifi.clients.access import AccessClient
 from mcp_unifi.clients.access_stubs import AccessStubState
 from mcp_unifi.clients.integration import IntegrationWrites, WriteApi, ZoneFirewallState
+from mcp_unifi.clients.mac import normalize_mac, same_mac
 from mcp_unifi.clients.protect import ProtectClient
 from mcp_unifi.clients.protect_stubs import ProtectStubState
 from mcp_unifi.clients.stats_shape import (
@@ -482,9 +483,8 @@ class StubBackend:
         return shape_gateway_stats(gateway)
 
     async def get_device_stats(self, mac: str) -> UniFiRecord | None:
-        target = mac.lower()
         record = next(
-            (d for d in self.state.list_devices() if str(d.get("mac", "")).lower() == target),
+            (d for d in self.state.list_devices() if same_mac(d.get("mac"), mac)),
             None,
         )
         if record is None:
@@ -535,11 +535,21 @@ class RealBackend:
 
     async def get_device_by_mac(self, mac: str) -> UniFiRecord | None:
         devices = await self.client.list_devices()
-        return next((d for d in devices if d.get("mac") == mac), None)
+        return next((d for d in devices if same_mac(d.get("mac"), mac)), None)
 
     async def update_device(self, device_id: str, patch: dict[str, Any]) -> UniFiRecord | None:
         record = await self.client.update_device(device_id, patch)
-        return record or None
+        if record:
+            return record
+        # A 2xx whose ``data`` list is empty is still a successful write.
+        # Returning None here made the tools report "device not found" for a
+        # change that had been applied. Re-read the record; if the listing
+        # does not have it either, return what was written.
+        devices = await self.client.list_devices()
+        current = next(
+            (d for d in devices if isinstance(d, dict) and d.get("_id") == device_id), None
+        )
+        return current if current is not None else {"_id": device_id, **patch}
 
     async def restart_device(self, mac: str) -> bool:
         await self.client.restart_device(mac)
@@ -559,8 +569,17 @@ class RealBackend:
         portconf_id: str | None,
     ) -> UniFiRecord | None:
         devices = await self.client.list_devices()
-        target = next((d for d in devices if d.get("mac") == device_mac), None)
+        target = next((d for d in devices if same_mac(d.get("mac"), device_mac)), None)
         if target is None:
+            return None
+        # Same rule as the stub: only a port the device itself reports can be
+        # overridden. Without this, a port number the device does not have
+        # (999, say) was written as an override, and a device with no port
+        # table at all was written to as if it were a switch.
+        ports = target.get("port_table")
+        if not isinstance(ports, list) or not any(
+            isinstance(p, dict) and p.get("port_idx") == port_idx for p in ports
+        ):
             return None
         device_id = target.get("_id")
         if not device_id:
@@ -752,14 +771,16 @@ class RealBackend:
     async def list_clients(self) -> list[UniFiRecord]:
         return await self.client.list_clients()
 
+    # The controller keys its stamgr commands on the MAC it stores (lower
+    # case, colon separated); send that form whatever the caller typed.
     async def block_client(self, mac: str) -> UniFiRecord | None:
-        return await self.client.block_client(mac)
+        return await self.client.block_client(normalize_mac(mac))
 
     async def unblock_client(self, mac: str) -> UniFiRecord | None:
-        return await self.client.unblock_client(mac)
+        return await self.client.unblock_client(normalize_mac(mac))
 
     async def reconnect_client(self, mac: str) -> bool:
-        await self.client.reconnect_client(mac)
+        await self.client.reconnect_client(normalize_mac(mac))
         return True
 
     async def top_talkers(self, limit: int) -> list[UniFiRecord]:
@@ -835,9 +856,8 @@ class RealBackend:
 
     async def get_device_stats(self, mac: str) -> UniFiRecord | None:
         devices = await self.client.list_devices()
-        target = mac.lower()
         record = next(
-            (d for d in devices if isinstance(d, dict) and str(d.get("mac", "")).lower() == target),
+            (d for d in devices if isinstance(d, dict) and same_mac(d.get("mac"), mac)),
             None,
         )
         if record is None:

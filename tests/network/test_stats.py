@@ -405,3 +405,41 @@ async def test_get_gateway_stats_redacts_when_the_shaping_widens(
         assert result[key] == "[REDACTED]", f"{key} leaked from get_gateway_stats"
     assert "do-not-leak" not in json.dumps(result)
     assert result["model"] == "UCGFiber"
+
+
+# ---------------------------------------------------------------------------
+# MAC forms (D2): the stats tools lower-cased, but did not handle separators
+# ---------------------------------------------------------------------------
+
+
+async def test_stats_tools_accept_dash_separated_macs(stub_server: FastMCP) -> None:
+    device = await _call(stub_server, "get_device_stats", {"mac": "F4-E2-C6-00-00-02"})
+    assert device["type"] == "uap"
+    client = await _call(stub_server, "get_client_stats", {"mac": "AA-BB-CC-00-00-01"})
+    assert client["hostname"] == "petes-laptop"
+    sessions = await _call(
+        stub_server, "get_client_sessions", {"mac": "AA-BB-CC-00-00-01", "hours": 48}
+    )
+    assert [s["mac"] for s in sessions] == ["aa:bb:cc:00:00:01"]
+
+
+@respx.mock
+async def test_real_client_stats_and_sessions_accept_dash_separated_macs(
+    real_server: FastMCP,
+) -> None:
+    respx.get(f"{BASE}/stat/sta").mock(
+        return_value=httpx.Response(
+            200, json={"data": [{"mac": "aa:bb:cc:00:00:01", "hostname": "phone"}]}
+        )
+    )
+    captured: dict[str, object] = {}
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"data": []})
+
+    respx.post(f"{BASE}/stat/session").mock(side_effect=capture)
+    result = await _call(real_server, "get_client_stats", {"mac": "AA-BB-CC-00-00-01"})
+    assert result["hostname"] == "phone"
+    await _call(real_server, "get_client_sessions", {"mac": "AA-BB-CC-00-00-01", "hours": 24})
+    assert captured["body"]["mac"] == "aa:bb:cc:00:00:01"

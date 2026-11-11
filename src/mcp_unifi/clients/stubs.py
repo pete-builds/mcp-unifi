@@ -21,6 +21,7 @@ from collections import defaultdict, deque
 from typing import Any
 
 from mcp_unifi.clients.errors import UniFiError
+from mcp_unifi.clients.mac import normalize_mac, same_mac
 from mcp_unifi.clients.stats_shape import shape_speedtest_results, shape_top_talkers
 from mcp_unifi.clients.zone_firewall_stubs import ZoneFirewallStubState
 from mcp_unifi.models import UniFiRecord
@@ -870,7 +871,7 @@ class StubState:
 
     def find_device_by_mac(self, mac: str) -> UniFiRecord | None:
         for d in self.devices:
-            if d.get("mac") == mac:
+            if same_mac(d.get("mac"), mac):
                 return d
         return None
 
@@ -1186,7 +1187,7 @@ class StubState:
     def block_client(self, mac: str) -> UniFiRecord | None:
         self._check_failure("block_client")
         for c in self.clients:
-            if c.get("mac") == mac:
+            if same_mac(c.get("mac"), mac):
                 c["blocked"] = True
                 self.audit_log.append({"action": "block_client", "mac": mac, "ts": _ts()})
                 return c
@@ -1195,7 +1196,7 @@ class StubState:
     def unblock_client(self, mac: str) -> UniFiRecord | None:
         self._check_failure("unblock_client")
         for c in self.clients:
-            if c.get("mac") == mac:
+            if same_mac(c.get("mac"), mac):
                 c["blocked"] = False
                 self.audit_log.append({"action": "unblock_client", "mac": mac, "ts": _ts()})
                 return c
@@ -1204,7 +1205,7 @@ class StubState:
     def reconnect_client(self, mac: str) -> bool:
         self._check_failure("reconnect_client")
         for c in self.clients:
-            if c.get("mac") == mac:
+            if same_mac(c.get("mac"), mac):
                 self.audit_log.append({"action": "reconnect_client", "mac": mac, "ts": _ts()})
                 return True
         return False
@@ -1224,12 +1225,11 @@ class StubState:
         Mirrors the real controller's ``/list/user`` superset behavior: any MAC
         the controller has ever seen has a persistent user record.
         """
-        target = mac.lower()
         for u in self.dhcp_leases:
-            if str(u.get("mac", "")).lower() == target:
+            if same_mac(u.get("mac"), mac):
                 return u
         for c in self.clients:
-            if str(c.get("mac", "")).lower() == target:
+            if same_mac(c.get("mac"), mac):
                 return c
         return None
 
@@ -1362,19 +1362,18 @@ class StubState:
         return None
 
     def find_client_by_mac(self, mac: str) -> UniFiRecord | None:
-        target = mac.lower()
         for client in self.clients:
-            if str(client.get("mac", "")).lower() == target:
+            if same_mac(client.get("mac"), mac):
                 return client
         return None
 
     def get_client_sessions(self, mac: str, start: int, end: int, limit: int) -> list[UniFiRecord]:
-        target = mac.lower()
+        target = normalize_mac(mac)
         rows = [
             s
             for s in self.sessions
             if start <= s.get("assoc_time", 0) <= end
-            and (not target or str(s.get("mac", "")).lower() == target)
+            and (not target or normalize_mac(s.get("mac")) == target)
         ]
         rows.sort(key=lambda s: s.get("assoc_time", 0), reverse=True)
         return rows[:limit]

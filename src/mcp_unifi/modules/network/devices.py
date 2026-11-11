@@ -51,6 +51,30 @@ _TX_POWER_MODES: frozenset[str] = frozenset({"auto", "high", "medium", "low", "c
 _COMPACT_DEVICE_FIELDS: tuple[str, ...] = ("_id", "name", "mac", "model", "type", "ip", "state")
 _CHANNEL_WIDTHS: frozenset[int] = frozenset({20, 40, 80, 160, 240, 320})
 
+#: Standard 20 MHz channel numbers per radio. Deliberately not regulatory:
+#: which of these a given country allows is the controller's call, and it
+#: knows the site's country code. A number outside these sets is not a
+#: channel on that band anywhere.
+_CHANNELS_BY_RADIO: dict[str, frozenset[int]] = {
+    "ng": frozenset(range(1, 15)),
+    "na": frozenset([*range(36, 65, 4), *range(100, 145, 4), *range(149, 166, 4)]),
+    "6e": frozenset(range(1, 234, 4)),
+}
+
+#: Widths that exist on each band. 2.4 GHz is about 83 MHz wide in total, and
+#: 320 MHz channels exist only at 6 GHz.
+_WIDTHS_BY_RADIO: dict[str, frozenset[int]] = {
+    "ng": frozenset({20, 40}),
+    "na": frozenset({20, 40, 80, 160, 240}),
+    "6e": _CHANNEL_WIDTHS,
+}
+
+_CHANNEL_HINT: dict[str, str] = {
+    "ng": "use 1-14",
+    "na": "use 36-64, 100-144 or 149-165, in steps of 4",
+    "6e": "use 1-233 in steps of 4 (1, 5, 9, ...)",
+}
+
 
 def _resolve_radio(band: str) -> str | None:
     """Map ``"2g"/"5g"/"6g"`` (or raw ``"ng"/"na"/"6e"``) to a radio id."""
@@ -140,6 +164,19 @@ async def _fetch_device(backend: Backend, device_mac: str) -> tuple[UniFiRecord,
     return device, device_id
 
 
+def _has_port(device: UniFiRecord, port_idx: int) -> bool:
+    """``True`` when ``port_idx`` appears in the device's own ``port_table``.
+
+    A device with no port table has no switch ports to override. Mirrors the
+    check both backends make before writing, so a dry run refuses what the
+    real call would refuse.
+    """
+    table = device.get("port_table")
+    if not isinstance(table, list):
+        return False
+    return any(isinstance(p, dict) and p.get("port_idx") == port_idx for p in table)
+
+
 def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> None:
     err = make_err(settings)
 
@@ -212,21 +249,28 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             dry_run: Preview the change without applying it. Returns the
                 predicted change set.
         """
-        if dry_run:
-            return format_json(
-                {
-                    "dry_run": True,
-                    "controller": controller,
-                    "would_apply": {"action": "restart", "mac": mac},
-                    "summary": f"Would restart device {mac}",
-                }
-            )
         try:
             backend = resolve_backend(registry, controller)
-            ok = await backend.restart_device(mac)
+            # Resolve first, for the dry run and the real call alike: the real
+            # backend treats any devmgr answer as success, so without this
+            # lookup an unknown MAC was never reported as "not found".
+            device = await backend.get_device_by_mac(mac)
+            if device is None:
+                return err(f"device {mac} not found")
+            device_mac = str(device.get("mac") or mac)
+            if dry_run:
+                return format_json(
+                    {
+                        "dry_run": True,
+                        "controller": controller,
+                        "would_apply": {"action": "restart", "mac": device_mac},
+                        "summary": f"Would restart device {device_mac}",
+                    }
+                )
+            ok = await backend.restart_device(device_mac)
             if not ok:
                 return err(f"device {mac} not found")
-            return format_json({"restarted": True, "mac": mac})
+            return format_json({"restarted": True, "mac": device_mac})
         except UniFiError as exc:
             logger.exception("restart_device failed", extra={"mac": mac})
             return err(str(exc))
@@ -263,21 +307,27 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             dry_run: Preview the change without applying it. Returns the
                 predicted change set.
         """
-        if dry_run:
-            return format_json(
-                {
-                    "dry_run": True,
-                    "controller": controller,
-                    "would_apply": {"action": "locate", "mac": mac, "on": on},
-                    "summary": f"Would set locate beacon on {mac} to {on}",
-                }
-            )
         try:
             backend = resolve_backend(registry, controller)
-            ok = await backend.locate_device(mac, on)
+            # Same lookup as restart_device: the real backend does not report
+            # an unknown MAC, so the tool has to.
+            device = await backend.get_device_by_mac(mac)
+            if device is None:
+                return err(f"device {mac} not found")
+            device_mac = str(device.get("mac") or mac)
+            if dry_run:
+                return format_json(
+                    {
+                        "dry_run": True,
+                        "controller": controller,
+                        "would_apply": {"action": "locate", "mac": device_mac, "on": on},
+                        "summary": f"Would set locate beacon on {device_mac} to {on}",
+                    }
+                )
+            ok = await backend.locate_device(device_mac, on)
             if not ok:
                 return err(f"device {mac} not found")
-            return format_json({"locating": on, "mac": mac})
+            return format_json({"locating": on, "mac": device_mac})
         except UniFiError as exc:
             logger.exception("locate_device failed", extra={"mac": mac})
             return err(str(exc))
@@ -300,6 +350,8 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
           ``portconf_id`` on the named switch without touching the others.
         - Disabling a port immediately drops the link; powered devices on
           that port (PoE cameras, APs) will go offline.
+        - Refused when ``port_idx`` is not in the device's own port table
+          (``port_table`` from ``list_devices``), dry run included.
         - Mutates controller state. Use dry_run=True to preview the change
           without applying.
 
@@ -321,28 +373,31 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         """
         if enable is None and not poe_mode and not portconf_id:
             return err("set_port_state requires at least one of enable, poe_mode, portconf_id")
-        if dry_run:
-            override: dict[str, object] = {"port_idx": port_idx}
-            if enable is not None:
-                override["enable"] = enable
-            if poe_mode:
-                override["poe_mode"] = poe_mode
-            if portconf_id:
-                override["portconf_id"] = portconf_id
-            return format_json(
-                {
-                    "dry_run": True,
-                    "controller": controller,
-                    "would_apply": {
-                        "action": "set_port_state",
-                        "device_mac": device_mac,
-                        "override": override,
-                    },
-                    "summary": f"Would update port {port_idx} on {device_mac}",
-                }
-            )
         try:
             backend = resolve_backend(registry, controller)
+            if dry_run:
+                device = await backend.get_device_by_mac(device_mac)
+                if device is None or not _has_port(device, port_idx):
+                    return err(f"device {device_mac} or port {port_idx} not found")
+                override: dict[str, object] = {"port_idx": port_idx}
+                if enable is not None:
+                    override["enable"] = enable
+                if poe_mode:
+                    override["poe_mode"] = poe_mode
+                if portconf_id:
+                    override["portconf_id"] = portconf_id
+                return format_json(
+                    {
+                        "dry_run": True,
+                        "controller": controller,
+                        "would_apply": {
+                            "action": "set_port_state",
+                            "device_mac": device_mac,
+                            "override": override,
+                        },
+                        "summary": f"Would update port {port_idx} on {device_mac}",
+                    }
+                )
             updated = await backend.set_port_state(
                 device_mac,
                 port_idx,
@@ -611,6 +666,11 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         Read first: call ``get_device_radios`` to see the current channel
         and width.
 
+        Channel numbers are checked against the band's standard 20 MHz
+        channels (2g: 1-14; 5g: 36-64, 100-144, 149-165; 6g: 1-233 in steps
+        of 4) and widths against the band (2g: 20 or 40; 320 is 6g only).
+        Which of those the site's country allows is left to the controller.
+
         Example: set_radio_channel(device_mac="aa:bb:cc:00:00:02", band="5g", channel="36", width_mhz=80)
 
         Args:
@@ -628,18 +688,32 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         """
         if not channel and width_mhz == 0:
             return err("set_radio_channel requires at least one of channel, width_mhz")
+        # An unknown band is reported by _apply_radio_patch; only a known band
+        # has a channel list to check against.
+        radio = _resolve_radio(band)
         patch: dict[str, Any] = {}
         if channel:
             chan_key = channel.strip().lower()
             if chan_key == "auto":
                 patch["channel"] = "auto"
             elif chan_key.isdigit():
-                patch["channel"] = int(chan_key)
+                number = int(chan_key)
+                if radio is not None and number not in _CHANNELS_BY_RADIO[radio]:
+                    return err(
+                        f"channel {number} is not a {_BAND_BY_RADIO[radio]} channel: "
+                        + _CHANNEL_HINT[radio]
+                    )
+                patch["channel"] = number
             else:
                 return err(f"invalid channel {channel!r}: use 'auto' or a number")
         if width_mhz:
             if width_mhz not in _CHANNEL_WIDTHS:
                 return err(f"invalid width_mhz {width_mhz}: use one of {sorted(_CHANNEL_WIDTHS)}")
+            if radio is not None and width_mhz not in _WIDTHS_BY_RADIO[radio]:
+                return err(
+                    f"width_mhz {width_mhz} does not exist on {_BAND_BY_RADIO[radio]}: use one "
+                    f"of {sorted(_WIDTHS_BY_RADIO[radio])}"
+                )
             patch["ht"] = str(width_mhz)
         return await _apply_radio_patch(
             "set_radio_channel", device_mac, band, patch, controller, dry_run
