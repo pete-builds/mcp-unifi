@@ -23,6 +23,7 @@ from mcp_unifi.clients.errors import (
     parse_json_body,
 )
 from mcp_unifi.clients.ids import path_segment
+from mcp_unifi.clients.mac import normalize_mac, same_mac
 from mcp_unifi.clients.retry import request_with_retry
 from mcp_unifi.clients.stats_shape import shape_speedtest_results, shape_top_talkers
 from mcp_unifi.models import UniFiRecord
@@ -594,9 +595,8 @@ class UniFiClient:
         client has ever associated. Returns ``None`` if no record exists.
         """
         users = await self._get("/list/user") or []
-        target = mac.lower()
         for u in users:
-            if isinstance(u, dict) and str(u.get("mac", "")).lower() == target:
+            if isinstance(u, dict) and same_mac(u.get("mac"), mac):
                 return u
         return None
 
@@ -812,9 +812,8 @@ class UniFiClient:
         clients = await self._get("/stat/sta") or []
         if not isinstance(clients, list):
             return None
-        target = mac.lower()
         for client in clients:
-            if isinstance(client, dict) and str(client.get("mac", "")).lower() == target:
+            if isinstance(client, dict) and same_mac(client.get("mac"), mac):
                 return client
         return None
 
@@ -835,7 +834,7 @@ class UniFiClient:
         """
         body: dict[str, Any] = {"type": "all", "start": start, "end": end}
         if mac:
-            body["mac"] = mac.lower()
+            body["mac"] = normalize_mac(mac)
         records = await self._post("/stat/session", body) or []
         if not isinstance(records, list):
             return []

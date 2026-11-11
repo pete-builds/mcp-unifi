@@ -61,6 +61,28 @@ def _assert_unchanged(before: dict[str, Any], state: StubState) -> None:
     assert before == after, "dry_run mutated stub state"
 
 
+def _seed_lookup_targets(state: StubState) -> None:
+    """Give the placeholder ids below a record to resolve against.
+
+    Several update, delete and device dry runs now look their target up
+    first, so they report the same "not found" the real call would instead of
+    previewing success for an id that does not exist. The placeholders
+    therefore have to exist; tools that still short-circuit ignore them.
+    """
+    state.routes.append({"_id": "rt-x", "name": "Lab", "type": "static-route"})
+    state.port_forwards.append({"_id": "pf-x", "name": "ssh", "fwd": "10.0.1.10"})
+    state.port_profiles.append({"_id": "pp-x", "name": "trunk"})
+    state.dynamic_dns.append({"_id": "dd-x", "service": "namecheap", "host_name": "h.example"})
+    state.devices.append(
+        {
+            "_id": "sw-x",
+            "mac": "aa:bb:cc:11:22:33",
+            "type": "usw",
+            "port_table": [{"port_idx": 1, "enable": True}],
+        }
+    )
+
+
 # ---------------------------------------------------------------------------
 # Per-resource destructive tools
 # ---------------------------------------------------------------------------
@@ -216,6 +238,7 @@ async def test_dry_run_per_resource_destructive(
     stub_state: StubState,
 ) -> None:
     """Every per-resource destructive tool returns a preview and mutates nothing."""
+    _seed_lookup_targets(stub_state)
     before = _state_snapshot(stub_state)
     payload = await _call(stub_server, tool, {**args, "dry_run": True})
 
@@ -223,6 +246,32 @@ async def test_dry_run_per_resource_destructive(
     assert payload.get("controller") == "default", f"{tool}: controller missing or wrong"
     assert expect_key in payload, f"{tool}: missing {expect_key} block"
     assert "summary" in payload and isinstance(payload["summary"], str)
+    _assert_unchanged(before, stub_state)
+
+
+@pytest.mark.parametrize(
+    ("tool", "args"),
+    [
+        ("update_route", {"route_id": "nope", "updates": {"enabled": False}}),
+        ("delete_route", {"route_id": "nope"}),
+        ("update_port_forward", {"forward_id": "nope", "updates": {"enabled": False}}),
+        ("delete_port_forward", {"forward_id": "nope"}),
+        ("update_port_profile", {"profile_id": "nope", "updates": {"name": "x"}}),
+        ("delete_port_profile", {"profile_id": "nope"}),
+        ("update_dynamic_dns", {"ddns_id": "nope", "updates": {"enabled": False}}),
+        ("delete_dynamic_dns", {"ddns_id": "nope"}),
+    ],
+)
+async def test_dry_run_on_missing_target_reports_not_found(
+    tool: str, args: dict[str, Any], stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """These dry runs previewed success for an id that does not exist, while
+    the real call (or the delete preview) answered "not found"."""
+    before = _state_snapshot(stub_state)
+    dry = await _call(stub_server, tool, {**args, "dry_run": True})
+    real = await _call(stub_server, tool, args)
+    assert "not found" in dry.get("error", ""), dry
+    assert dry["error"] == real["error"]
     _assert_unchanged(before, stub_state)
 
 

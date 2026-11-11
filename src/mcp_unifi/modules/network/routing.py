@@ -20,6 +20,7 @@ next-hop routing.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -40,6 +41,33 @@ if TYPE_CHECKING:
     from mcp_unifi.dispatcher import ControllerRegistry
 
 logger = logging.getLogger("mcp_unifi.network.routing")
+
+
+def _route_field_error(key: str, value: Any) -> str | None:
+    """Explain why a static-route field value is invalid, or return ``None``.
+
+    Covers the three fields whose shape is unambiguous: the destination is a
+    CIDR, the next hop is an IP address, and the administrative distance is
+    an integer from 1 to 255. Host bits in the destination are left alone;
+    the controller decides whether to mask them.
+    """
+    if key == "static-route_network":
+        try:
+            ipaddress.ip_network(str(value), strict=False)
+        except ValueError:
+            return f"destination {value!r} is not a CIDR (e.g. 10.99.0.0/24)"
+    elif key == "static-route_nexthop":
+        try:
+            ipaddress.ip_address(str(value))
+        except ValueError:
+            return f"next_hop {value!r} is not an IP address"
+    elif key == "static-route_distance":
+        # A digit string is left for the controller to coerce; only a value
+        # that cannot be a distance at all is refused here.
+        number = int(value) if isinstance(value, str) and value.strip().isdigit() else value
+        if isinstance(number, bool) or not isinstance(number, int) or not 1 <= number <= 255:
+            return f"distance {value!r} out of range (1-255)"
+    return None
 
 
 def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> None:
@@ -140,8 +168,14 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             dry_run: Preview the change without applying it. Returns the
                 predicted change set.
         """
-        if not 1 <= distance <= 255:
-            return err(f"distance {distance} out of range (1-255)")
+        for key, value in (
+            ("static-route_network", destination),
+            ("static-route_nexthop", next_hop),
+            ("static-route_distance", distance),
+        ):
+            problem = _route_field_error(key, value)
+            if problem:
+                return err(problem)
         payload: dict[str, Any] = {
             "name": name,
             "type": "static-route",
@@ -199,17 +233,26 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             dry_run: Preview the change without applying it. Returns the
                 predicted change set.
         """
-        if dry_run:
-            return format_json(
-                {
-                    "dry_run": True,
-                    "controller": controller,
-                    "would_update": {"route_id": route_id, "patch": updates},
-                    "summary": f"Would update route {route_id} ({len(updates)} field(s))",
-                }
-            )
+        for key, value in updates.items():
+            problem = _route_field_error(key, value)
+            if problem:
+                return err(problem)
         try:
             backend = resolve_backend(registry, controller)
+            if dry_run:
+                # Resolve the target so a dry run reports the same "not
+                # found" the real call would, rather than previewing success.
+                routes = await backend.list_routes()
+                if not any(isinstance(r, dict) and r.get("_id") == route_id for r in routes):
+                    return err(f"route {route_id} not found")
+                return format_json(
+                    {
+                        "dry_run": True,
+                        "controller": controller,
+                        "would_update": {"route_id": route_id, "patch": updates},
+                        "summary": f"Would update route {route_id} ({len(updates)} field(s))",
+                    }
+                )
             updated = await backend.update_route(route_id, updates)
             if updated is None:
                 return err(f"route {route_id} not found")
@@ -248,15 +291,6 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 ``{"dry_run": true, ...}`` envelope. ``False`` (default)
                 generates a preview token that must be confirmed.
         """
-        if dry_run:
-            return format_json(
-                {
-                    "dry_run": True,
-                    "controller": controller,
-                    "would_delete": {"route_id": route_id},
-                    "summary": f"Would delete route {route_id}",
-                }
-            )
         try:
             backend = resolve_backend(registry, controller)
             routes = await backend.list_routes()
@@ -267,6 +301,16 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         target = next((r for r in routes if isinstance(r, dict) and r.get("_id") == route_id), None)
         if target is None:
             return err(f"route {route_id} not found")
+
+        if dry_run:
+            return format_json(
+                {
+                    "dry_run": True,
+                    "controller": controller,
+                    "would_delete": {"route_id": route_id},
+                    "summary": f"Would delete route {route_id}",
+                }
+            )
 
         resource = {
             "_id": route_id,

@@ -6,6 +6,7 @@ Split from the pre-Step-5 ``tests/test_tools.py``. Bodies are unchanged.
 from __future__ import annotations
 
 import httpx
+import pytest
 import respx
 from fastmcp import FastMCP
 
@@ -120,3 +121,50 @@ async def test_real_port_forward_crud(real_server: FastMCP) -> None:
     assert preview["preview"] is True
     deleted = await _call(real_server, "confirm_destructive_action", {"token": preview["token"]})
     assert deleted["deleted"] is True
+
+
+# ---------------------------------------------------------------------------
+# Input validation (D12): refused before any write, dry run included
+# ---------------------------------------------------------------------------
+
+_PF_OK = {"name": "x", "fwd": "10.0.1.10", "fwd_port": "22", "dst_port": "2222"}
+
+
+@pytest.mark.parametrize(
+    ("override", "expected"),
+    [
+        ({"fwd": "not-an-ip"}, "not an IP address"),
+        ({"fwd": "10.0.1.300"}, "not an IP address"),
+        ({"fwd_port": "0"}, "outside 1-65535"),
+        ({"dst_port": "70000"}, "outside 1-65535"),
+        ({"dst_port": "http"}, "is not a port"),
+        ({"fwd_port": "8010-8000"}, "runs backwards"),
+        ({"dst_port": "1-2-3"}, "is not a port"),
+        ({"dst_port": ""}, "is not a port"),
+    ],
+)
+async def test_create_port_forward_refuses_invalid_address_or_ports(
+    stub_server: FastMCP, stub_state: StubState, override: dict[str, str], expected: str
+) -> None:
+    before = list(stub_state.port_forwards)
+    for dry_run in (True, False):
+        result = await _call(
+            stub_server, "create_port_forward", {**_PF_OK, **override, "dry_run": dry_run}
+        )
+        assert expected in result.get("error", ""), result
+    assert stub_state.port_forwards == before
+
+
+@pytest.mark.parametrize(
+    "ports",
+    [
+        {"fwd_port": "8000-8010", "dst_port": "8000-8010"},
+        {"fwd_port": "80,443", "dst_port": "80, 443"},
+        {"fwd_port": "65535", "dst_port": "1"},
+    ],
+)
+async def test_create_port_forward_accepts_ranges_and_lists(
+    stub_server: FastMCP, ports: dict[str, str]
+) -> None:
+    result = await _call(stub_server, "create_port_forward", {**_PF_OK, **ports, "dry_run": True})
+    assert result.get("dry_run") is True, result

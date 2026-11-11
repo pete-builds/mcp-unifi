@@ -5,6 +5,7 @@ Split from the pre-Step-5 ``tests/test_tools.py``. Bodies are unchanged.
 
 from __future__ import annotations
 
+import copy
 import json
 from typing import Any
 
@@ -104,6 +105,19 @@ async def test_set_port_state_unknown_device(stub_server: FastMCP) -> None:
 # Real mode
 # ---------------------------------------------------------------------------
 
+#: A real switch record lists its ports in ``port_table``; set_port_state
+#: validates ``port_idx`` against it before writing.
+SWITCH_PORT_TABLE = [{"port_idx": i} for i in range(1, 9)]
+
+#: ``/stat/device`` answer for the restart/locate tests, which resolve the
+#: MAC before sending the devmgr command.
+GW_AP_STAT = {
+    "data": [
+        {"_id": "gw-1", "mac": "f4:e2:c6:00:00:01", "type": "ugw"},
+        {"_id": "ap-1", "mac": "f4:e2:c6:00:00:02", "type": "uap"},
+    ]
+}
+
 
 @respx.mock
 async def test_real_list_devices(real_server: FastMCP) -> None:
@@ -127,6 +141,7 @@ async def test_real_list_devices_error_returns_structured_error(
 
 @respx.mock
 async def test_real_restart_device(real_server: FastMCP) -> None:
+    respx.get(f"{BASE}/stat/device").mock(return_value=httpx.Response(200, json=GW_AP_STAT))
     respx.post(f"{BASE}/cmd/devmgr").mock(return_value=httpx.Response(200, json={"data": []}))
     result = await _call(real_server, "restart_device", {"mac": "f4:e2:c6:00:00:01"})
     assert result["restarted"] is True
@@ -140,6 +155,7 @@ async def test_real_locate_device(real_server: FastMCP) -> None:
         captured["body"] = json.loads(request.content)
         return httpx.Response(200, json={"data": []})
 
+    respx.get(f"{BASE}/stat/device").mock(return_value=httpx.Response(200, json=GW_AP_STAT))
     respx.post(f"{BASE}/cmd/devmgr").mock(side_effect=capture)
     result = await _call(real_server, "locate_device", {"mac": "f4:e2:c6:00:00:02", "on": True})
     assert result["locating"] is True
@@ -157,6 +173,7 @@ async def test_real_set_port_state(real_server: FastMCP) -> None:
                         "_id": "switch-1",
                         "mac": "f4:e2:c6:00:00:03",
                         "port_overrides": [{"port_idx": 1, "enable": True}],
+                        "port_table": SWITCH_PORT_TABLE,
                     }
                 ]
             },
@@ -669,6 +686,7 @@ async def test_real_set_port_state_redacts_device_credentials(real_server: FastM
                         "_id": "switch-1",
                         "mac": "f4:e2:c6:00:00:03",
                         "port_overrides": [{"port_idx": 1, "enable": True}],
+                        "port_table": SWITCH_PORT_TABLE,
                         **DEVICE_SECRETS,
                     }
                 ]
@@ -766,6 +784,7 @@ async def test_real_set_port_state_keeps_other_fields_on_same_port(real_server: 
                                 "name": "cam-front",
                             },
                         ],
+                        "port_table": SWITCH_PORT_TABLE,
                     }
                 ]
             },
@@ -798,3 +817,276 @@ async def test_real_set_port_state_keeps_other_fields_on_same_port(real_server: 
     }
     assert overrides[6] == {"port_idx": 6, "portconf_id": "prof-ap"}
     assert len(captured["body"]["port_overrides"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# MAC lookups accept any case and separator (review finding D2)
+# ---------------------------------------------------------------------------
+
+SWITCH_MAC = "f4:e2:c6:00:00:03"
+
+
+@pytest.mark.parametrize(
+    "typed",
+    ["F4:E2:C6:00:00:02", "f4-e2-c6-00-00-02", "F4E2.C600.0002", "f4e2c6000002"],
+)
+async def test_device_tools_find_the_device_whatever_the_mac_form(
+    stub_server: FastMCP, typed: str
+) -> None:
+    """Only the stats tools lower-cased the MAC; every other device tool
+    compared it verbatim and answered "not found" for an upper-case or
+    dash-separated MAC copied off a label."""
+    cases: list[tuple[str, dict[str, Any]]] = [
+        ("get_device_radios", {"device_mac": typed}),
+        ("rename_device", {"device_mac": typed, "name": "x", "dry_run": True}),
+        ("set_radio_channel", {"device_mac": typed, "band": "5g", "channel": "40"}),
+        ("restart_device", {"mac": typed, "dry_run": True}),
+        ("locate_device", {"mac": typed}),
+        ("get_device_stats", {"mac": typed}),
+    ]
+    for tool, args in cases:
+        result = await _call(stub_server, tool, args)
+        assert "error" not in result, (tool, result)
+
+
+async def test_set_port_state_finds_the_switch_by_upper_case_mac(stub_server: FastMCP) -> None:
+    result = await _call(
+        stub_server,
+        "set_port_state",
+        {"device_mac": SWITCH_MAC.upper(), "port_idx": 2, "enable": False},
+    )
+    assert result["enable"] is False
+
+
+@respx.mock
+async def test_real_device_lookup_accepts_upper_case_mac(real_server: FastMCP) -> None:
+    respx.get(f"{BASE}/stat/device").mock(return_value=httpx.Response(200, json=AP_STAT))
+    result = await _call(real_server, "get_device_radios", {"device_mac": AP_MAC.upper()})
+    assert result["name"] == "U6 Lite"
+
+
+@respx.mock
+async def test_real_restart_sends_the_controllers_own_mac(real_server: FastMCP) -> None:
+    """The devmgr command carries the MAC as the controller stores it, not
+    the upper-case form the caller typed."""
+    respx.get(f"{BASE}/stat/device").mock(return_value=httpx.Response(200, json=GW_AP_STAT))
+    captured: dict[str, Any] = {}
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"data": []})
+
+    respx.post(f"{BASE}/cmd/devmgr").mock(side_effect=capture)
+    result = await _call(real_server, "restart_device", {"mac": "F4-E2-C6-00-00-01"})
+    assert result == {"restarted": True, "mac": "f4:e2:c6:00:00:01"}
+    assert captured["body"] == {"cmd": "restart", "mac": "f4:e2:c6:00:00:01"}
+
+
+# ---------------------------------------------------------------------------
+# Unknown targets: dry runs and real calls agree (D6, D7, D11)
+# ---------------------------------------------------------------------------
+
+GHOST_MAC = "de:ad:be:ef:00:00"
+
+
+@pytest.mark.parametrize(
+    ("tool", "args"),
+    [
+        ("restart_device", {"mac": GHOST_MAC}),
+        ("locate_device", {"mac": GHOST_MAC}),
+        ("set_port_state", {"device_mac": GHOST_MAC, "port_idx": 1, "enable": False}),
+        ("set_port_state", {"device_mac": SWITCH_MAC, "port_idx": 999, "enable": False}),
+        ("set_port_state", {"device_mac": AP_MAC, "port_idx": 1, "enable": False}),
+    ],
+)
+async def test_dry_run_reports_the_not_found_the_real_call_reports(
+    stub_server: FastMCP, stub_state: StubState, tool: str, args: dict[str, Any]
+) -> None:
+    """A dry run used to preview success for a device or port that does not
+    exist, while the real call said "not found"."""
+    dry = await _call(stub_server, tool, {**args, "dry_run": True})
+    real = await _call(stub_server, tool, args)
+    assert "not found" in dry.get("error", ""), dry
+    assert "not found" in real.get("error", ""), real
+    assert dry["error"] == real["error"]
+    assert stub_state.audit_log == []
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    ("tool", "args"),
+    [
+        ("restart_device", {"mac": GHOST_MAC}),
+        ("locate_device", {"mac": GHOST_MAC, "on": True}),
+    ],
+)
+async def test_real_restart_and_locate_report_unknown_device(
+    real_server: FastMCP, tool: str, args: dict[str, Any]
+) -> None:
+    """The real path treated any devmgr answer as success, so it always said
+    it had restarted or located a device that does not exist."""
+    respx.get(f"{BASE}/stat/device").mock(return_value=httpx.Response(200, json=GW_AP_STAT))
+    devmgr = respx.post(f"{BASE}/cmd/devmgr").mock(
+        return_value=httpx.Response(200, json={"data": []})
+    )
+    result = await _call(real_server, tool, args)
+    assert result["error"] == f"device {GHOST_MAC} not found"
+    assert not devmgr.called
+
+
+def _switch_stat(**extra: Any) -> dict[str, Any]:
+    return {
+        "data": [
+            {
+                "_id": "switch-1",
+                "mac": SWITCH_MAC,
+                "type": "usw",
+                "port_overrides": [{"port_idx": 2, "portconf_id": "P", "name": "cam"}],
+                **extra,
+            }
+        ]
+    }
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    "stat",
+    [
+        _switch_stat(port_table=SWITCH_PORT_TABLE),  # port 999 is not in the table
+        _switch_stat(),  # no port table at all
+    ],
+)
+async def test_real_set_port_state_refuses_a_port_the_device_does_not_have(
+    real_server: FastMCP, stat: dict[str, Any]
+) -> None:
+    """The real path appended an override for any port number to any device
+    and PUT it. The device's own port table is now the authority."""
+    respx.get(f"{BASE}/stat/device").mock(return_value=httpx.Response(200, json=stat))
+    put = respx.put(f"{BASE}/rest/device/switch-1").mock(
+        return_value=httpx.Response(200, json={"data": []})
+    )
+    result = await _call(
+        real_server,
+        "set_port_state",
+        {"device_mac": SWITCH_MAC, "port_idx": 999, "enable": False},
+    )
+    assert "not found" in result["error"]
+    assert not put.called
+
+
+# ---------------------------------------------------------------------------
+# Radio input validation (D9)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("band", "channel", "width"),
+    [
+        ("2g", "36", 0),
+        ("2g", "0", 0),
+        ("2g", "15", 0),
+        ("5g", "6", 0),
+        ("5g", "38", 0),
+        ("5g", "169", 0),
+        ("6g", "9999", 0),
+        ("6g", "3", 0),
+        ("2g", "", 80),
+        ("2g", "", 320),
+        ("5g", "", 320),
+    ],
+)
+async def test_set_radio_channel_rejects_numbers_not_on_the_band(
+    stub_server: FastMCP, stub_state: StubState, band: str, channel: str, width: int
+) -> None:
+    before = copy.deepcopy(stub_state.devices)
+    args: dict[str, Any] = {"device_mac": AP_MAC, "band": band}
+    if channel:
+        args["channel"] = channel
+    if width:
+        args["width_mhz"] = width
+    for dry_run in (True, False):
+        result = await _call(stub_server, "set_radio_channel", {**args, "dry_run": dry_run})
+        assert "error" in result, (args, result)
+    assert stub_state.devices == before
+
+
+@pytest.mark.parametrize(
+    ("band", "channel", "width"),
+    [
+        ("2g", "1", 20),
+        ("2g", "14", 40),
+        ("5g", "36", 80),
+        ("5g", "100", 160),
+        ("5g", "165", 20),
+        ("5g", "auto", 240),
+        ("6g", "1", 320),
+        ("6g", "233", 20),
+    ],
+)
+async def test_set_radio_channel_accepts_standard_channels(
+    stub_server: FastMCP, band: str, channel: str, width: int
+) -> None:
+    result = await _call(
+        stub_server,
+        "set_radio_channel",
+        {"device_mac": AP_MAC, "band": band, "channel": channel, "width_mhz": width},
+    )
+    assert result.get("updated") is True, result
+
+
+@respx.mock
+@pytest.mark.parametrize("power", [5, 24, 200])
+async def test_real_set_radio_tx_power_refuses_power_outside_radio_range(
+    real_server: FastMCP, power: int
+) -> None:
+    """``AP_STAT``'s 5 GHz radio reports ``min_txpower`` 6 and ``max_txpower``
+    23. The guard existed but nothing tested it."""
+    respx.get(f"{BASE}/stat/device").mock(return_value=httpx.Response(200, json=AP_STAT))
+    put = respx.put(f"{BASE}/rest/device/ap-1").mock(
+        return_value=httpx.Response(200, json={"data": []})
+    )
+    result = await _call(
+        real_server,
+        "set_radio_tx_power",
+        {"device_mac": AP_MAC, "band": "5g", "mode": "custom", "power_dbm": power},
+    )
+    assert result["error"] == f"power_dbm {power} outside the radio's supported range 6-23 dBm"
+    assert not put.called
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    ("tool", "args"),
+    [
+        ("rename_device", {"device_mac": AP_MAC, "name": "Bedroom AP"}),
+        ("set_radio_tx_power", {"device_mac": AP_MAC, "band": "5g", "mode": "low"}),
+    ],
+)
+async def test_real_device_write_with_empty_data_is_success(
+    real_server: FastMCP, tool: str, args: dict[str, Any]
+) -> None:
+    """A 2xx PUT whose ``data`` list is empty applied the write, but the
+    backend returned None and the tool said "device not found" (B7)."""
+    respx.get(f"{BASE}/stat/device").mock(return_value=httpx.Response(200, json=AP_STAT))
+    put = respx.put(f"{BASE}/rest/device/ap-1").mock(
+        return_value=httpx.Response(200, json={"meta": {"rc": "ok"}, "data": []})
+    )
+    result = await _call(real_server, tool, args)
+    assert put.called
+    assert result.get("updated") is True, result
+
+
+@respx.mock
+async def test_real_device_write_with_empty_data_and_no_reread(real_server: FastMCP) -> None:
+    """If the re-read after an empty-``data`` PUT does not list the device
+    either, the write still counts as applied."""
+    respx.get(f"{BASE}/stat/device").mock(
+        side_effect=[
+            httpx.Response(200, json=AP_STAT),
+            httpx.Response(200, json={"data": []}),
+        ]
+    )
+    respx.put(f"{BASE}/rest/device/ap-1").mock(return_value=httpx.Response(200, json={"data": []}))
+    result = await _call(real_server, "rename_device", {"device_mac": AP_MAC, "name": "Den AP"})
+    assert result["updated"] is True
+    assert result["after"] == {"name": "Den AP"}

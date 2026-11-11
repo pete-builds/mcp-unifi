@@ -11,6 +11,7 @@ import json
 from typing import Any
 
 import httpx
+import pytest
 import respx
 from fastmcp import FastMCP
 
@@ -147,10 +148,12 @@ async def test_delete_route_round_trip(stub_server: FastMCP, stub_state: StubSta
     assert not any(r["_id"] == rid for r in stub_state.list_routes())
 
 
-async def test_delete_route_dry_run(stub_server: FastMCP) -> None:
-    result = await _call(stub_server, "delete_route", {"route_id": "x", "dry_run": True})
+async def test_delete_route_dry_run(stub_server: FastMCP, stub_state: StubState) -> None:
+    # The dry run resolves the route like the preview does, so it needs a real id.
+    route_id = stub_state.routes[0]["_id"]
+    result = await _call(stub_server, "delete_route", {"route_id": route_id, "dry_run": True})
     assert result["dry_run"] is True
-    assert result["would_delete"]["route_id"] == "x"
+    assert result["would_delete"]["route_id"] == route_id
 
 
 async def test_delete_route_missing(stub_server: FastMCP) -> None:
@@ -254,3 +257,75 @@ async def test_real_delete_route_handles_500_on_lookup(real_server: FastMCP) -> 
     respx.get(f"{BASE}/rest/routing").mock(return_value=httpx.Response(500))
     result = await _call(real_server, "delete_route", {"route_id": "rt1"})
     assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# Input validation (D12)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("override", "expected"),
+    [
+        ({"destination": "banana"}, "not a CIDR"),
+        ({"destination": "10.0.0.0/33"}, "not a CIDR"),
+        ({"next_hop": "also banana"}, "not an IP address"),
+        ({"distance": 0}, "out of range"),
+        ({"distance": 256}, "out of range"),
+    ],
+)
+async def test_create_route_refuses_invalid_fields(
+    stub_server: FastMCP, stub_state: StubState, override: dict[str, Any], expected: str
+) -> None:
+    args = {"name": "r", "destination": "10.99.0.0/24", "next_hop": "192.168.1.254", **override}
+    before = list(stub_state.routes)
+    for dry_run in (True, False):
+        result = await _call(stub_server, "create_route", {**args, "dry_run": dry_run})
+        assert expected in result.get("error", ""), result
+    assert stub_state.routes == before
+
+
+async def test_create_route_accepts_ipv6(stub_server: FastMCP) -> None:
+    result = await _call(
+        stub_server,
+        "create_route",
+        {"name": "v6", "destination": "2001:db8::/48", "next_hop": "fe80::1", "dry_run": True},
+    )
+    assert result.get("dry_run") is True, result
+
+
+@pytest.mark.parametrize(
+    ("updates", "expected"),
+    [
+        ({"static-route_distance": 0}, "out of range"),
+        ({"static-route_distance": "abc"}, "out of range"),
+        ({"static-route_distance": True}, "out of range"),
+        ({"static-route_network": "banana"}, "not a CIDR"),
+        ({"static-route_nexthop": "nope"}, "not an IP address"),
+    ],
+)
+async def test_update_route_refuses_invalid_fields(
+    stub_server: FastMCP, stub_state: StubState, updates: dict[str, Any], expected: str
+) -> None:
+    """update_route passed any value straight to the controller (D12)."""
+    stub_state.routes.append({"_id": "rt-1", "name": "Lab", "static-route_distance": 1})
+    for dry_run in (True, False):
+        result = await _call(
+            stub_server,
+            "update_route",
+            {"route_id": "rt-1", "updates": updates, "dry_run": dry_run},
+        )
+        assert expected in result.get("error", ""), result
+    assert stub_state.routes[-1]["static-route_distance"] == 1
+
+
+async def test_update_route_accepts_a_digit_string_distance(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    stub_state.routes.append({"_id": "rt-1", "name": "Lab"})
+    result = await _call(
+        stub_server,
+        "update_route",
+        {"route_id": "rt-1", "updates": {"static-route_distance": "5"}, "dry_run": True},
+    )
+    assert result.get("dry_run") is True, result

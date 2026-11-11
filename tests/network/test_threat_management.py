@@ -93,6 +93,53 @@ async def test_set_threat_management_dry_run(stub_server: FastMCP, stub_state: S
     assert stub_state.settings["ips"] == before
 
 
+async def test_set_threat_management_without_mode_keeps_ips(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """Changing only the categories on an IPS site used to write ``ids``,
+    because ``mode`` defaulted to it. With no mode the site's mode stays."""
+    stub_state.settings["ips"]["ips_mode"] = "ips"
+    preview = await _call(
+        stub_server,
+        "set_threat_management",
+        {"enabled": True, "signature_categories": ["tor"], "dry_run": True},
+    )
+    assert preview["would_patch"]["patch"]["ips_mode"] == "ips"
+    assert preview["before"] == {"mode": "ips", "enabled_signature_categories": []}
+    assert preview["after"] == {"mode": "ips", "enabled_signature_categories": ["tor"]}
+
+    result = await _call(
+        stub_server,
+        "set_threat_management",
+        {"enabled": True, "signature_categories": ["tor"]},
+    )
+    assert result["mode"] == "ips"
+    assert stub_state.settings["ips"]["ips_mode"] == "ips"
+
+
+async def test_set_threat_management_without_mode_from_off_defaults_to_ids(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    assert stub_state.settings["ips"]["ips_mode"] == "off"
+    result = await _call(stub_server, "set_threat_management", {"enabled": True})
+    assert result["mode"] == "ids"
+
+
+async def test_set_threat_management_dry_run_shows_before_and_after(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    stub_state.settings["ips"]["ips_mode"] = "ids"
+    stub_state.settings["ips"]["enabled_categories"] = ["tor"]
+    result = await _call(
+        stub_server,
+        "set_threat_management",
+        {"enabled": False, "dry_run": True},
+    )
+    assert result["before"] == {"mode": "ids", "enabled_signature_categories": ["tor"]}
+    assert result["after"] == {"mode": "off", "enabled_signature_categories": ["tor"]}
+    assert stub_state.settings["ips"]["ips_mode"] == "ids"
+
+
 # ---------------------------------------------------------------------------
 # Real mode
 # ---------------------------------------------------------------------------
@@ -163,6 +210,33 @@ async def test_real_set_threat_management_sends_partial_patch(
     assert result["mode"] == "ips"
     assert captured["body"]["ips_mode"] == "ips"
     assert captured["body"]["enabled_categories"] == ["emerging-malware"]
+
+
+@respx.mock
+async def test_real_set_threat_management_without_mode_reads_and_keeps_ips(
+    real_server: FastMCP,
+) -> None:
+    respx.get(f"{BASE}/rest/setting/ips").mock(
+        return_value=httpx.Response(
+            200, json={"data": [{"_id": "ips123", "key": "ips", "ips_mode": "ips"}]}
+        )
+    )
+    captured: dict[str, Any] = {}
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200, json={"data": [{"_id": "ips123", "key": "ips", **captured["body"]}]}
+        )
+
+    respx.post(f"{BASE}/set/setting/ips").mock(side_effect=capture)
+    result = await _call(
+        real_server,
+        "set_threat_management",
+        {"enabled": True, "signature_categories": ["tor"]},
+    )
+    assert captured["body"]["ips_mode"] == "ips"
+    assert result["mode"] == "ips"
 
 
 @respx.mock

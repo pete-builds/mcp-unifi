@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -23,6 +24,26 @@ if TYPE_CHECKING:
     from mcp_unifi.dispatcher import ControllerRegistry
 
 logger = logging.getLogger("mcp_unifi.network.port_forwards")
+
+
+def _port_spec_error(field: str, value: str) -> str | None:
+    """Explain why ``value`` is not a port spec, or return ``None``.
+
+    Accepts a single port (``"443"``), a range (``"8000-8010"``) and a comma
+    list of either. Each port must be 1-65535 and a range must not run
+    backwards. Anything else (``"0"``, ``"70000"``, ``"http"``) can only be
+    refused by the controller after the fact, or not at all.
+    """
+    for part in str(value).split(","):
+        bounds = part.strip().split("-")
+        if len(bounds) > 2 or not all(b.strip().isdigit() for b in bounds):
+            return f"{field} {value!r} is not a port, a range like 8000-8010, or a list of those"
+        numbers = [int(b) for b in bounds]
+        if not all(1 <= n <= 65535 for n in numbers):
+            return f"{field} {value!r} is outside 1-65535"
+        if numbers[0] > numbers[-1]:
+            return f"{field} {value!r} is a range that runs backwards"
+    return None
 
 
 def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> None:
@@ -81,8 +102,8 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             name: Display name for the rule.
             fwd: Internal IP to forward to (e.g. ``"10.50.0.10"``).
             fwd_port: Internal port (string; UniFi accepts ranges like
-                ``"8000-8010"``).
-            dst_port: External / WAN port to listen on.
+                ``"8000-8010"``). Each port must be 1-65535.
+            dst_port: External / WAN port to listen on, same format.
             proto: ``"tcp"``, ``"udp"``, or ``"tcp_udp"``.
             src: Source restriction. ``"any"`` (default) or a CIDR.
             enabled: ``True`` enables the rule immediately.
@@ -92,6 +113,14 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             dry_run: Preview the change without applying it. Returns the
                 predicted change set.
         """
+        try:
+            ipaddress.ip_address(fwd.strip())
+        except ValueError:
+            return err(f"fwd {fwd!r} is not an IP address")
+        for field, value in (("fwd_port", fwd_port), ("dst_port", dst_port)):
+            problem = _port_spec_error(field, value)
+            if problem:
+                return err(problem)
         payload: dict[str, Any] = {
             "name": name,
             "fwd": fwd,
@@ -158,19 +187,24 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             dry_run: Preview the change without applying it. Returns the
                 predicted change set.
         """
-        if dry_run:
-            return format_json(
-                {
-                    "dry_run": True,
-                    "controller": controller,
-                    "would_update": {"forward_id": forward_id, "patch": updates},
-                    "summary": (
-                        f"Would update port forward {forward_id} ({len(updates)} field(s))"
-                    ),
-                }
-            )
         try:
             backend = resolve_backend(registry, controller)
+            if dry_run:
+                # Resolve the target so a dry run reports the same "not
+                # found" the real call would, rather than previewing success.
+                forwards = await backend.list_port_forwards()
+                if not any(isinstance(f, dict) and f.get("_id") == forward_id for f in forwards):
+                    return err(f"port forward {forward_id} not found")
+                return format_json(
+                    {
+                        "dry_run": True,
+                        "controller": controller,
+                        "would_update": {"forward_id": forward_id, "patch": updates},
+                        "summary": (
+                            f"Would update port forward {forward_id} ({len(updates)} field(s))"
+                        ),
+                    }
+                )
             outcome = await verified_update(
                 lister=backend.list_port_forwards,
                 updater=lambda: backend.update_port_forward(forward_id, updates),
@@ -221,15 +255,6 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 ``{"dry_run": true, ...}`` envelope. ``False`` (default)
                 generates a preview token that must be confirmed.
         """
-        if dry_run:
-            return format_json(
-                {
-                    "dry_run": True,
-                    "controller": controller,
-                    "would_delete": {"forward_id": forward_id},
-                    "summary": f"Would delete port forward {forward_id}",
-                }
-            )
         try:
             backend = resolve_backend(registry, controller)
             forwards = await backend.list_port_forwards()
@@ -244,6 +269,16 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         )
         if target is None:
             return err(f"port forward {forward_id} not found")
+
+        if dry_run:
+            return format_json(
+                {
+                    "dry_run": True,
+                    "controller": controller,
+                    "would_delete": {"forward_id": forward_id},
+                    "summary": f"Would delete port forward {forward_id}",
+                }
+            )
 
         resource = {
             "_id": forward_id,

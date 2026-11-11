@@ -54,6 +54,7 @@ record.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -244,6 +245,11 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             ("restricted_subnet_3", restricted_subnet_3),
         ):
             if value is not None:
+                if value:
+                    try:
+                        ipaddress.ip_network(value, strict=False)
+                    except ValueError:
+                        return err(f"{key} {value!r} is not a CIDR (e.g. 192.168.0.0/16)")
                 patch[key] = value
         if portal_enabled is not None:
             patch["portal_enabled"] = portal_enabled

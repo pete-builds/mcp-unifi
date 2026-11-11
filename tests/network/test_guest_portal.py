@@ -168,3 +168,24 @@ async def test_set_guest_portal_dry_run_previews_a_restricted_subnet(stub_server
     )
     assert result["dry_run"] is True
     assert result["would_patch"]["patch"] == {"restricted_subnet_2": "172.16.0.0/12"}
+
+
+@pytest.mark.parametrize("value", ["not a cidr", "10.0.0.0/33", "300.1.1.0/24"])
+async def test_set_guest_portal_refuses_a_restricted_subnet_that_is_not_a_cidr(
+    stub_server: FastMCP, value: str
+) -> None:
+    for dry_run in (True, False):
+        result = await _call(
+            stub_server,
+            "set_guest_portal",
+            {"restricted_subnet_1": value, "dry_run": dry_run},
+        )
+        assert "not a CIDR" in result.get("error", ""), result
+        assert "token" not in result
+
+
+async def test_set_guest_portal_still_clears_a_restricted_subnet(stub_server: FastMCP) -> None:
+    result = await _call(
+        stub_server, "set_guest_portal", {"restricted_subnet_1": "", "dry_run": True}
+    )
+    assert result["would_patch"]["patch"] == {"restricted_subnet_1": ""}

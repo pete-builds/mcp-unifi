@@ -58,6 +58,7 @@ via this API surface. See ``set_wan_ipv6`` notes and the v0.14 changelog.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -114,6 +115,10 @@ _WAN_V6_KEYS: tuple[str, ...] = (
 #: PD-size bounds the UniFi UI allows. A /48..-/64 delegation window.
 _PD_SIZE_MIN = 48
 _PD_SIZE_MAX = 64
+
+#: Highest /64 sub-prefix id any delegation this module can configure holds:
+#: the largest PD size ``set_wan_ipv6`` accepts is a /48, which is 2**16 /64s.
+_PREFIX_ID_MAX = 2 ** (64 - _PD_SIZE_MIN) - 1
 
 #: Complete PD-scaffold field set a LAN networkconf needs to be a VALID
 #: DHCPv6-PD network on UniFi Network 10.4.57. Probed live 2026-06-14 by
@@ -507,7 +512,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 ``ipv6_setting_preference="manual"`` so the controller honours the
                 pinned sub-prefix and the LAN carves its OWN /64. The
                 Default/MGMT LAN already holds id ``0``, so a second LAN needs a
-                distinct id (``1``, ``2``, ...).
+                distinct id (``1``, ``2``, ...). At most ``65535`` (a /48).
             controller: Name of the UniFi controller to target. Defaults to
                 ``"default"``.
             dry_run: Preview the before/after diff without applying it.
@@ -520,6 +525,18 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(f"invalid address_assignment {address_assignment!r}: use slaac or dhcpv6")
         if dns_servers is not None and len(dns_servers) > 4:
             return err("dns_servers accepts at most 4 addresses")
+        for server in dns_servers or []:
+            if not server:
+                continue
+            try:
+                ipaddress.IPv6Address(server)
+            except ValueError:
+                return err(f"dns_servers entry {server!r} is not an IPv6 address")
+        if prefix_id > _PREFIX_ID_MAX:
+            return err(
+                f"prefix_id {prefix_id} out of range: a /48 delegation, the largest, "
+                f"holds ids 0-{_PREFIX_ID_MAX}"
+            )
         # prefix_id is an int; the sentinel -1 means "not supplied" so that 0
         # (a legitimate, distinct sub-prefix id) is preserved as a real value.
         pid_supplied = prefix_id >= 0

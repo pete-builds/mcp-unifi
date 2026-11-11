@@ -43,7 +43,7 @@ update_vlan(network_id="65f...", updates={"enabled": False})
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `network_id` | `string` | yes | — | The ``_id`` from ``list_networks``. |
-| `updates` | `object` | yes | — | Partial network record. Common keys: ``name``, ``vlan``, ``ip_subnet``, ``dhcpd_start``, ``dhcpd_stop``, ``enabled``, ``mdns_enabled`` (toggle the per-VLAN mDNS reflector independently of network creation), ``purpose``. |
+| `updates` | `object` | yes | — | Partial network record. Common keys: ``name``, ``vlan`` (1-4094), ``ip_subnet`` (network form ``10.50.0.0/24`` is promoted to gateway form, as in ``create_vlan``), ``dhcpd_start``, ``dhcpd_stop``, ``enabled``, ``mdns_enabled`` (toggle the per-VLAN mDNS reflector independently of network creation), ``purpose``. |
 | `controller` | `string` | no | "default" | Name of the UniFi controller to target. Defaults to ``"default"``. |
 | `dry_run` | `boolean` | no | false | Preview the change without applying it. Returns the predicted change set. |
 

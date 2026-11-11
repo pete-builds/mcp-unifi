@@ -108,6 +108,73 @@ async def test_delete_honeypot_preview_then_confirm(
     assert stub_state.settings["ips"]["honeypot_enabled"] is False
 
 
+async def test_create_honeypot_refuses_addresses_outside_the_host_range(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """The seed network is ``192.168.1.1/24``. An address outside it, or the
+    gateway, network or broadcast address inside it, is no trap a client can
+    reach, and used to be accepted (dry run and real write alike)."""
+    net_id = stub_state.list_networks()[0]["_id"]
+    for ip, reason in (
+        ("8.8.8.8", "outside network"),
+        ("10.99.99.99", "outside network"),
+        ("192.168.1.1", "gateway"),
+        ("192.168.1.0", "network or broadcast"),
+        ("192.168.1.255", "network or broadcast"),
+    ):
+        for dry_run in (True, False):
+            result = await _call(
+                stub_server,
+                "create_honeypot",
+                {"network_id": net_id, "ip": ip, "dry_run": dry_run},
+            )
+            assert reason in result.get("error", ""), (ip, dry_run, result)
+    assert stub_state.settings["ips"].get("honeypot", []) == []
+
+    ok = await _call(
+        stub_server,
+        "create_honeypot",
+        {"network_id": net_id, "ip": "192.168.1.254", "dry_run": True},
+    )
+    assert "would_patch" in ok
+
+
+async def test_delete_honeypot_confirm_keeps_entries_added_after_preview(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """The confirm step used to write the list snapshotted at preview time,
+    so a honeypot created while the token was outstanding was deleted too."""
+    net_id = stub_state.list_networks()[0]["_id"]
+    await _call(stub_server, "create_honeypot", {"network_id": net_id, "ip": "192.168.1.50"})
+    preview = await _call(stub_server, "delete_honeypot", {"id": f"{net_id}:192.168.1.50"})
+    await _call(stub_server, "create_honeypot", {"network_id": net_id, "ip": "192.168.1.51"})
+
+    result = await _call(stub_server, "confirm_destructive_action", {"token": preview["token"]})
+    assert result["deleted"] is True
+
+    listed = await _call(stub_server, "list_honeypots")
+    assert [h["ip"] for h in listed["honeypots"]] == ["192.168.1.51"]
+    assert listed["enabled"] is True
+
+
+async def test_delete_honeypot_confirm_after_entry_already_gone(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """If the entry disappeared between preview and confirm, the confirm
+    reports it instead of rewriting the list."""
+    net_id = stub_state.list_networks()[0]["_id"]
+    await _call(stub_server, "create_honeypot", {"network_id": net_id, "ip": "192.168.1.60"})
+    await _call(stub_server, "create_honeypot", {"network_id": net_id, "ip": "192.168.1.61"})
+    preview = await _call(stub_server, "delete_honeypot", {"id": f"{net_id}:192.168.1.60"})
+    stub_state.settings["ips"]["honeypot"] = [
+        e for e in stub_state.settings["ips"]["honeypot"] if e["ip_address"] != "192.168.1.60"
+    ]
+
+    result = await _call(stub_server, "confirm_destructive_action", {"token": preview["token"]})
+    assert "not found" in result["error"]
+    assert [e["ip_address"] for e in stub_state.settings["ips"]["honeypot"]] == ["192.168.1.61"]
+
+
 async def test_delete_honeypot_missing(stub_server: FastMCP) -> None:
     result = await _call(stub_server, "delete_honeypot", {"id": "ghost"})
     assert "error" in result
