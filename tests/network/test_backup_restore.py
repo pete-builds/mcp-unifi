@@ -32,6 +32,7 @@ from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.config import Settings
 from mcp_unifi.modules.network.backup import (
     BACKUP_SCHEMA,
+    NOT_INCLUDED,
     REDACTED_PASSPHRASE,
 )
 from mcp_unifi.redaction import REDACTED_OUTPUT
@@ -139,6 +140,7 @@ async def test_backup_envelope_shape(stub_server: FastMCP) -> None:
     resources = envelope["resources"]
     assert set(resources.keys()) == {
         "networks",
+        "firewall_groups",
         "wlans",
         "firewall_rules",
         "port_profiles",
@@ -163,18 +165,20 @@ async def test_backup_strips_wlan_passphrases(stub_server: FastMCP) -> None:
 
 
 async def test_backup_drops_internal_ids(stub_server: FastMCP) -> None:
-    """``_id`` is dropped from everything except networks.
+    """``_id`` is dropped from everything except networks and firewall groups.
 
-    Networks retain ``_id`` so wlan/lease references can be resolved back to
-    a network name (and then a live id) at restore time. ``site_id`` is
-    dropped everywhere because it doesn't survive a cross-controller restore.
+    Those two retain ``_id`` so references to them (a WLAN's networkconf_id,
+    a rule's firewall group ids) can be remapped at restore time. ``site_id``
+    is dropped everywhere because it doesn't survive a cross-controller
+    restore.
     """
     envelope = await _call(stub_server, "backup_config", {})
     for rtype, items in envelope["resources"].items():
         for item in items:
             assert "site_id" not in item, f"{rtype} record leaked site_id into backup"
-            if rtype == "networks":
-                # Networks intentionally keep _id for restore-time rebinding.
+            if rtype in ("networks", "firewall_groups"):
+                # Referenced types intentionally keep _id for remapping.
+                assert item.get("_id"), f"{rtype} record lost its _id"
                 continue
             assert "_id" not in item, f"{rtype} record leaked _id into backup"
 
@@ -516,8 +520,18 @@ async def test_partial_failure_rolls_back_creates(
 
 # Mutation operations the test will randomly apply between backup and restore.
 # Each operation either adds an extra resource the backup doesn't know about
-# (which restore should delete) or deletes a seed resource (which restore
-# should recreate). The post-restore state must equal the pre-mutation state.
+# (which restore should delete) or deletes a resource (which restore should
+# recreate). The post-restore state must equal the pre-mutation state.
+#
+# The first version of this test could not fail on the paths that matter. Its
+# only deletes hit records nothing points at, and it never deleted a network,
+# so a recreated WLAN's network id was still live whether or not restore
+# remapped it; and it popped ``enabled`` off every WLAN, so dropping the
+# force-disable passed too. Reverting either, or skipping every network,
+# port profile and lease create, left it green. It now seeds a network that a
+# WLAN, a lease, a port profile and a rule point at (the rule through a
+# firewall group as well), deletes those, compares references by the NAME of
+# what they point at, and holds every recreated WLAN to ``enabled: False``.
 
 _mutation_kinds = st.sampled_from(
     [
@@ -525,9 +539,14 @@ _mutation_kinds = st.sampled_from(
         "add_firewall_rule",
         "add_port_forward",
         "add_dhcp_lease",
+        "add_wlan",
+        "add_port_profile",
         "delete_seed_wlan",
         "delete_seed_firewall_rule",
         "delete_seed_port_forward",
+        "delete_bound_network",
+        "delete_bound_group",
+        "delete_bound_profile",
     ]
 )
 
@@ -537,6 +556,95 @@ _safe_names = st.text(
     min_size=2,
     max_size=10,
 ).filter(lambda s: s.strip() and "/" not in s and '"' not in s)
+
+#: Every reference field the seeded records carry, and what each points at.
+_REF_FIELDS: dict[str, str] = {
+    "networkconf_id": "net",
+    "network_id": "net",
+    "native_networkconf_id": "net",
+    "tagged_networkconf_ids": "net",
+    "src_networkconf_id": "net",
+    "dst_networkconf_id": "net",
+    "src_firewallgroup_ids": "group",
+    "dst_firewallgroup_ids": "group",
+}
+
+
+def _seed_bound(state: StubState) -> None:
+    """Add a network and a group that other records point at by id."""
+    net = state.create_network(
+        {
+            "name": "Bound",
+            "purpose": "corporate",
+            "vlan_enabled": True,
+            "vlan": 60,
+            "ip_subnet": "10.60.0.0/24",
+            "enabled": True,
+        }
+    )
+    group = state.create_firewall_group(
+        {"name": "Bound-Hosts", "group_type": "address-group", "group_members": ["10.60.0.10"]}
+    )
+    default_id = state.networks[0]["_id"]
+    state.create_wlan(
+        {
+            "name": "Bound-SSID",
+            "enabled": True,
+            "security": "wpapsk",
+            "wpa_mode": "wpa2",
+            "x_passphrase": "boundpassphrase",
+            "networkconf_id": net["_id"],
+        }
+    )
+    state.create_dhcp_lease(
+        {
+            "mac": "aa:bb:cc:60:00:01",
+            "name": "Bound-Lease",
+            "fixed_ip": "10.60.0.10",
+            "network_id": net["_id"],
+        }
+    )
+    state.create_port_profile(
+        {
+            "name": "Bound-Trunk",
+            "forward": "customize",
+            "native_networkconf_id": net["_id"],
+            "tagged_networkconf_ids": [default_id, net["_id"]],
+        }
+    )
+    state.create_firewall_rule(
+        {
+            "name": "Bound-Rule",
+            "ruleset": "LAN_IN",
+            "rule_index": 4000,
+            "action": "drop",
+            "src_networkconf_id": net["_id"],
+            "dst_firewallgroup_ids": [group["_id"]],
+        }
+    )
+
+
+def _points_at(record: dict[str, Any], kind: str, target_id: str) -> bool:
+    for key, ref_kind in _REF_FIELDS.items():
+        if ref_kind != kind:
+            continue
+        value = record.get(key)
+        if value == target_id or (isinstance(value, list) and target_id in value):
+            return True
+    return False
+
+
+def _delete_pointing_at(state: StubState, kind: str, target_id: str) -> None:
+    """Delete every record that points at ``target_id`` (a real controller
+    refuses to delete a network or group something still references)."""
+    for wlan in [w for w in state.wlans if _points_at(w, kind, target_id)]:
+        state.delete_wlan(wlan["_id"])
+    for lease in [x for x in state.list_dhcp_leases() if _points_at(x, kind, target_id)]:
+        state.delete_dhcp_lease(lease["_id"])
+    for profile in [p for p in state.port_profiles if _points_at(p, kind, target_id)]:
+        state.delete_port_profile(profile["_id"])
+    for rule in [r for r in state.firewall_rules if _points_at(r, kind, target_id)]:
+        state.delete_firewall_rule(rule["_id"])
 
 
 def _apply_mutation(state: StubState, kind: str, name: str, vlan_id: int) -> None:
@@ -589,12 +697,83 @@ def _apply_mutation(state: StubState, kind: str, name: str, vlan_id: int) -> Non
                 "network_id": state.networks[0]["_id"],
             }
         )
+    elif kind == "add_wlan":
+        state.create_wlan(
+            {
+                "name": f"Extra-SSID-{name}",
+                "enabled": True,
+                "security": "wpapsk",
+                "x_passphrase": "extrapassphrase",
+                "networkconf_id": state.networks[0]["_id"],
+            }
+        )
+    elif kind == "add_port_profile":
+        state.create_port_profile(
+            {"name": f"Extra-Profile-{name}", "native_networkconf_id": state.networks[0]["_id"]}
+        )
     elif kind == "delete_seed_wlan" and state.wlans:
         state.delete_wlan(state.wlans[0]["_id"])
     elif kind == "delete_seed_firewall_rule" and state.firewall_rules:
         state.delete_firewall_rule(state.firewall_rules[0]["_id"])
     elif kind == "delete_seed_port_forward" and state.port_forwards:
         state.delete_port_forward(state.port_forwards[0]["_id"])
+    elif kind == "delete_bound_network":
+        net = next((n for n in state.networks if n.get("name") == "Bound"), None)
+        if net is not None:
+            _delete_pointing_at(state, "net", net["_id"])
+            state.delete_network(net["_id"])
+    elif kind == "delete_bound_group":
+        group = next((g for g in state.firewall_groups if g.get("name") == "Bound-Hosts"), None)
+        if group is not None:
+            _delete_pointing_at(state, "group", group["_id"])
+            state.delete_firewall_group(group["_id"])
+    elif kind == "delete_bound_profile":
+        profile = next((p for p in state.port_profiles if p.get("name") == "Bound-Trunk"), None)
+        if profile is not None:
+            state.delete_port_profile(profile["_id"])
+
+
+def _referential_view(state: StubState) -> dict[str, list[str]]:
+    """Every record, ids dropped, references replaced by the target's name.
+
+    A network or group recreated by restore has a new ``_id``, so ids cannot
+    be compared across the restore; what must hold is that each reference
+    still points at the record of the same name. A reference to an id that
+    no longer exists renders as ``<dangling ...>`` and cannot match. Records
+    are compared as sorted JSON so a recreated record landing at the end of
+    its list is not a difference.
+    """
+    names = {
+        "net": {n["_id"]: n.get("name") for n in state.networks},
+        "group": {g["_id"]: g.get("name") for g in state.firewall_groups},
+    }
+
+    def _name(kind: str, ref: Any) -> Any:
+        if ref in ("", None):
+            return ref
+        target = names[kind].get(ref)
+        return f"{kind}:{target}" if target is not None else f"<dangling {kind} {ref}>"
+
+    snap = _resource_snapshot(state)
+    snap["firewall_groups"] = copy.deepcopy(state.firewall_groups)
+    out: dict[str, list[str]] = {}
+    for rtype, items in snap.items():
+        rendered: list[str] = []
+        for item in items:
+            rec = {k: v for k, v in item.items() if k not in {"_id", "site_id"}}
+            for key, kind in _REF_FIELDS.items():
+                if key in rec:
+                    value = rec[key]
+                    rec[key] = (
+                        [_name(kind, v) for v in value]
+                        if isinstance(value, list)
+                        else _name(kind, value)
+                    )
+            # Restore cannot bring a secret back: the backup holds a sentinel.
+            rec.pop("x_passphrase", None)
+            rendered.append(json.dumps(rec, sort_keys=True))
+        out[rtype] = sorted(rendered)
+    return out
 
 
 @given(
@@ -611,47 +790,38 @@ async def test_property_restore_converges_to_backup(
     """Random mutations between backup and restore must converge.
 
     For every randomly-generated mutation sequence, the resource state
-    AFTER ``restore_config`` must equal the state BEFORE the mutations
-    (modulo controller-assigned ``_id`` strings, which we strip for
-    comparison). Hypothesis shrinks any counterexample to the smallest
-    failing mutation list.
+    AFTER ``restore_config`` must equal the state BEFORE the mutations,
+    compared by :func:`_referential_view` (ids dropped, references followed
+    to the name of their target). Every WLAN the restore recreated must come
+    back disabled, since its passphrase is the backup sentinel. Hypothesis
+    shrinks any counterexample to the smallest failing mutation list.
     """
     state = StubState()
+    _seed_bound(state)
     server = build_server(stub_settings, stub=state)
 
-    # Baseline: snapshot AND backup the freshly-seeded state.
-    pre_view = _normalized_view(state)
+    # Baseline: snapshot AND backup the seeded state.
+    pre_view = _referential_view(state)
     envelope = await _call(server, "backup_config", {})
     backup_json = json.dumps(envelope)
 
     # Apply random mutations on top.
     for kind, name, vlan_id in mutations:
         _apply_mutation(state, kind, name, vlan_id)
+    wlan_ids_before_restore = {w["_id"] for w in state.wlans}
 
     # Restore (real apply).
     result = await _restore_applying(server, backup_json)
     assert "error" not in result, f"restore failed: {result}"
 
-    # Verify convergence.
-    post_view = _normalized_view(state)
+    recreated = [w for w in state.wlans if w["_id"] not in wlan_ids_before_restore]
+    for wlan in recreated:
+        assert wlan["enabled"] is False, f"recreated WLAN {wlan['name']!r} came back enabled"
+        # Normalise only the flag the restore was required to change.
+        wlan["enabled"] = True
 
-    # The seed WLAN's x_passphrase came back as the sentinel (because the
-    # backup stripped it). Strip both sides for comparison so that secret
-    # difference doesn't drown out genuine drift.
-    def _strip_wlan_passphrases(
-        view: dict[str, list[dict[str, Any]]],
-    ) -> dict[str, list[dict[str, Any]]]:
-        out = copy.deepcopy(view)
-        for wlan in out["wlans"]:
-            wlan.pop("x_passphrase", None)
-            # Force-disabled flag also differs between the seed (enabled)
-            # and a sentinel-restored WLAN; normalise it out of the
-            # comparison because we already cover the disable-on-restore
-            # path explicitly above.
-            wlan.pop("enabled", None)
-        return out
-
-    assert _strip_wlan_passphrases(post_view) == _strip_wlan_passphrases(pre_view), (
+    post_view = _referential_view(state)
+    assert post_view == pre_view, (
         f"restore did not converge.\nmutations: {mutations}\npre:  {pre_view}\npost: {post_view}"
     )
 
@@ -869,3 +1039,374 @@ async def test_restore_recreates_a_lease_whose_user_record_survived(
     assert restored["use_fixedip"] is True
     assert restored["_id"] == victim["_id"], "restore must reuse the surviving record"
     assert len(stub_state.dhcp_leases) == raw_before
+
+
+# ---------------------------------------------------------------------------
+# References to recreated networks and groups (C3)
+#
+# Restore recreates a lost network with a new id. It used to remap only a
+# WLAN's networkconf_id and a lease's network_id, so a restored firewall rule
+# or port profile kept the source network's id: a rule matching nothing and a
+# profile pointing at no VLAN, both reported as restored.
+# ---------------------------------------------------------------------------
+
+
+def _empty_resources() -> dict[str, list[dict[str, Any]]]:
+    return {
+        "networks": [],
+        "firewall_groups": [],
+        "wlans": [],
+        "firewall_rules": [],
+        "port_profiles": [],
+        "dhcp_leases": [],
+        "port_forwards": [],
+    }
+
+
+def _envelope(resources: dict[str, list[dict[str, Any]]], **extra: Any) -> str:
+    return json.dumps(
+        {
+            "schema": "1",
+            "controller": "default",
+            "ts": "2026-11-10T00:00:00+00:00",
+            "secrets_stripped": False,
+            "resources": resources,
+            **extra,
+        }
+    )
+
+
+async def test_restore_remaps_rule_and_profile_refs_to_recreated_network(
+    fresh_state: StubState, fresh_server: FastMCP
+) -> None:
+    iot = fresh_state.create_network(
+        {"name": "IoT", "purpose": "corporate", "vlan_enabled": True, "vlan": 50}
+    )
+    default_id = fresh_state.networks[0]["_id"]
+    fresh_state.create_firewall_rule(
+        {
+            "name": "Block IoT to LAN",
+            "ruleset": "LAN_IN",
+            "action": "drop",
+            "src_networkconf_id": iot["_id"],
+            "dst_networkconf_id": default_id,
+        }
+    )
+    fresh_state.create_port_profile(
+        {
+            "name": "IoT-Trunk",
+            "native_networkconf_id": iot["_id"],
+            "tagged_networkconf_ids": [default_id, iot["_id"]],
+        }
+    )
+    backup_json = json.dumps(await _call(fresh_server, "backup_config", {}))
+
+    # The operator loses the network; on a real controller the rule and the
+    # profile have to go first.
+    fresh_state.firewall_rules = [
+        r for r in fresh_state.firewall_rules if r["name"] != "Block IoT to LAN"
+    ]
+    fresh_state.port_profiles = [p for p in fresh_state.port_profiles if p["name"] != "IoT-Trunk"]
+    fresh_state.delete_network(iot["_id"])
+
+    result = await _restore_applying(fresh_server, backup_json)
+    assert "error" not in result, result
+
+    new_iot = next(n for n in fresh_state.networks if n["name"] == "IoT")
+    assert new_iot["_id"] != iot["_id"]
+    rule = next(r for r in fresh_state.firewall_rules if r["name"] == "Block IoT to LAN")
+    assert rule["src_networkconf_id"] == new_iot["_id"]
+    assert rule["dst_networkconf_id"] == default_id
+    profile = next(p for p in fresh_state.port_profiles if p["name"] == "IoT-Trunk")
+    assert profile["native_networkconf_id"] == new_iot["_id"]
+    assert profile["tagged_networkconf_ids"] == [default_id, new_iot["_id"]]
+
+
+async def test_restore_remaps_rule_group_refs_to_recreated_group(
+    fresh_state: StubState, fresh_server: FastMCP
+) -> None:
+    group = fresh_state.create_firewall_group(
+        {"name": "Cameras", "group_type": "address-group", "group_members": ["10.0.50.10"]}
+    )
+    fresh_state.create_firewall_rule(
+        {
+            "name": "Block Cameras Out",
+            "ruleset": "LAN_IN",
+            "action": "drop",
+            "src_firewallgroup_ids": [group["_id"]],
+        }
+    )
+    envelope = await _call(fresh_server, "backup_config", {})
+    assert any(g["name"] == "Cameras" for g in envelope["resources"]["firewall_groups"])
+
+    fresh_state.firewall_rules = [
+        r for r in fresh_state.firewall_rules if r["name"] != "Block Cameras Out"
+    ]
+    fresh_state.delete_firewall_group(group["_id"])
+
+    result = await _restore_applying(fresh_server, json.dumps(envelope))
+    assert "error" not in result, result
+
+    new_group = next(g for g in fresh_state.firewall_groups if g["name"] == "Cameras")
+    assert new_group["_id"] != group["_id"]
+    assert new_group["group_members"] == ["10.0.50.10"]
+    rule = next(r for r in fresh_state.firewall_rules if r["name"] == "Block Cameras Out")
+    assert rule["src_firewallgroup_ids"] == [new_group["_id"]]
+
+
+async def test_restore_blocks_a_rule_whose_network_ref_cannot_resolve(
+    fresh_state: StubState, fresh_server: FastMCP
+) -> None:
+    """A reference to a network the backup does not hold is refused in the plan."""
+    resources = _empty_resources()
+    resources["networks"] = [
+        {"_id": n["_id"], **{k: v for k, v in n.items() if k not in ("_id", "site_id")}}
+        for n in fresh_state.networks
+    ]
+    resources["firewall_rules"] = [
+        {
+            "name": "Dangling",
+            "ruleset": "LAN_IN",
+            "action": "drop",
+            "src_networkconf_id": "6501aaaabbbbccccdddd0042",
+        }
+    ]
+    backup_json = _envelope(resources)
+
+    dry = await _call(fresh_server, "restore_config", {"backup_json": backup_json, "dry_run": True})
+    blocked = [a for a in dry["would_apply"] if a["action"] == "blocked"]
+    assert len(blocked) == 1
+    assert blocked[0]["type"] == "firewall_rules"
+    assert blocked[0]["name"] == "Dangling"
+    assert blocked[0]["unresolved"] == [
+        {
+            "field": "src_networkconf_id",
+            "id": "6501aaaabbbbccccdddd0042",
+            "reason": "no record in the backup's networks carries this _id",
+        }
+    ]
+    assert not [a for a in dry["would_apply"] if a["action"] == "create"]
+    assert dry["summary"].endswith("1 blocked")
+    assert any("blocked" in w and "Dangling" in w for w in dry["warnings"])
+
+    # Confirming the rest of the plan never writes the blocked rule.
+    result = await _restore_applying(fresh_server, backup_json)
+    assert "error" not in result, result
+    assert not any(r.get("name") == "Dangling" for r in fresh_state.firewall_rules)
+
+
+async def test_restore_blocks_a_wlan_bound_to_a_network_the_backup_lacks(
+    fresh_state: StubState, fresh_server: FastMCP
+) -> None:
+    """The WLAN path used to pass an unresolvable networkconf_id through as is."""
+    resources = _empty_resources()
+    resources["networks"] = [
+        {"_id": n["_id"], **{k: v for k, v in n.items() if k not in ("_id", "site_id")}}
+        for n in fresh_state.networks
+    ]
+    resources["wlans"] = [
+        dict(fresh_state.wlans[0], name="Orphan-SSID", networkconf_id="6501aaaabbbbccccdddd0043")
+    ]
+    resources["wlans"][0].pop("_id")
+    dry = await _call(
+        fresh_server, "restore_config", {"backup_json": _envelope(resources), "dry_run": True}
+    )
+    blocked = [a for a in dry["would_apply"] if a["action"] == "blocked"]
+    assert [(a["type"], a["name"]) for a in blocked] == [("wlans", "Orphan-SSID")]
+
+
+async def test_restore_refuses_when_a_matched_network_is_gone_at_confirm(
+    fresh_state: StubState, fresh_server: FastMCP
+) -> None:
+    """References are resolved at preview; a network replaced before confirm
+    would leave them dangling, so the confirm applies nothing."""
+    iot = fresh_state.create_network({"name": "IoT", "purpose": "corporate", "vlan": 50})
+    fresh_state.create_port_profile({"name": "IoT-Access", "native_networkconf_id": iot["_id"]})
+    backup_json = json.dumps(await _call(fresh_server, "backup_config", {}))
+    fresh_state.port_profiles = [p for p in fresh_state.port_profiles if p["name"] != "IoT-Access"]
+
+    preview = await _call(fresh_server, "restore_config", {"backup_json": backup_json})
+    assert preview["preview"] is True
+
+    # Someone deletes and recreates IoT between the preview and the confirm.
+    fresh_state.delete_network(iot["_id"])
+    fresh_state.create_network({"name": "IoT", "purpose": "corporate", "vlan": 50})
+    before = _resource_snapshot(fresh_state)
+
+    result = await _call(fresh_server, "confirm_destructive_action", {"token": preview["token"]})
+    assert "error" in result
+    assert "changed since the preview" in result["error"]
+    assert _resource_snapshot(fresh_state) == before
+
+
+async def test_restore_never_deletes_an_extra_firewall_group(
+    fresh_state: StubState, fresh_server: FastMCP
+) -> None:
+    backup_json = json.dumps(await _call(fresh_server, "backup_config", {}))
+    fresh_state.create_firewall_group(
+        {"name": "Used-By-A-Zone-Policy", "group_type": "port-group", "group_members": ["22"]}
+    )
+
+    dry = await _call(fresh_server, "restore_config", {"backup_json": backup_json, "dry_run": True})
+    group_actions = [a for a in dry["would_apply"] if a["type"] == "firewall_groups"]
+    assert [a["action"] for a in group_actions] == ["skip"]
+    assert "never deleted" in group_actions[0]["reason"]
+
+    await _restore_applying(fresh_server, backup_json)
+    assert any(g["name"] == "Used-By-A-Zone-Policy" for g in fresh_state.firewall_groups)
+
+
+# ---------------------------------------------------------------------------
+# Duplicate identities (C6)
+# ---------------------------------------------------------------------------
+
+
+async def test_restore_reports_duplicate_names_and_picks_none(
+    fresh_state: StubState, fresh_server: FastMCP
+) -> None:
+    """Two rules share a name; one is lost. Restore used to see the name on the
+    site, restore nothing, and say nothing."""
+    for idx, dst in ((20001, "10.0.0.0/8"), (20002, "172.16.0.0/12")):
+        fresh_state.create_firewall_rule(
+            {
+                "name": "Block RFC1918",
+                "ruleset": "LAN_IN",
+                "action": "drop",
+                "rule_index": idx,
+                "dst_address": dst,
+            }
+        )
+    backup_json = json.dumps(await _call(fresh_server, "backup_config", {}))
+    fresh_state.firewall_rules = [
+        r for r in fresh_state.firewall_rules if r.get("dst_address") != "172.16.0.0/12"
+    ]
+
+    dry = await _call(fresh_server, "restore_config", {"backup_json": backup_json, "dry_run": True})
+    blocked = [a for a in dry["would_apply"] if a["action"] == "blocked"]
+    assert len(blocked) == 1
+    assert blocked[0]["type"] == "firewall_rules"
+    assert blocked[0]["name"] == "Block RFC1918"
+    assert "2 in the backup, 1 on the site" in blocked[0]["reason"]
+    assert any("Block RFC1918" in w for w in dry["warnings"])
+
+    before = copy.deepcopy(fresh_state.firewall_rules)
+    await _restore_applying(fresh_server, backup_json)
+    assert fresh_state.firewall_rules == before
+
+
+async def test_restore_reports_a_duplicate_that_appeared_on_the_site(
+    fresh_state: StubState, fresh_server: FastMCP
+) -> None:
+    backup_json = json.dumps(await _call(fresh_server, "backup_config", {}))
+    seed_rule = fresh_state.firewall_rules[0]
+    fresh_state.create_firewall_rule({**seed_rule, "_id": "dup-rule", "action": "accept"})
+
+    dry = await _call(fresh_server, "restore_config", {"backup_json": backup_json, "dry_run": True})
+    blocked = [a for a in dry["would_apply"] if a["action"] == "blocked"]
+    assert [a["name"] for a in blocked] == [seed_rule["name"]]
+    assert "1 in the backup, 2 on the site" in blocked[0]["reason"]
+    assert not [a for a in dry["would_apply"] if a["action"] == "delete"]
+
+
+async def test_restore_deletes_every_extra_sharing_a_name_the_backup_lacks(
+    fresh_state: StubState, fresh_server: FastMCP
+) -> None:
+    """No ambiguity when the backup holds none: all of them are extras."""
+    backup_json = json.dumps(await _call(fresh_server, "backup_config", {}))
+    for idx in (1, 2):
+        fresh_state.create_firewall_rule(
+            {"name": "Extra", "ruleset": "LAN_IN", "action": "drop", "rule_index": 6000 + idx}
+        )
+    dry = await _call(fresh_server, "restore_config", {"backup_json": backup_json, "dry_run": True})
+    deletes = [a for a in dry["would_apply"] if a["action"] == "delete"]
+    assert [a["name"] for a in deletes] == ["Extra", "Extra"]
+    assert not [a for a in dry["would_apply"] if a["action"] == "blocked"]
+
+
+# ---------------------------------------------------------------------------
+# What a backup does not contain (C8)
+# ---------------------------------------------------------------------------
+
+
+async def test_backup_states_what_it_does_not_contain(stub_server: FastMCP) -> None:
+    envelope = await _call(stub_server, "backup_config", {})
+    assert envelope["not_included"] == NOT_INCLUDED
+    assert "firewall_policies" in envelope["not_included"]
+    assert "firewall_zones" in envelope["not_included"]
+
+
+async def test_restore_plan_repeats_what_it_does_not_restore(
+    fresh_state: StubState, fresh_server: FastMCP
+) -> None:
+    backup_json = json.dumps(await _call(fresh_server, "backup_config", {}))
+    dry = await _call(fresh_server, "restore_config", {"backup_json": backup_json, "dry_run": True})
+    assert dry["not_restored"] == NOT_INCLUDED
+    assert any("Zone-Based Firewall policies" in w for w in dry["warnings"])
+
+    preview = await _call(fresh_server, "restore_config", {"backup_json": backup_json})
+    assert preview["resource"]["not_restored"] == NOT_INCLUDED
+    assert preview["resource"]["blocked"] == 0
+
+
+async def test_restore_of_a_backup_without_groups_leaves_groups_and_blocks_their_rules(
+    fresh_state: StubState, fresh_server: FastMCP
+) -> None:
+    """A backup taken before groups were included has no firewall_groups key."""
+    group_id = fresh_state.firewall_groups[0]["_id"]
+    envelope = await _call(fresh_server, "backup_config", {})
+    del envelope["resources"]["firewall_groups"]
+    envelope["resources"]["firewall_rules"].append(
+        {
+            "name": "Uses-Group",
+            "ruleset": "LAN_IN",
+            "action": "drop",
+            "dst_firewallgroup_ids": [group_id],
+        }
+    )
+    groups_before = copy.deepcopy(fresh_state.firewall_groups)
+
+    dry = await _call(
+        fresh_server, "restore_config", {"backup_json": json.dumps(envelope), "dry_run": True}
+    )
+    assert any("no firewall_groups section" in w for w in dry["warnings"])
+    assert [a["name"] for a in dry["would_apply"] if a["action"] == "blocked"] == ["Uses-Group"]
+    assert not [a for a in dry["would_apply"] if a["type"] == "firewall_groups"]
+
+    await _restore_applying(fresh_server, json.dumps(envelope))
+    assert fresh_state.firewall_groups == groups_before
+
+
+# ---------------------------------------------------------------------------
+# Sentinel check does not trust the flag (C9)
+# ---------------------------------------------------------------------------
+
+
+async def test_restore_disables_a_sentinel_wlan_when_the_flag_says_false(
+    fresh_state: StubState, fresh_server: FastMCP
+) -> None:
+    """A hand-trimmed or rebuilt envelope can say secrets_stripped: false while
+    still carrying the placeholder. The flag used to gate the check, so the
+    WLAN went to the controller enabled with ``[REDACTED]`` as its passphrase."""
+    sent: list[dict[str, Any]] = []
+    original = fresh_state.create_wlan
+
+    def _spy(payload: dict[str, Any]) -> dict[str, Any]:
+        sent.append(dict(payload))
+        return original(payload)
+
+    fresh_state.create_wlan = _spy  # type: ignore[method-assign]
+    envelope = await _call(fresh_server, "backup_config", {})
+    envelope["secrets_stripped"] = False
+    victim = fresh_state.wlans[0]
+    fresh_state.delete_wlan(victim["_id"])
+
+    dry = await _call(
+        fresh_server, "restore_config", {"backup_json": json.dumps(envelope), "dry_run": True}
+    )
+    assert any("secrets_stripped is false" in w for w in dry["warnings"])
+    assert any("force-disabled" in w for w in dry["warnings"])
+
+    await _restore_applying(fresh_server, json.dumps(envelope))
+    assert len(sent) == 1
+    assert sent[0]["x_passphrase"] == REDACTED_OUTPUT
+    assert sent[0]["enabled"] is False
