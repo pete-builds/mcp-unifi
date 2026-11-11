@@ -327,3 +327,72 @@ async def test_create_static_dhcp_lease_for_a_known_client_points_at_update(
     )
     assert "error" in result
     assert "update_static_dhcp_lease" in result["error"]
+
+
+@respx.mock
+async def test_real_update_static_dhcp_lease_without_network_id_sends_none(
+    real_server: FastMCP,
+) -> None:
+    """Issue #219: ``network_id`` is optional. Left out, the key is not sent,
+    so the record keeps the network it has. Given, it is still sent."""
+    respx.get(f"{BASE}/list/user").mock(
+        return_value=httpx.Response(
+            200, json={"data": [{"_id": "u42", "mac": "d0:11:e5:03:f6:3a", "network_id": "n0"}]}
+        )
+    )
+    put_route = respx.put(f"{BASE}/rest/user/u42").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "u42"}]})
+    )
+    await _call(
+        real_server,
+        "update_static_dhcp_lease",
+        {"mac": "d0:11:e5:03:f6:3a", "fixed_ip": "192.168.1.50"},
+    )
+    assert json.loads(put_route.calls.last.request.content) == {
+        "use_fixedip": True,
+        "fixed_ip": "192.168.1.50",
+    }
+
+    await _call(
+        real_server,
+        "update_static_dhcp_lease",
+        {"mac": "d0:11:e5:03:f6:3a", "fixed_ip": "192.168.1.50", "network_id": "n1"},
+    )
+    assert json.loads(put_route.calls.last.request.content) == {
+        "use_fixedip": True,
+        "fixed_ip": "192.168.1.50",
+        "network_id": "n1",
+    }
+
+
+async def test_update_static_dhcp_lease_without_network_id_keeps_the_stored_one_stub(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    lease = stub_state.list_dhcp_leases()[0]
+    stored_network = lease["network_id"]
+    result = await _call(
+        stub_server,
+        "update_static_dhcp_lease",
+        {"mac": lease["mac"], "fixed_ip": "192.168.1.251"},
+    )
+    assert result["fixed_ip"] == "192.168.1.251"
+    assert result["network_id"] == stored_network
+
+
+async def test_update_static_dhcp_lease_dry_run_without_network_id_stub(
+    stub_server: FastMCP,
+) -> None:
+    result = await _call(
+        stub_server,
+        "update_static_dhcp_lease",
+        {"mac": "aa:bb:cc:00:00:01", "fixed_ip": "192.168.1.55", "dry_run": True},
+    )
+    assert "network_id" not in result["would_update"]["patch"]
+
+
+async def test_update_static_dhcp_lease_keeps_its_positional_order(stub_server: FastMCP) -> None:
+    """``network_id`` became optional without moving: existing positional
+    callers of the Python function still line up."""
+    tool = next(t for t in await stub_server.list_tools() if t.name == "update_static_dhcp_lease")
+    assert list(tool.parameters["properties"])[:4] == ["mac", "fixed_ip", "network_id", "name"]
+    assert tool.parameters["required"] == ["mac", "fixed_ip"]

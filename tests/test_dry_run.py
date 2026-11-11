@@ -210,6 +210,11 @@ def _seed_lookup_targets(state: StubState) -> None:
         ("block_client", {"mac": "aa:bb:cc:11:22:33"}, "would_apply"),
         ("unblock_client", {"mac": "aa:bb:cc:11:22:33"}, "would_apply"),
         ("reconnect_client", {"mac": "aa:bb:cc:11:22:33"}, "would_apply"),
+        (
+            "update_clients",
+            {"updates": [{"mac": "aa:bb:cc:00:00:01", "name": "Renamed"}]},
+            "would_update",
+        ),
         # devices
         ("restart_device", {"mac": "aa:bb:cc:11:22:33"}, "would_apply"),
         (

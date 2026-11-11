@@ -63,6 +63,13 @@ Every tool returns a JSON string. Errors are returned as `{"error": "...", "stub
 | `block_client` | write | yes | Block a client by MAC. |
 | `unblock_client` | write | yes | Unblock a previously-blocked client. |
 | `reconnect_client` | write | yes | Force a client to reconnect (kick-sta). |
+| `update_clients` | write | yes | Set or clear the display name and note of up to 100 clients by MAC. Cosmetic only: no IP reservation. |
+
+`update_clients` takes a list of `{mac, name, note}` items. A field left out (or sent as `null`) is kept, `""` clears it, and only fields that differ are sent, as a partial `PUT /rest/user/{_id}`. The controller's `noted` flag is updated alongside when it has to change. Each MAC gets its own `status` (`updated`, `unchanged`, `not_found` or `failed`), and one failure does not stop the rest. Clearing through this endpoint is not yet verified on real hardware.
+
+```python
+update_clients(updates=[{"mac": "aa:bb:cc:00:00:02", "name": "Pete's iPhone"}, {"mac": "aa:bb:cc:00:00:04", "note": ""}], dry_run=True)
+```
 
 ## DHCP
 
@@ -70,7 +77,7 @@ Every tool returns a JSON string. Errors are returned as `{"error": "...", "stub
 |---|---|---|---|
 | `list_dhcp_leases` | read | — | List static DHCP reservations. |
 | `create_static_dhcp_lease` | write | yes | Reserve a fixed IP for a new MAC. |
-| `update_static_dhcp_lease` | write | yes | Convert/update an existing client to a fixed IP (use when MAC is already known). |
+| `update_static_dhcp_lease` | write | yes | Convert/update an existing client to a fixed IP (use when MAC is already known). `network_id` is optional; to rename without a reservation use `update_clients`. |
 | `delete_static_dhcp_lease` | write | yes | Delete a static reservation. |
 
 ## Port Forwards

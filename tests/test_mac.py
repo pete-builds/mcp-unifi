@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from mcp_unifi.clients.mac import normalize_mac, same_mac
+from mcp_unifi.clients.mac import is_mac, normalize_mac, same_mac
 
 
 @pytest.mark.parametrize(
@@ -21,6 +21,7 @@ from mcp_unifi.clients.mac import normalize_mac, same_mac
 )
 def test_every_common_form_normalises_to_the_controller_form(typed: str) -> None:
     assert normalize_mac(typed) == "f4:e2:c6:00:00:02"
+    assert is_mac(typed)
 
 
 @pytest.mark.parametrize(
@@ -36,6 +37,9 @@ def test_every_common_form_normalises_to_the_controller_form(typed: str) -> None
 )
 def test_anything_else_is_only_trimmed_and_lowered(value: str) -> None:
     assert normalize_mac(value) == value.strip().lower()
+    # is_mac and normalize_mac share their patterns: whatever is not
+    # reshaped is not a MAC, so a tool refuses it instead of finding nothing.
+    assert not is_mac(value)
 
 
 def test_same_mac() -> None:

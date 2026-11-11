@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 import respx
@@ -420,3 +422,45 @@ async def test_list_firewall_zones_4xx_raises(client: UniFiClient) -> None:
     respx.get(f"{V2}/firewall/zone").mock(return_value=httpx.Response(500, text="boom"))
     with pytest.raises(UniFiError):
         await client.list_firewall_zones()
+
+
+# ---------------------------------------------------------------------------
+# User records (issue #219: name and note writes)
+# ---------------------------------------------------------------------------
+
+
+@respx.mock
+async def test_list_user_records_reads_list_user_once(client: UniFiClient) -> None:
+    route = respx.get(f"{BASE}/list/user").mock(
+        return_value=httpx.Response(
+            200, json={"data": [{"_id": "u1", "mac": "aa:bb:cc:00:00:01"}, "junk"]}
+        )
+    )
+    assert await client.list_user_records() == [{"_id": "u1", "mac": "aa:bb:cc:00:00:01"}]
+    assert route.call_count == 1
+
+
+@respx.mock
+async def test_update_user_puts_only_the_patch(client: UniFiClient) -> None:
+    route = respx.put(f"{BASE}/rest/user/u1").mock(
+        return_value=httpx.Response(200, json={"data": [{"_id": "u1", "name": "New"}]})
+    )
+    result = await client.update_user("u1", {"name": "New", "noted": True})
+    assert result == {"_id": "u1", "name": "New"}
+    assert json.loads(route.calls.last.request.content) == {"name": "New", "noted": True}
+
+
+@respx.mock
+async def test_update_user_raises_on_a_refused_put(client: UniFiClient) -> None:
+    respx.put(f"{BASE}/rest/user/u1").mock(
+        return_value=httpx.Response(
+            400, json={"meta": {"rc": "error", "msg": "api.err.InvalidPayload"}, "data": []}
+        )
+    )
+    with pytest.raises(UniFiError, match="InvalidPayload"):
+        await client.update_user("u1", {"name": ""})
+
+
+async def test_update_user_refuses_a_path_shaped_id(client: UniFiClient) -> None:
+    with pytest.raises(UniFiError):
+        await client.update_user("../wlanconf/x", {"name": "x"})

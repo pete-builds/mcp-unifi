@@ -603,6 +603,30 @@ class UniFiClient:
     async def create_dhcp_lease(self, payload: dict[str, Any]) -> UniFiRecord:
         return self._first_record(await self._post("/rest/user", payload))
 
+    async def list_user_records(self) -> list[UniFiRecord]:
+        """Every persistent user record (``/list/user``), reservation or not.
+
+        One read for a caller that resolves many MACs at once, where
+        :meth:`find_user_by_mac` would refetch the whole list per MAC.
+        """
+        users = await self._get("/list/user") or []
+        return [u for u in users if isinstance(u, dict)]
+
+    async def update_user(self, user_id: str, patch: dict[str, Any]) -> UniFiRecord:
+        """Send ``patch`` as a partial update of one user record.
+
+        ``PUT /rest/user/{id}`` with only the keys being changed, so a rename
+        never carries ``use_fixedip``, ``fixed_ip`` or ``network_id`` and
+        cannot create an IP reservation as a side effect. The controller
+        merges the body into the stored record; that a body carrying only
+        ``name``/``note``/``noted`` is merged rather than rejected matches the
+        UI rename the issue #219 reporter captured on Network 11.0.99, and has
+        not been verified on a controller this project's maintainer owns.
+        """
+        return self._first_record(
+            await self._put(f"/rest/user/{path_segment(user_id, 'user_id')}", patch)
+        )
+
     async def update_dhcp_lease(self, user_id: str, payload: dict[str, Any]) -> UniFiRecord:
         return self._first_record(
             await self._put(f"/rest/user/{path_segment(user_id, 'user_id')}", payload)

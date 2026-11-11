@@ -124,7 +124,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     async def update_static_dhcp_lease(
         mac: str,
         fixed_ip: str,
-        network_id: str,
+        network_id: str = "",
         name: BoundedName = "",
         local_dns_record: BoundedHostname = "",
         controller: str = "default",
@@ -138,8 +138,14 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         with ``api.err.MacUsed``; this tool resolves the existing ``_id`` and
         PUTs an update to ``/rest/user/{_id}`` instead.
 
+        This always reserves an IP. To rename a client or set its note with
+        no reservation, use ``update_clients``.
+
         Side effects:
         - Sets ``use_fixedip=true`` and pins ``fixed_ip`` on the user record.
+        - ``network_id`` is sent only when given. Left out, the record keeps
+          the network it already has, as the Art-of-WiFi client's
+          ``edit_client_fixedip`` treats it. Omitting it is not live-verified.
         - If ``local_dns_record`` is supplied, also sets
           ``local_dns_record_enabled=true`` so the name resolves on the LAN
           (controller version permitting).
@@ -153,7 +159,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         Args:
             mac: Client MAC address (e.g. ``"d0:11:e5:03:f6:3a"``).
             fixed_ip: IPv4 address to pin. Must be inside the network's subnet.
-            network_id: ``_id`` of the network/VLAN the IP belongs to.
+            network_id: ``_id`` of the network/VLAN the IP belongs to
+                (optional). Leave it out to keep the record's current
+                network.
             name: Friendly display name / hostname alias (optional).
             local_dns_record: Local DNS name to resolve to ``fixed_ip``
                 (optional). When set, ``local_dns_record_enabled=true`` is
@@ -166,8 +174,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         payload: dict[str, Any] = {
             "use_fixedip": True,
             "fixed_ip": fixed_ip,
-            "network_id": network_id,
         }
+        if network_id:
+            payload["network_id"] = network_id
         if name:
             payload["name"] = name
         if local_dns_record:

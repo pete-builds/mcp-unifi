@@ -448,6 +448,10 @@ def _seed_clients() -> list[UniFiRecord]:
     wireless and wired clients, with signal/satisfaction populated only for
     wireless. Last-seen timestamps fan out across the past day so callers can
     test recency filters meaningfully.
+
+    Every seed client carries a name, so each also carries ``noted: true``:
+    the controller sets that flag on a record with a name or a note (a UI
+    rename on Network 11.0.99 flipped it alongside ``name``, issue #219).
     """
     now = _ts()
     return [
@@ -456,6 +460,7 @@ def _seed_clients() -> list[UniFiRecord]:
             "mac": "aa:bb:cc:00:00:01",
             "hostname": "petes-laptop",
             "name": "Pete's MacBook",
+            "noted": True,
             "ip": "192.168.1.101",
             "is_wired": False,
             "blocked": False,
@@ -480,6 +485,7 @@ def _seed_clients() -> list[UniFiRecord]:
             "mac": "aa:bb:cc:00:00:02",
             "hostname": "iphone-15",
             "name": "iPhone 15",
+            "noted": True,
             "ip": "192.168.1.102",
             "is_wired": False,
             "blocked": False,
@@ -504,6 +510,7 @@ def _seed_clients() -> list[UniFiRecord]:
             "mac": "aa:bb:cc:00:00:03",
             "hostname": "nas",
             "name": "Synology NAS",
+            "noted": True,
             "ip": "192.168.1.10",
             "is_wired": True,
             "blocked": False,
@@ -521,6 +528,7 @@ def _seed_clients() -> list[UniFiRecord]:
             "mac": "aa:bb:cc:00:00:04",
             "hostname": "echo-dot",
             "name": "Echo Dot",
+            "noted": True,
             "ip": "192.168.1.150",
             "is_wired": False,
             "blocked": False,
@@ -1269,6 +1277,50 @@ class StubState:
                     self.dhcp_leases.append(c)
                 return c
         raise KeyError(f"user_id {user_id} not found")
+
+    def list_user_records(self) -> list[UniFiRecord]:
+        """Every user record, the way ``/list/user`` returns them.
+
+        The same superset :meth:`find_user_by_mac` searches, in the same
+        order: a MAC that has a reservation record resolves to that record,
+        not to its ``/stat/sta`` row, so a batch lookup and a single lookup
+        always land on the same ``_id``.
+        """
+        records: list[UniFiRecord] = list(self.dhcp_leases)
+        for c in self.clients:
+            if not any(same_mac(r.get("mac"), c.get("mac")) for r in records):
+                records.append(c)
+        return records
+
+    #: Text fields a partial user update clears by sending ``""``.
+    _CLEARABLE_USER_FIELDS: frozenset[str] = frozenset({"name", "note"})
+
+    def update_user(self, user_id: str, patch: dict[str, Any]) -> UniFiRecord:
+        """Merge ``patch`` into one user record, as ``PUT /rest/user/{id}`` does.
+
+        A partial update: keys not in ``patch`` are left exactly as stored,
+        so a rename here can never switch on ``use_fixedip`` the way
+        :meth:`update_dhcp_lease` does. An empty ``name`` or ``note`` removes
+        the key from the record, which is what the reference client documents
+        the controller doing with an empty value ("removes the name"). The
+        stub always removes rather than stores ``""``, so a test can assert a
+        clear by the key being absent. An unknown ``user_id`` raises
+        :class:`UniFiError`, as a refused PUT does on the real path, not a
+        ``KeyError`` the tool would not catch.
+        """
+        self._check_failure("update_user")
+        target = next(
+            (r for r in self.list_user_records() if r.get("_id") == user_id),
+            None,
+        )
+        if target is None:
+            raise UniFiError(f"user record {user_id} not found")
+        for key, value in patch.items():
+            if key in self._CLEARABLE_USER_FIELDS and value == "":
+                target.pop(key, None)
+            else:
+                target[key] = value
+        return target
 
     def delete_dhcp_lease(self, lease_id: str) -> bool:
         """Clear the reservation the way the real controller does.

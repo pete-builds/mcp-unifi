@@ -79,6 +79,7 @@ DESTRUCTIVE_TOOLS: frozenset[str] = frozenset(
         "block_client",
         "unblock_client",
         "reconnect_client",
+        "update_clients",
         # devices
         "restart_device",
         "locate_device",

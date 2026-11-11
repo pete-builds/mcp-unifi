@@ -215,6 +215,31 @@ def test_block_unknown_client_returns_none(stub_state: StubState) -> None:
     assert stub_state.unblock_client("00:00:00:00:00:00") is None
 
 
+def test_list_user_records_matches_find_user_by_mac(stub_state: StubState) -> None:
+    """The batch lookup and the single lookup land on the same record per MAC."""
+    records = stub_state.list_user_records()
+    macs = [r["mac"] for r in records]
+    assert len(macs) == len(set(macs))
+    for record in records:
+        assert stub_state.find_user_by_mac(record["mac"]) is record
+
+
+def test_update_user_merges_and_clears(stub_state: StubState) -> None:
+    client = stub_state.list_clients()[0]
+    before = dict(client)
+    stub_state.update_user(client["_id"], {"note": "desk", "noted": True})
+    assert client == {**before, "note": "desk", "noted": True}
+    stub_state.update_user(client["_id"], {"name": "", "note": ""})
+    assert "name" not in client
+    assert "note" not in client
+    assert "use_fixedip" not in client
+
+
+def test_update_user_unknown_id_raises_unifi_error(stub_state: StubState) -> None:
+    with pytest.raises(UniFiError):
+        stub_state.update_user("nope", {"name": "x"})
+
+
 def test_reconnect_client(stub_state: StubState) -> None:
     mac = stub_state.list_clients()[0]["mac"]
     assert stub_state.reconnect_client(mac) is True
@@ -371,6 +396,7 @@ def test_firewall_policy_seed_points_at_seeded_zones(stub_state: StubState) -> N
         "delete_port_profile",
         "unblock_client",
         "reconnect_client",
+        "update_user",
         "update_port_forward",
         "trigger_speedtest",
     ],
