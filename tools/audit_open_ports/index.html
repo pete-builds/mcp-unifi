@@ -80,7 +80,8 @@ clean just because its legacy rulesets are empty (issue #112):</p>
 <ul>
 <li>Active port forwards (DNAT into the LAN).</li>
 <li>Legacy <code dir="auto">WAN_*</code> <code dir="auto">accept</code> rules, excluding the boilerplate
-established/related rule.</li>
+established/related rule (a rule that also matches new
+connections is kept).</li>
 <li>Zone-Based Firewall <code dir="auto">ALLOW</code> policies whose source zone is the WAN
 (<code dir="auto">External</code>) zone, excluding return-traffic allowances
 (<code dir="auto">connection_state_type == "RESPOND_ONLY"</code>); the number excluded
