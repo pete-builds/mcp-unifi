@@ -20,9 +20,11 @@ from mcp_unifi.clients.errors import (
     UniFiError,
     UniFiUnsupportedError,
     describe_error_body,
+    parse_json_body,
 )
 from mcp_unifi.clients.ids import path_segment
 from mcp_unifi.clients.retry import request_with_retry
+from mcp_unifi.clients.stats_shape import shape_speedtest_results, shape_top_talkers
 from mcp_unifi.models import UniFiRecord
 
 logger = logging.getLogger("mcp_unifi.client")
@@ -100,7 +102,7 @@ class UniFiClient:
             )
         if not resp.content:
             return None
-        body = resp.json()
+        body = parse_json_body(resp, f"UniFi {method} {path}")
         # Legacy UniFi controller wraps payloads in {"meta": {...}, "data": [...]}.
         if isinstance(body, dict) and "data" in body:
             return body["data"]
@@ -142,7 +144,7 @@ class UniFiClient:
             )
         if not resp.content:
             return None
-        return resp.json()
+        return parse_json_body(resp, f"UniFi {method} (v2) {path}")
 
     async def _get(self, path: str) -> Any:
         return await self._request("GET", f"{self._site_path}{path}")
@@ -185,10 +187,9 @@ class UniFiClient:
                     extra={"path": path, "error": text[:200]},
                 )
                 raise UniFiUnsupportedError(
-                    f"{label} is not available on this UniFi Network version. "
-                    f"The controller answered: {text[:200]}. This is a "
-                    f"firmware limitation, not an empty result — do not read "
-                    f"it as 'nothing found'."
+                    f"{label} is not available on this UniFi Network version "
+                    f"(the controller answered: {text[:200]}), so this is a "
+                    f"firmware limitation and not an empty result."
                 ) from exc
             raise
 
@@ -319,7 +320,7 @@ class UniFiClient:
             )
         if not resp.content:
             return []
-        body = resp.json()
+        body = parse_json_body(resp, "UniFi GET apgroups")
         # v2 endpoint returns a bare list (not the legacy meta+data envelope).
         if isinstance(body, list):
             return body
@@ -758,22 +759,24 @@ class UniFiClient:
         attrs = ["time", "xput_upload", "xput_download", "latency", "server"]
         payload: dict[str, Any] = {"attrs": attrs, "limit": limit}
         records = await self._post("/stat/report/archive.speedtest", payload) or []
-        if not isinstance(records, list):
-            return []
-        normalised: list[UniFiRecord] = []
-        for rec in records:
-            if not isinstance(rec, dict):
-                continue
-            entry = dict(rec)
-            if "xput_upload" in entry and "xput_up" not in entry:
-                entry["xput_up"] = entry["xput_upload"]
-            normalised.append(entry)
-        return normalised
+        # The controller does not promise order or honour ``limit`` for us, so
+        # both are applied here (newest first, then cut).
+        return shape_speedtest_results(records, limit)
 
     async def list_top_talkers(self, limit: int) -> list[UniFiRecord]:
-        # DPI by-station report; aggregated bytes per client.
-        results = await self._get("/stat/sitedpi") or []
-        return results[:limit] if isinstance(results, list) else []
+        """Rank the currently connected clients by bytes moved this session.
+
+        Reads ``/stat/sta``, the same list ``list_clients`` returns. This used
+        to read ``/stat/sitedpi``, which is a site-wide per-application report
+        with no client in it, and which the 2026-06-12 live probe found empty
+        on a UCG-Fiber (see :mod:`mcp_unifi.modules.network.stats`), so the
+        tool answered ``[]`` on a real console. ``/stat/sta`` rows were probed
+        the same day and carry ``tx_bytes``/``rx_bytes`` (wireless) and
+        ``wired-tx_bytes``/``wired-rx_bytes`` (wired). The rows come back
+        unranked, so rank, cut and project them here.
+        """
+        results = await self._get("/stat/sta") or []
+        return shape_top_talkers(results, limit)
 
     # ------------------------------------------------------------------
     # Stats & insights (read-only observability — Wave C)

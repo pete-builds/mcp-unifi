@@ -35,7 +35,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Literal
 
 from mcp_unifi.clients import integration_translate as tr
-from mcp_unifi.clients.errors import UniFiError, describe_error_body, error_fields
+from mcp_unifi.clients.errors import UniFiError, describe_error_body, error_fields, parse_json_body
 from mcp_unifi.clients.ids import path_segment
 from mcp_unifi.clients.retry import request_with_retry
 from mcp_unifi.models import UniFiRecord
@@ -130,7 +130,7 @@ class IntegrationWrites:
             )
         if not resp.content:
             return None
-        return resp.json()
+        return parse_json_body(resp, f"UniFi Integration {method} {path}")
 
     async def _site(self) -> str | None:
         if self._site_id is None:

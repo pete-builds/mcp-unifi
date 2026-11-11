@@ -27,6 +27,11 @@ Returns a record with:
   verdict, so the reasoning is auditable.
 - ``network_app_version``: the Network app version, when it reported one.
 
+``unknown`` also covers a status endpoint that looked fine while the
+live Network API call meant to confirm it timed out or returned a 4xx.
+That is reported as inconclusive, with the probe's error in
+``summary``, never as an outage.
+
 Note on the ``network_app_down`` verdict: UniFi OS handles routing, so
 the Network application being down does **not** mean the internet is
 down. It means configuration and monitoring are unavailable.

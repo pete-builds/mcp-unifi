@@ -1536,7 +1536,7 @@
       "name": "get_console_firmware"
     },
     {
-      "description": "Diagnose the gateway's two layers separately: UniFi OS and Network.\n\nStart here when anything UniFi-related is failing. Every other tool in\nthis server talks to the UniFi Network *application*; this one also\nchecks the UniFi OS *console* underneath it, so it can tell you whether\nthe box is down, the application is down, or your credentials are wrong\n\u2014 three very different problems that otherwise look identical.\n\nSide effects: None (read-only, two GET probes).\n\nReturns a record with:\n- ``state``: one of ``healthy``, ``network_app_starting``,\n  ``network_app_down``, ``credentials_invalid``,\n  ``console_unreachable``, ``unknown``.\n- ``unifi_os`` / ``network_app``: per-layer status words.\n- ``summary``: plain-language explanation of what is wrong.\n- ``next_step``: the recommended action, or ``null`` when healthy.\n- ``checks``: the raw probe results (path + HTTP status) behind the\n  verdict, so the reasoning is auditable.\n- ``network_app_version``: the Network app version, when it reported one.\n\nNote on the ``network_app_down`` verdict: UniFi OS handles routing, so\nthe Network application being down does **not** mean the internet is\ndown. It means configuration and monitoring are unavailable.\n\nExample: get_console_health(controller=\"default\")",
+      "description": "Diagnose the gateway's two layers separately: UniFi OS and Network.\n\nStart here when anything UniFi-related is failing. Every other tool in\nthis server talks to the UniFi Network *application*; this one also\nchecks the UniFi OS *console* underneath it, so it can tell you whether\nthe box is down, the application is down, or your credentials are wrong\n\u2014 three very different problems that otherwise look identical.\n\nSide effects: None (read-only, two GET probes).\n\nReturns a record with:\n- ``state``: one of ``healthy``, ``network_app_starting``,\n  ``network_app_down``, ``credentials_invalid``,\n  ``console_unreachable``, ``unknown``.\n- ``unifi_os`` / ``network_app``: per-layer status words.\n- ``summary``: plain-language explanation of what is wrong.\n- ``next_step``: the recommended action, or ``null`` when healthy.\n- ``checks``: the raw probe results (path + HTTP status) behind the\n  verdict, so the reasoning is auditable.\n- ``network_app_version``: the Network app version, when it reported one.\n\n``unknown`` also covers a status endpoint that looked fine while the\nlive Network API call meant to confirm it timed out or returned a 4xx.\nThat is reported as inconclusive, with the probe's error in\n``summary``, never as an outage.\n\nNote on the ``network_app_down`` verdict: UniFi OS handles routing, so\nthe Network application being down does **not** mean the internet is\ndown. It means configuration and monitoring are unavailable.\n\nExample: get_console_health(controller=\"default\")",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -2123,7 +2123,7 @@
       "name": "list_access_users"
     },
     {
-      "description": "List controller alarms, active or archived.\n\nSide effects: None (read-only).\n\nReturns the most recent ``limit`` alarm records.\n\nNot available on every firmware: UniFi Network 10.5 and 10.6 answer\n400 ``api.err.InvalidObject`` on every alarm route, so on those\ncontrollers this tool returns an error saying the feature is\nunsupported rather than an empty list. It works on 10.4 and older.\n\nExample: list_alarms(limit=20, archived=False)",
+      "description": "List controller alarms, active or archived.\n\nSide effects: None (read-only).\n\nDoes not work on UniFi Network 10.5 or 10.6: those controllers answer\n400 ``api.err.InvalidObject`` on every alarm route, so the call\nreturns an unsupported-feature error and never an empty list. Do not\nread that error as \"no alarms\"; the alarms cannot be read from that\ncontroller at all. It works on 10.4 and older. Stub mode returns\nsample alarms either way, so a stub result says nothing about a real\ncontroller.\n\nReturns the most recent ``limit`` alarm records.\n\nExample: list_alarms(limit=20, archived=False)",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -2318,7 +2318,7 @@
       "name": "list_dynamic_dns"
     },
     {
-      "description": "List recent controller events (connections, disconnections, etc.).\n\nSide effects: None (read-only).\n\nReturns the most recent ``limit`` event records, newest first.\n\nNot available on every firmware: UniFi Network 10.5 and 10.6 expose no\nevent log on the local API-key surface (``/stat/event`` answers 404),\nso on those controllers this tool returns an error saying the feature\nis unsupported rather than an empty list. It works on 10.4 and older.\n\nExample: list_events(limit=100)",
+      "description": "List recent controller events (connections, disconnections, etc.).\n\nSide effects: None (read-only).\n\nDoes not work on UniFi Network 10.5 or 10.6: those controllers expose\nno event log on the local API-key surface (``/stat/event`` answers\n404), so the call returns an unsupported-feature error and never an\nempty list. Do not read that error as \"no events\"; the events cannot\nbe read from that controller at all. It works on 10.4 and older. Stub\nmode returns sample events either way, so a stub result says nothing\nabout a real controller.\n\nReturns the most recent ``limit`` event records, newest first.\n\nExample: list_events(limit=100)",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -2595,7 +2595,7 @@
       "name": "list_smart_detections"
     },
     {
-      "description": "List top clients by total bytes (DPI by-station report).\n\nSide effects: None (read-only).\n\nReturns one record per client ranked by ``total_bytes`` descending,\nwith ``mac``, ``hostname``, ``ip``, ``tx_bytes``, ``rx_bytes``, and\n``total_bytes``.\n\nExample: list_top_talkers(limit=10)",
+      "description": "List the connected clients that have moved the most data.\n\nSide effects: None (read-only).\n\nRanks the clients connected right now by bytes sent plus received\nsince each one connected, so it is not a per-day or per-month total\nand a client that has left is not listed. Returns one record per\nclient, highest ``total_bytes`` first, with ``mac``, ``hostname``,\n``ip``, ``tx_bytes``, ``rx_bytes``, and ``total_bytes``.\n\nExample: list_top_talkers(limit=10)",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
