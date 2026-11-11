@@ -55,12 +55,16 @@ check "docker-compose.yml image" "${expected_oci}" "${compose_image}"
 check "charts/mcp-unifi/Chart.yaml appVersion" "${VERSION}" "${chart_app}"
 
 # release.yml publishes this section verbatim as the GitHub release body.
-notes=$(awk -v v="${VERSION}" '
+# awk answers on its own, with no pipe: `printf "$notes" | grep -q` under
+# pipefail failed on a long section, because grep exits at the first match
+# while printf is still writing, and the broken pipe read as "empty". That
+# stopped the 0.28.0 tag run on a correct tree.
+if awk -v v="${VERSION}" '
   $0 ~ "^## \\[" v "\\]" {f=1; next}
   /^## \[/ {f=0}
-  f
-' CHANGELOG.md)
-if printf '%s' "${notes}" | grep -q '[^[:space:]]'; then
+  f && /[^[:space:]]/ {found=1}
+  END {exit !found}
+' CHANGELOG.md; then
   echo "  ok  CHANGELOG.md has a non-empty [${VERSION}] section"
 else
   echo "::error::CHANGELOG.md has no non-empty '## [${VERSION}]' section"
