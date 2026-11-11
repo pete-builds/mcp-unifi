@@ -45,13 +45,13 @@ Judgment calls, recorded so they are not re-litigated:
 - **`rename_device` mutates.** Cosmetic, but persisted, and it is the label every other tool's output shows.
 - **`backup_config` is a read.** It is a fan-out of GETs returned to the caller; it writes nothing to the controller. Taking a backup is exactly what you want to still be able to do in read-only mode.
 - **`get_console_health` and `get_console_firmware` are reads** even though the console path may POST a login. Authenticating is how the server reads UniFi OS at all, and `get_console_health` is the one tool that still answers when the Network application is down.
-- **Every `delete_*` tool mutates**, including its preview phase. Preview-then-confirm is an interlock against mistakes, not an access control.
+- **Every `delete_*` tool mutates**, including its preview phase. Preview-then-confirm is an interlock against mistakes, not an access control. Outstanding previews are capped (50 per client, 500 in total); past the cap a new preview is refused until one is confirmed or expires, and none is evicted to make room.
 
 ## Secret handling
 
 - `UNIFI_API_KEY` and all per-controller `api_key` values are wrapped in Pydantic's `SecretStr`. Reading the cleartext requires `.get_secret_value()`; `repr()` and structured logging never echo the raw key.
 - The startup `safe_repr()` log line includes only an `api_key_set: true/false` boolean per controller, never the key itself.
-- One canonical pattern list (`mcp_unifi.redaction.SENSITIVE_KEY_PATTERNS`) covers three emitters: the structured logger, the audit log, and tool responses. It matches `api_key`, `passphrase`/`x_passphrase`, `password`/`x_password`, `secret`, `token`, `psk`, `pre_shared_key`/`preshared_key`, and `private_key`/`privkey`.
+- One canonical pattern list (`mcp_unifi.redaction.SENSITIVE_KEY_PATTERNS`) covers three emitters: the structured logger, the audit log, and tool responses. It matches `api_key`, `passphrase`/`x_passphrase`, `password`/`x_password`, `secret`, `token`, `psk`, `pre_shared_key`/`preshared_key`, `private_key`/`privkey`, the device keys (`x_authkey`, `x_vwirekey`), the OpenVPN key fields, the Access PIN and card number (`pin_code`, `card_id`, `nfc_id`) and the Protect RTSP alias and stream URL (`rtspAlias`, `rtspUrl`). The full list is `SENSITIVE_KEY_PATTERNS` in `src/mcp_unifi/redaction.py`.
 - Read paths that return controller records replace those values with `[REDACTED]` before the response leaves the server, in stub mode and real mode alike: WLANs (`x_passphrase`), networks (WireGuard `x_private_key`/`x_preshared_key`, site-to-site `x_ipsec_pre_shared_key`, RADIUS `x_secret`), dynamic DNS (`x_password`), the guest portal, Teleport, and Access credentials. `backup_config` substitutes its own `<redacted-on-backup>` sentinel so `restore_config` can recognise it and force the restored resource to `enabled=false`.
 - References are deliberately **not** redacted. `radiusprofile_id` names a profile; it is not the shared secret, and redacting it would break the tools that resolve it.
 - The audit log applies the same scrub to tool kwargs before writing.
@@ -69,7 +69,7 @@ The published image (`ghcr.io/pete-builds/mcp-unifi`) contributes:
 
 The following protections come from the runtime configuration, not the image itself. A plain `docker run` without these flags does **not** apply them — replicate them yourself if you deploy that way:
 
-- **Read-only root filesystem**: `read_only: true` in compose / `securityContext.readOnlyRootFilesystem: true` in Helm. `/tmp` is `tmpfs` for ephemeral writes (audit log, runtime caches).
+- **Read-only root filesystem**: `read_only: true` in compose / `securityContext.readOnlyRootFilesystem: true` in Helm. `/tmp` is `tmpfs` for ephemeral writes (runtime caches). The audit log does not live there: the shipped compose file and chart send it to the container log (`MCP_UNIFI_AUDIT_SINK=stdout`), because nothing under the read-only root can be written.
 - **`no-new-privileges`**: `security_opt: no-new-privileges:true` in compose / `securityContext.allowPrivilegeEscalation: false` in Helm. Prevents setuid escalation paths.
 - **Capabilities dropped**: `securityContext.capabilities.drop: [ALL]` in Helm; add `cap_drop: [ALL]` in compose for the same posture.
 - **NetworkPolicy** (Kubernetes): the chart ships an optional `NetworkPolicy` template so operators can pin ingress and egress explicitly.

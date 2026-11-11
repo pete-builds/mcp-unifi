@@ -82,7 +82,7 @@ services:
 
 The example builds from local source, which is why it has a `build: .` key. `docker-compose.yml` already pulls a pinned `ghcr.io/pete-builds/mcp-unifi` image instead, so there is nothing to edit to use the published image: run that file.
 
-The container runs as **UID 1000**, no shell, with a **read-only root filesystem** (`/tmp` is `tmpfs`) and `no-new-privileges`.
+The container runs as **UID 1000**, a system account with no login shell and no home directory, with a **read-only root filesystem** (`/tmp` is `tmpfs`) and `no-new-privileges`.
 
 Because the root filesystem is read-only, the default audit file (`audit.jsonl` under `/app`) cannot be written, so both compose files set `MCP_UNIFI_AUDIT_SINK=stdout`. The audit log goes to the container log: read it with `docker compose logs mcp-unifi`. `/tmp` is scratch space, not where the audit log lives. To keep a file instead, set `MCP_UNIFI_AUDIT_SINK=file` and `MCP_UNIFI_AUDIT_PATH` to a path on a volume you mount writable for UID 1000.
 

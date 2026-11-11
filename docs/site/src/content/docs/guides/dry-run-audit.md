@@ -175,7 +175,7 @@ jq -c 'select(.denied_by) | {ts, client_id, tool, denied_by}' audit.jsonl
 
 Refused records carry `success: false`, `result: null`, `latency_ms: 0.0` and the refusal message in `error`, and their `args` are scrubbed on exactly the same path as a dispatched call: a refused `create_wlan` does not write the passphrase the caller supplied.
 
-Don't key off `success` alone: it is also `false` when a tool raised. `denied_by` is the only field that distinguishes "the call was never made" from "the call was made and failed". `mcp-unifi-replay` reads it too, and skips refused events rather than re-issuing them.
+Don't key off `success` alone: it is also `false` when a tool raised, and when the call was cancelled before the tool returned. A cancelled call is recorded with an `error` saying the outcome at the controller is unknown, because the request may or may not have reached it: check the controller before retrying a write. `denied_by` is the only field that distinguishes "the call was never made" from "the call was made and failed". `mcp-unifi-replay` reads it too, and skips refused events rather than re-issuing them.
 
 ### Configure the sink
 
@@ -185,19 +185,25 @@ Don't key off `success` alone: it is also `false` when a tool raised. `denied_by
 | `MCP_UNIFI_AUDIT_PATH` | `audit.jsonl` | File path when `SINK=file`. |
 | `MCP_UNIFI_AUDIT_SYSLOG_ADDRESS` | `/dev/log` | Socket path or `host:port` when `SINK=syslog`. |
 
+The sink is checked when the server starts, not on the first tool call:
+
+- An unknown `MCP_UNIFI_AUDIT_SINK` value (a typo such as `files`) stops startup with a message naming the valid values.
+- `MCP_UNIFI_AUDIT_SINK=stdout` together with `MCP_TRANSPORT=stdio` stops startup. The stdio transport owns stdout for its JSON-RPC stream, and audit lines written there would corrupt it. Use `file` or `syslog` for a stdio server.
+- A `file` sink whose path cannot be written does **not** stop startup, because tool calls still work. The server logs one ERROR naming the path and the fix, and `/health` reports it: `"audit": {"sink": "file", "writable": false}`. If you see that, nothing is being recorded. The usual cause is the default `audit.jsonl` on a read-only root filesystem; set the sink to `stdout` or point `MCP_UNIFI_AUDIT_PATH` at a mounted volume.
+
 ## Replay
 
-The package ships an `mcp-unifi-replay` console script that re-issues the calls in a JSONL log, in order, against a fresh in-process server. It is useful for reproducing a captured session: capture a buggy session locally, then replay it in CI against the stub backend. Replay does not go through the HTTP transport, so it runs without a bearer token and ignores per-client module scopes; treat it as an operator tool (see the [Authentication guide](/mcp-unifi/guides/auth/)).
+The package ships an `mcp-unifi-replay` console script that re-issues the calls in a JSONL log, in order, against a fresh in-process server. It is useful for reproducing a captured session: capture a buggy session locally, then replay it in CI against the stub backend. Replay does not go through the HTTP transport: it builds its own stdio-style server whatever `MCP_TRANSPORT` says, so it needs no bearer token and applies no per-client module scopes. Read-only mode (`MCP_UNIFI_READONLY=true`) still applies, because it is a posture of the whole server and not of one client. Treat replay as an operator tool (see the [Authentication guide](/mcp-unifi/guides/auth/)).
 
 ```bash
 # Replay every event in the log against the in-memory stub (the default)
-MCP_TRANSPORT=stdio mcp-unifi-replay audit.jsonl
+mcp-unifi-replay audit.jsonl
 
 # The same, with one JSON result per event on stdout
-MCP_TRANSPORT=stdio mcp-unifi-replay audit.jsonl --json
+mcp-unifi-replay audit.jsonl --json
 
 # Real-mode replay needs all three flags
-MCP_TRANSPORT=stdio mcp-unifi-replay audit.jsonl --real --target-controller home --i-mean-it
+mcp-unifi-replay audit.jsonl --real --target-controller home --i-mean-it
 ```
 
 The flags, from `mcp-unifi-replay --help`:
@@ -210,11 +216,22 @@ The flags, from `mcp-unifi-replay --help`:
 | `--i-mean-it` | Real mode only: second confirmation. Without it, `--real` exits with status 2 before any call is made. |
 | `--json` | Print one JSON object per event (`tool`, `controller`, `success`, `error`, `skipped`, `skip_reason`) instead of the summary line. |
 
-Without `--json` the command prints `replay complete: N events (succeeded=…, failed=…, skipped=…)`. The exit status is `0` when nothing failed, `1` when at least one event failed, and `2` for a usage or log-file error. Events recorded with a `denied_by` value are skipped, never re-issued. There is no flag to filter by tool, override the controller, or force `dry_run`: replay passes each event's recorded `args` to the tool as captured.
+Without `--json` the command prints `replay complete: N events (succeeded=…, failed=…, skipped=…)`. The exit status is `0` when nothing failed, `1` when at least one event failed, and `2` for a usage or log-file error. There is no flag to filter by tool, override the controller, or force `dry_run`: replay passes each event's recorded `args` to the tool as captured.
 
-`MCP_TRANSPORT=stdio` appears in every example because replay builds its server from the normal settings, whose default transport is Streamable HTTP and needs a bearer token; without it the command stops with `HTTP transport requires MCP_UNIFI_AUTH_TOKENS`. In real mode the server is built from the controllers your environment configures (see the [Configuration reference](/mcp-unifi/reference/configuration/)).
+In real mode the server is built from the controllers your environment configures (see the [Configuration reference](/mcp-unifi/reference/configuration/)).
 
-Because the log stores scrubbed arguments, a secret such as a WLAN passphrase is recorded as `***`; the log does not hold the real value.
+Three kinds of event are skipped, never re-issued, and each says why in `skip_reason`:
+
+- **Refused calls.** An event recorded with a `denied_by` value was never made, and replaying it would take the action your own policy denied.
+- **Calls for another controller**, in real mode: any event whose `controller` is not the `--target-controller`.
+- **Calls whose arguments were redacted.** The log stores scrubbed arguments, so a WLAN passphrase is recorded as `***` and the real value is not in the log. Sending `***` would set the passphrase to those three characters and report success, so the call is skipped instead. Every `confirm_destructive_action` falls in this group, because its one-time token is redacted: a replay never re-confirms a delete.
+
+A tool that answers with an error envelope counts as failed, not succeeded.
+
+What a replay writes to the audit log depends on the mode:
+
+- A **stub** replay is a rehearsal. It writes nothing to the configured audit sink, so a rehearsed call cannot be mistaken for a real one.
+- A **real** replay is a real change and is audited like any other call, with `client_id` set to `mcp-unifi-replay` so you can tell replayed calls apart (`jq 'select(.client_id == "mcp-unifi-replay")'`). It refuses to start when the log you ask it to replay is the very file the audit sink appends to. Copy the log and replay the copy.
 
 ## Why this matters
 

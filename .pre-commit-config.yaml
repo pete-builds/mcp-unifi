@@ -12,7 +12,8 @@
 
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.14
+    # Keep in step with the ruff pin in requirements-dev.lock, which is what CI runs.
+    rev: v0.17.3
     hooks:
       - id: ruff
         args: [--fix]

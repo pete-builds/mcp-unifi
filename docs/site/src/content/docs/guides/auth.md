@@ -94,7 +94,7 @@ The bearer-token gate and per-client module scope apply to **every request that 
 
 Not covered by the transport-layer gate:
 
-- **The `mcp-unifi-replay` CLI.** Replay builds a fresh, in-process FastMCP instance in the operator's shell and invokes tools programmatically. There is no HTTP request context, no bearer token, no client_id — it runs as the local operator. Treat replay the same as any other admin CLI: only run it on systems where you already trust the operator's shell access, and be aware that it can call tools regardless of any scope you set in `MCP_UNIFI_AUTH_TOKENS`.
+- **The `mcp-unifi-replay` CLI.** Replay builds a fresh, in-process FastMCP instance in the operator's shell and invokes tools programmatically. There is no HTTP request context, no bearer token, no client_id — it runs as the local operator. Treat replay the same as any other admin CLI: only run it on systems where you already trust the operator's shell access, and be aware that it can call tools regardless of any scope you set in `MCP_UNIFI_AUTH_TOKENS`. Read-only mode is the exception: with `MCP_UNIFI_READONLY=true`, replay refuses mutating tools like every other caller. A real-mode replay writes its calls to the audit log with `client_id` set to `mcp-unifi-replay`.
 - **Stdio transport.** Same reasoning: the parent process (Claude Desktop, `uvx`) owns the security boundary. Stdio ignores `MCP_UNIFI_AUTH_TOKENS` entirely.
 - **Composite tools calling other Network tools.** As of writing, no tool body invokes another registered tool by name (composites go straight to the UniFi backend via `resolve_backend`). If a future tool adds an internal `tools/call` dispatch, the scope check would not fire on that inner call — write it to route through the backend layer instead.
 

@@ -183,6 +183,8 @@ These shape the subnet and DHCP range that `create_iot_network` synthesizes when
 - Invalid values fail with a clear message that names the field.
 - Real mode with no controller config (no `MCP_UNIFI_CONTROLLERS_FILE`, no legacy `UNIFI_HOST` + `UNIFI_API_KEY`) is a hard error.
 - Duplicate controller names in the YAML are rejected.
+- An unknown `MCP_UNIFI_AUDIT_SINK`, or the `stdout` sink on the stdio transport, stops startup. A `file` sink that cannot be written logs an ERROR and shows in `/health`, but does not stop startup.
+- Use the `MCP_UNIFI_`-prefixed names in this page. Several settings are also read from the same name without the prefix (`READONLY`, `AUTH_REQUIRED`, `CLIENT_ID` and so on). That was never documented, it still works in this release, and the server logs a warning naming the variable to set instead. The unprefixed names will stop being read in a later release.
 - `IOT_DHCP_STOP_OFFSET <= IOT_DHCP_START_OFFSET` is rejected.
 - `IOT_SUBNET_TEMPLATE` without the `{vlan_id}` placeholder is rejected.
 

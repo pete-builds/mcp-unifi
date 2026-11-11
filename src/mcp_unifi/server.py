@@ -308,7 +308,8 @@ def main() -> None:
     """CLI entrypoint. Dispatches on MCP_TRANSPORT.
 
     - ``streamable-http`` (default): long-running container / multi-client.
-    - ``stdio``: per-session subprocess (Claude Desktop, ``uvx mcp-unifi``).
+    - ``stdio``: per-session subprocess (Claude Desktop, or ``uvx --from`` the
+      GitHub repo; the package is not on PyPI).
     """
     if fastmcp.settings.http_session_idle_timeout is None:
         fastmcp.settings.http_session_idle_timeout = SESSION_IDLE_TIMEOUT

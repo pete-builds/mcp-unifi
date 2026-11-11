@@ -50,7 +50,7 @@ The Access tool surface is intentionally narrow: no door unlocks, no credential 
 | Tool | Type | dry_run | Description |
 |---|---|---|---|
 | `list_credentials` | read | — | List every credential enrolled in the controller. Includes `type` (`nfc`, `pin`, `mobile`), `label`, `user_id`, `status`, `issued_at`, `expires_at`. |
-| `get_credential` | read | — | Fetch one credential's full record. Type-specific fields (`card_id`, `pin_length`, `device_label`) come back as well. |
+| `get_credential` | read | — | Fetch one credential's full record. Type-specific fields (`pin_length`, `device_label`) come back as well; an NFC card's `card_id` is present but redacted. |
 | `audit_expiring_credentials` | read | — | Return credentials expiring inside the next `days_ahead` days (default 30). Optional `credential_type` narrows to one of `nfc`, `pin`, `mobile`. Each entry includes a computed `days_until_expiry`. Credentials already past `expires_at` are listed in `already_expired`, and ones whose `expires_at` is not an epoch-millisecond number are listed in `unparseable_expiry`, so neither is skipped silently. |
 
 ### Visitors

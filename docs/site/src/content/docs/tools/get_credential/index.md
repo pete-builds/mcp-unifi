@@ -11,8 +11,8 @@ Fetch one credential's full record by ID.
 Side effects: None (read-only).
 
 Same shape as one entry from ``list_credentials`` plus any
-type-specific fields (``card_id`` for NFC, ``pin_length`` for PIN,
-``device_label`` for mobile).
+type-specific fields (``pin_length`` for PIN, ``device_label`` for
+mobile). An NFC credential's ``card_id`` is present but redacted.
 
 ## Example
 

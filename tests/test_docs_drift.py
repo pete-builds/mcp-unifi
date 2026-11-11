@@ -586,6 +586,101 @@ def test_env_var_coverage_check_can_fail() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Test 8: a tool-call example passes arguments the tool actually takes
+# ---------------------------------------------------------------------------
+#
+# The Network reference showed ``audit_network_drift`` being called with
+# ``spec_path``. The tool takes ``spec_yaml`` and rejects anything else, so the
+# one worked example for drift auditing could not run. Two example shapes are
+# checked against the generated manifest: ``tool(arg=value, ...)`` on one line,
+# and ``{ "tool": "...", "args": { ... } }`` on one line.
+
+_CALL_EXAMPLE_RE = re.compile(r"\b([a-z][a-z0-9_]+)\(([^()]*)\)")
+_CALL_KWARG_RE = re.compile(r"(?:^|,)\s*([a-z_][a-z0-9_]*)\s*=")
+_JSON_EXAMPLE_RE = re.compile(r'"tool":\s*"([a-z0-9_]+)",\s*"args":\s*(\{.*\})\s*\}')
+
+
+def _tool_parameters() -> dict[str, set[str]]:
+    manifest = json.loads(MANIFEST_JSON_PATH.read_text(encoding="utf-8"))
+    return {
+        tool["name"]: set(tool["input_schema"].get("properties", {})) for tool in manifest["tools"]
+    }
+
+
+def _unknown_example_arguments(text: str, parameters: dict[str, set[str]]) -> tuple[int, list[str]]:
+    """Return (examples seen, offences) for the tool-call examples in ``text``."""
+    seen = 0
+    offences: list[str] = []
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        for name, arguments in _CALL_EXAMPLE_RE.findall(line):
+            if name not in parameters:
+                continue
+            seen += 1
+            offences.extend(
+                f"line {lineno}: {name}() takes no argument '{kwarg}'"
+                for kwarg in _CALL_KWARG_RE.findall(arguments)
+                if kwarg not in parameters[name]
+            )
+        match = _JSON_EXAMPLE_RE.search(line)
+        if match and match.group(1) in parameters:
+            seen += 1
+            name = match.group(1)
+            try:
+                supplied = json.loads(match.group(2))
+            except ValueError:
+                offences.append(f"line {lineno}: the args of the {name} example are not JSON")
+                continue
+            offences.extend(
+                f"line {lineno}: {name}() takes no argument '{key}'"
+                for key in supplied
+                if key not in parameters[name]
+            )
+    return seen, offences
+
+
+def test_tool_call_examples_use_arguments_the_tool_takes() -> None:
+    parameters = _tool_parameters()
+    total = 0
+    offenders: list[str] = []
+    for path in _user_facing_files():
+        if path.suffix not in {".md", ".mdx"}:
+            continue
+        seen, offences = _unknown_example_arguments(path.read_text(encoding="utf-8"), parameters)
+        total += seen
+        offenders.extend(f"  {path.relative_to(REPO_ROOT)}: {o}" for o in offences)
+    assert total > 100, f"only {total} tool-call examples found; the scan is broken"
+    if offenders:
+        joined = "\n".join(offenders)
+        pytest.fail(
+            "These examples pass an argument the tool does not take. A caller that "
+            "copies one gets a validation error. For a page under docs/.../tools/, "
+            "fix the tool's docstring and regenerate the manifest.\n\n"
+            f"{joined}"
+        )
+
+
+def test_tool_call_example_check_can_fail() -> None:
+    """Control for the test above, on the example that was wrong."""
+    parameters = _tool_parameters()
+    bad_json = '{ "tool": "audit_network_drift", "args": { "spec_path": "./network-spec.yml" } }'
+    assert _unknown_example_arguments(bad_json, parameters) == (
+        1,
+        ["line 1: audit_network_drift() takes no argument 'spec_path'"],
+    )
+    bad_call = 'Example: audit_network_drift(spec_path="./spec.yml", controller="default")'
+    assert _unknown_example_arguments(bad_call, parameters) == (
+        1,
+        ["line 1: audit_network_drift() takes no argument 'spec_path'"],
+    )
+    good = (
+        '{ "tool": "audit_network_drift", "args": { "spec_yaml": "networks: []" } }\n'
+        'Example: audit_network_drift(spec_yaml="networks: []", controller="default")\n'
+        "an unrelated call such as print(x=1) is ignored\n"
+    )
+    assert _unknown_example_arguments(good, parameters) == (2, [])
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
