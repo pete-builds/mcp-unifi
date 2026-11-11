@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 
 import httpx
+import pytest
 import respx
 from fastmcp import FastMCP
 
@@ -429,3 +430,57 @@ async def test_update_vlan_without_a_subnet_change_is_unaffected(
     )
     assert "error" not in result
     assert result["network"]["enabled"] is False
+
+
+async def test_update_vlan_promotes_a_network_form_subnet_like_create_vlan(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """``create_vlan`` turns ``10.0.50.0/24`` into the ``10.0.50.1/24`` UniFi
+    stores; ``update_vlan`` wrote the network form verbatim (C10)."""
+    network_id = _seed_vpn_like_network(stub_state)
+    preview = await _call(
+        stub_server,
+        "update_vlan",
+        {
+            "network_id": network_id,
+            "updates": {
+                "ip_subnet": "10.0.60.0/24",
+                "dhcpd_start": "10.0.60.6",
+                "dhcpd_stop": "10.0.60.254",
+            },
+            "dry_run": True,
+        },
+    )
+    assert preview["would_update"]["patch"]["ip_subnet"] == "10.0.60.1/24"
+
+    result = await _call(
+        stub_server,
+        "update_vlan",
+        {
+            "network_id": network_id,
+            "updates": {
+                "ip_subnet": "10.0.60.0/24",
+                "dhcpd_start": "10.0.60.6",
+                "dhcpd_stop": "10.0.60.254",
+            },
+        },
+    )
+    assert result["verification"]["verified"] is True
+    stored = next(n for n in stub_state.list_networks() if n["_id"] == network_id)
+    assert stored["ip_subnet"] == "10.0.60.1/24"
+
+
+@pytest.mark.parametrize("vlan", [0, 4095, -3])
+async def test_update_vlan_refuses_a_vlan_id_outside_8021q(
+    stub_server: FastMCP, stub_state: StubState, vlan: int
+) -> None:
+    network_id = _seed_vpn_like_network(stub_state)
+    for dry_run in (True, False):
+        result = await _call(
+            stub_server,
+            "update_vlan",
+            {"network_id": network_id, "updates": {"vlan": vlan}, "dry_run": dry_run},
+        )
+        assert "out of range" in result["error"]
+    stored = next(n for n in stub_state.list_networks() if n["_id"] == network_id)
+    assert stored.get("vlan") != vlan

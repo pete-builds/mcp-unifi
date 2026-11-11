@@ -330,8 +330,10 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
 
         Args:
             network_id: The ``_id`` from ``list_networks``.
-            updates: Partial network record. Common keys: ``name``, ``vlan``,
-                ``ip_subnet``, ``dhcpd_start``, ``dhcpd_stop``, ``enabled``,
+            updates: Partial network record. Common keys: ``name``, ``vlan``
+                (1-4094), ``ip_subnet`` (network form ``10.50.0.0/24`` is
+                promoted to gateway form, as in ``create_vlan``),
+                ``dhcpd_start``, ``dhcpd_stop``, ``enabled``,
                 ``mdns_enabled`` (toggle the per-VLAN mDNS reflector
                 independently of network creation), ``purpose``.
             controller: Name of the UniFi controller to target. Defaults to
@@ -339,6 +341,17 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             dry_run: Preview the change without applying it. Returns the
                 predicted change set.
         """
+        # Same input handling as create_vlan: a network-form subnet
+        # (10.0.60.0/24) is promoted to the gateway form UniFi stores
+        # (10.0.60.1/24); update_vlan used to write the network form verbatim,
+        # which create_vlan never sends. A VLAN id outside 802.1Q's 1-4094 is
+        # refused. create_vlan's stricter 2-4094 is not applied here, because
+        # an existing network may legitimately sit on VLAN 1.
+        vlan = updates.get("vlan")
+        if isinstance(vlan, int) and not isinstance(vlan, bool) and not 1 <= vlan <= 4094:
+            return err(f"vlan {vlan} out of range (1-4094)")
+        if isinstance(updates.get("ip_subnet"), str):
+            updates = {**updates, "ip_subnet": normalize_ip_subnet(updates["ip_subnet"])}
         if "ip_subnet" in updates:
             try:
                 backend = resolve_backend(registry, controller)
