@@ -26,8 +26,12 @@ pytest
 # Lint + type-check
 ruff check . && ruff format --check . && mypy src/
 
-# Run the server in stub mode against a local Claude
-docker compose up --build
+# Run the server in stub mode against a local Claude. The default compose file
+# pulls the published image, so build from source with the example file. It
+# needs a .env, and the HTTP transport needs MCP_UNIFI_AUTH_TOKENS in it
+# (`openssl rand -hex 32` makes a token).
+cp .env.example .env
+docker compose -f docker-compose.example.yml up --build
 ```
 
 Stub mode is the default; you do not need a UniFi gateway to develop or run the test suite.

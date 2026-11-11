@@ -21,9 +21,24 @@
       "environmentVariables": [
         {
           "name": "STUB_MODE",
-          "description": "When true, the server returns realistic mock data and requires no UniFi hardware. Defaults to true so the image is functional out of the box.",
+          "description": "When true, the server returns realistic mock data and requires no UniFi hardware. Defaults to true. Set to false to manage a real gateway, which then needs UNIFI_HOST plus UNIFI_API_KEY (or UNIFI_API_KEY_FILE), or MCP_UNIFI_CONTROLLERS_FILE. In either mode the HTTP transport will not start without MCP_UNIFI_AUTH_TOKENS.",
           "isRequired": false,
           "default": "true",
+          "format": "string",
+          "choices": ["true", "false"]
+        },
+        {
+          "name": "MCP_UNIFI_AUTH_TOKENS",
+          "description": "Bearer tokens that HTTP clients must present. Required: the streamable-http transport exits at startup with 'HTTP transport requires MCP_UNIFI_AUTH_TOKENS' when it is empty. Comma-separated; each entry is a bare token (named client-N automatically) or a 'name:token' pair. Generate one with `openssl rand -hex 32`.",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "MCP_UNIFI_READONLY",
+          "description": "When true, every tool that changes state is hidden from tools/list and refused on tools/call; read tools are unaffected. Defense in depth on top of a read-only UniFi API key. Defaults to false.",
+          "isRequired": false,
+          "default": "false",
           "format": "string",
           "choices": ["true", "false"]
         },
@@ -35,9 +50,21 @@
         },
         {
           "name": "UNIFI_API_KEY",
-          "description": "Local API key generated under Settings -> Control Plane -> Integrations on the gateway. Required when STUB_MODE=false and MCP_UNIFI_CONTROLLERS_FILE is unset.",
+          "description": "Local API key generated under Settings -> Control Plane -> Integrations on the gateway. Required when STUB_MODE=false and MCP_UNIFI_CONTROLLERS_FILE is unset, unless UNIFI_API_KEY_FILE is used instead.",
           "isRequired": false,
           "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "UNIFI_API_KEY_FILE",
+          "description": "Path to a file inside the container that holds the local API key, for a Docker or Kubernetes secret mount. Wins over UNIFI_API_KEY when both are set. A controller configured this way verifies the gateway's TLS certificate unless UNIFI_VERIFY_SSL is set to false.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "UNIFI_PINNED_CERT",
+          "description": "Path to a file inside the container that holds the gateway's own certificate in PEM, recorded with mcp-unifi-pin-cert. When set, that certificate is the only one the server accepts from the gateway, and a mismatch fails every request. Do not set UNIFI_VERIFY_SSL to false alongside it: the server refuses to start.",
+          "isRequired": false,
           "format": "string"
         },
         {

@@ -1,3 +1,8 @@
+# Before `docker compose up -d`: copy the env template with
+#   cp .env.example .env
+# `env_file: .env` below is mandatory, so compose refuses to start without it.
+# Set a bearer token in it too (MCP_UNIFI_AUTH_TOKENS; `openssl rand -hex 32`
+# makes one), because the HTTP transport will not start without one.
 x-logging: &default-logging
   driver: json-file
   options:
@@ -21,6 +26,12 @@ services:
       MCP_HOST: "0.0.0.0"
       MCP_PORT: "${MCP_PORT:-3714}"
       TZ: "${TZ:-UTC}"
+      # The root filesystem is read-only, so the default audit file
+      # (./audit.jsonl under /app) cannot be written and every audit line would
+      # be dropped. Send the audit log to the container log instead:
+      # `docker compose logs mcp-unifi`. To keep a file, set this to "file",
+      # set MCP_UNIFI_AUDIT_PATH to a path on a mounted volume, and mount it.
+      MCP_UNIFI_AUDIT_SINK: "stdout"
       # File-backed secrets (opt-in). Uncomment these two lines and the
       # `secrets:` blocks below, then leave UNIFI_API_KEY and
       # MCP_UNIFI_AUTH_TOKENS out of .env. A controller configured by
@@ -29,15 +40,17 @@ services:
       # UNIFI_API_KEY_FILE: /run/secrets/unifi_api_key
       # MCP_UNIFI_AUTH_TOKEN_FILE: /run/secrets/mcp_unifi_token
       # MCP_UNIFI_CLIENT_ID: admin
+      # Certificate pinning (see the volumes hint below): uncomment this line
+      # together with the volumes entry.
+      # UNIFI_PINNED_CERT: /etc/mcp-unifi/pins/home.pem
     # secrets:
     #   - unifi_api_key
     #   - mcp_unifi_token
     # Certificate pinning: mount the PEM from mcp-unifi-pin-cert read-only and
-    # point UNIFI_PINNED_CERT at it (the container filesystem is read-only).
+    # point UNIFI_PINNED_CERT (in the environment block above) at it, because
+    # the container filesystem is read-only.
     # volumes:
     #   - ./pins/home.pem:/etc/mcp-unifi/pins/home.pem:ro
-    # environment:
-    #   UNIFI_PINNED_CERT: /etc/mcp-unifi/pins/home.pem
     logging: *default-logging
     healthcheck:
       test: ["CMD", "python", "-m", "mcp_unifi.healthcheck"]

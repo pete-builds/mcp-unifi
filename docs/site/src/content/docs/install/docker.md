@@ -24,7 +24,24 @@ For throwaway local testing on loopback only, `-e MCP_UNIFI_AUTH_REQUIRED=false`
 
 ## docker-compose
 
-A working compose file lives in the repo at `docker-compose.example.yml`:
+The repo ships two compose files. `docker-compose.yml` runs the published image from GHCR. `docker-compose.example.yml` builds the image from your local source. Both read their settings from a `.env` file that must exist before you start, so create it first and set a bearer token in it (`MCP_UNIFI_AUTH_TOKENS`, from `openssl rand -hex 32`), because the HTTP transport refuses to start without one:
+
+```bash
+cp .env.example .env
+$EDITOR .env
+```
+
+To run the published image, start the default file:
+
+```bash
+docker compose up -d
+```
+
+To build from source, name the example file. This is the file shown below:
+
+```bash
+docker compose -f docker-compose.example.yml up --build
+```
 
 ```yaml
 x-logging: &default-logging
@@ -51,6 +68,7 @@ services:
       MCP_PORT: "${MCP_PORT:-3714}"
       TZ: "${TZ:-UTC}"
       LOG_FORMAT: "text"
+      MCP_UNIFI_AUDIT_SINK: "stdout"
     logging: *default-logging
     healthcheck:
       test: ["CMD", "python", "-m", "mcp_unifi.healthcheck"]
@@ -62,9 +80,11 @@ services:
       - no-new-privileges:true
 ```
 
-The example builds from local source. For the published image, change `build: .` to `image: ghcr.io/pete-builds/mcp-unifi:latest` and drop the `build` key.
+The example builds from local source, which is why it has a `build: .` key. `docker-compose.yml` already pulls a pinned `ghcr.io/pete-builds/mcp-unifi` image instead, so there is nothing to edit to use the published image: run that file.
 
 The container runs as **UID 1000**, no shell, with a **read-only root filesystem** (`/tmp` is `tmpfs`) and `no-new-privileges`.
+
+Because the root filesystem is read-only, the default audit file (`audit.jsonl` under `/app`) cannot be written, so both compose files set `MCP_UNIFI_AUDIT_SINK=stdout`. The audit log goes to the container log: read it with `docker compose logs mcp-unifi`. `/tmp` is scratch space, not where the audit log lives. To keep a file instead, set `MCP_UNIFI_AUDIT_SINK=file` and `MCP_UNIFI_AUDIT_PATH` to a path on a volume you mount writable for UID 1000.
 
 To also make the server unable to change anything on the controller, add `MCP_UNIFI_READONLY=true` to your `.env`. Mutating tools are then hidden from `tools/list` and refused on `tools/call`; reads are unaffected. Pair it with a read-only UniFi API key rather than treating either as sufficient alone — see the [Security guide](/mcp-unifi/guides/security/#read-only-mode).
 

@@ -25,13 +25,13 @@ startCommand:
       modulesEnabled:
         type: string
         title: Modules Enabled
-        description: "Comma-separated list of modules: network, protect, access (read-only in v0.10)"
+        description: "Comma-separated list of modules: network, protect, access"
         default: "network"
   commandFunction: |-
     (config) => ({
       command: "docker",
       args: [
-        "run", "--rm",
+        "run", "--rm", "-i",
         "-e", `UNIFI_HOST=${config.unifiHost}`,
         "-e", `UNIFI_API_KEY=${config.unifiApiKey}`,
         "-e", `STUB_MODE=${config.stubMode ?? false}`,

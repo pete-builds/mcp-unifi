@@ -1,6 +1,11 @@
 # Example: build the image locally instead of pulling from GHCR.
 # Drop this in as docker-compose.yml (or docker-compose.override.yml) when you
 # want to hack on the source without publishing a new image.
+# Run it by name, because a plain `docker compose up` reads docker-compose.yml:
+#   cp .env.example .env
+#   docker compose -f docker-compose.example.yml up --build
+# `env_file: .env` below is mandatory, and the HTTP transport will not start
+# without MCP_UNIFI_AUTH_TOKENS in it (`openssl rand -hex 32` makes a token).
 x-logging: &default-logging
   driver: json-file
   options:
@@ -25,6 +30,9 @@ services:
       MCP_PORT: "${MCP_PORT:-3714}"
       TZ: "${TZ:-UTC}"
       LOG_FORMAT: "text"
+      # Read-only root filesystem: the default audit file under /app cannot be
+      # written, so send the audit log to the container log instead.
+      MCP_UNIFI_AUDIT_SINK: "stdout"
     logging: *default-logging
     healthcheck:
       test: ["CMD", "python", "-m", "mcp_unifi.healthcheck"]
