@@ -287,6 +287,30 @@ async def test_tool_exception_records_type_but_not_message(tracer: FakeTracer) -
     assert "secret-looking detail" not in joined
 
 
+@pytest.mark.asyncio
+async def test_span_controller_matches_the_audit_record_after_annotation(
+    tracer: FakeTracer,
+) -> None:
+    """A tool that resolves its controller late must not leave two answers behind.
+
+    ``confirm_destructive_action`` takes only a token and names the queued
+    action's controller through ``annotate_audit``. The span opened earlier,
+    with the controller from kwargs, so the trace said ``default`` while the
+    audit record said ``office`` for the same call.
+    """
+    from mcp_unifi.modules._audit import annotate_audit
+
+    @audited("late_controller_probe", mutates=True)
+    async def late_controller_probe(token: str) -> str:
+        annotate_audit(controller="office")
+        return "{}"
+
+    await late_controller_probe(token="t")
+
+    span = tracer.only()
+    assert span.attributes[telemetry.ATTR_CONTROLLER] == "office"
+
+
 # ---------------------------------------------------------------------------
 # Redaction: a span is an emission path like any other
 # ---------------------------------------------------------------------------

@@ -45,6 +45,11 @@ Design notes
 * On exception the decorator records ``success=False`` with ``error=str(exc)``
   and re-raises. The audit emit itself never blocks the exception path —
   sink errors are caught and logged inside :class:`AuditLog.emit`.
+* A cancelled call (``CancelledError``, which is not an ``Exception``) is
+  recorded too, as ``success=False`` with :data:`CANCELLED_ERROR`, and the
+  cancellation then propagates unchanged. Every emit runs to completion even
+  while the calling task is being cancelled, so cancelling a call is never a
+  way to keep it out of the log.
 * Latency is wall-clock milliseconds measured around the wrapped coroutine.
 
 Tracing (optional, v0.22)
@@ -70,9 +75,10 @@ saying "the server did its job", not "the change was applied".
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from contextvars import ContextVar
 from functools import wraps
 from typing import Any, ParamSpec, TypeVar
@@ -150,6 +156,41 @@ def _current_client_id() -> str | None:
     except Exception:
         return None
     return token.client_id if token is not None else None
+
+
+#: ``error`` text on the record of a call cancelled before its tool body
+#: returned. The body may have sent its request already, so the record must
+#: not read as "nothing happened".
+CANCELLED_ERROR = (
+    "call cancelled before the tool returned; the outcome at the controller is unknown "
+    "(a write may already have been applied)"
+)
+
+
+async def _emit_to_completion(emit: Coroutine[Any, Any, Any]) -> asyncio.CancelledError | None:
+    """Run one audit emit to the end even if the calling task is being cancelled.
+
+    The emit runs as its own task, so a cancellation aimed at the tool call
+    cannot interrupt the sink write halfway. ``asyncio.shield`` alone is not
+    enough: an anyio cancel scope (which is how FastMCP cancels a request)
+    delivers the cancellation again on every await, so the wait is retried
+    until the emit has finished. The cancellation is returned rather than
+    swallowed, and the caller re-raises it once the record is written.
+    """
+    task = asyncio.ensure_future(emit)
+    cancelled: asyncio.CancelledError | None = None
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError as exc:
+            if task.done():
+                break
+            cancelled = cancelled or exc
+        except Exception:
+            # AuditLog.emit already logs a failing sink. Anything else that
+            # escapes must not replace the tool's own outcome.
+            break
+    return cancelled
 
 
 def _coerce_result(value: Any) -> Any:
@@ -234,36 +275,73 @@ def audited(
                 start = time.perf_counter()
                 try:
                     result = await fn(*args, **kwargs)
+                except asyncio.CancelledError as exc:
+                    # CancelledError is a BaseException, so the handler below
+                    # never saw it and a cancelled call left no record. A
+                    # write may already have reached the controller by the
+                    # time the cancellation lands, and a client could cancel
+                    # on purpose to keep its own writes out of the log.
+                    _ANNOTATIONS.reset(annotations_token)
+                    _apply_annotations()
+                    span.set(telemetry.ATTR_CONTROLLER, controller)
+                    latency_ms = (time.perf_counter() - start) * 1000.0
+                    span.record_error(exc)
+                    await _emit_to_completion(
+                        log.emit(
+                            controller=controller,
+                            tool=tool_name,
+                            args=audit_args,
+                            result=None,
+                            success=False,
+                            latency_ms=latency_ms,
+                            error=CANCELLED_ERROR,
+                            client_id=client_id,
+                        )
+                    )
+                    raise
                 except Exception as exc:
                     _ANNOTATIONS.reset(annotations_token)
                     _apply_annotations()
+                    span.set(telemetry.ATTR_CONTROLLER, controller)
                     latency_ms = (time.perf_counter() - start) * 1000.0
                     span.record_error(exc)
-                    await log.emit(
-                        controller=controller,
-                        tool=tool_name,
-                        args=audit_args,
-                        result=None,
-                        success=False,
-                        latency_ms=latency_ms,
-                        error=str(exc),
-                        client_id=client_id,
+                    cancelled = await _emit_to_completion(
+                        log.emit(
+                            controller=controller,
+                            tool=tool_name,
+                            args=audit_args,
+                            result=None,
+                            success=False,
+                            latency_ms=latency_ms,
+                            error=str(exc),
+                            client_id=client_id,
+                        )
                     )
+                    if cancelled is not None:
+                        raise cancelled from exc
                     raise
 
                 _ANNOTATIONS.reset(annotations_token)
                 _apply_annotations()
+                # The span opened with the controller from kwargs; a tool
+                # that resolved a different one (confirm_destructive_action)
+                # said so through annotate_audit. Keep the two records equal.
+                span.set(telemetry.ATTR_CONTROLLER, controller)
                 latency_ms = (time.perf_counter() - start) * 1000.0
                 span.set(telemetry.ATTR_OUTCOME, telemetry.OUTCOME_OK)
-                await log.emit(
-                    controller=controller,
-                    tool=tool_name,
-                    args=audit_args,
-                    result=_coerce_result(result),
-                    success=True,
-                    latency_ms=latency_ms,
-                    client_id=client_id,
+                cancelled = await _emit_to_completion(
+                    log.emit(
+                        controller=controller,
+                        tool=tool_name,
+                        args=audit_args,
+                        result=_coerce_result(result),
+                        success=True,
+                        latency_ms=latency_ms,
+                        client_id=client_id,
+                    )
                 )
+                if cancelled is not None:
+                    raise cancelled
                 return result
 
         return wrapper
@@ -272,6 +350,7 @@ def audited(
 
 
 __all__ = [
+    "CANCELLED_ERROR",
     "ToolClassificationConflictError",
     "annotate_audit",
     "audited",
