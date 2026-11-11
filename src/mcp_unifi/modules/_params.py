@@ -35,6 +35,10 @@ BoundedSecret = Annotated[str, Field(max_length=128)]
 # Hostnames, FQDNs, DNS records, and provider update URLs. DNS names cap at 253.
 BoundedHostname = Annotated[str, Field(max_length=253)]
 
+# A client's free-text note (the controller's ``note`` field on a user
+# record). Longer than a name, still bounded.
+BoundedNote = Annotated[str, Field(max_length=1024)]
+
 # General short free text (reasons, provider logins, schedule expressions).
 BoundedText = Annotated[str, Field(max_length=256)]
 
@@ -49,6 +53,7 @@ __all__ = [
     "BoundedHostname",
     "BoundedJson",
     "BoundedName",
+    "BoundedNote",
     "BoundedSecret",
     "BoundedSsid",
     "BoundedText",

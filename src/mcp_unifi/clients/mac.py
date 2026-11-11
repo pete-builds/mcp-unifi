@@ -41,10 +41,21 @@ def normalize_mac(value: object) -> str:
     return ":".join(digits[i : i + 2] for i in range(0, 12, 2))
 
 
+def is_mac(value: object) -> bool:
+    """``True`` when ``value`` is a MAC in one of the forms :func:`normalize_mac` reshapes.
+
+    For a tool that must refuse a malformed MAC before it writes anything,
+    rather than let a lookup quietly find nothing. Uses the same patterns as
+    :func:`normalize_mac`, so the two can never disagree on what a MAC is.
+    """
+    text = str(value or "").strip().lower()
+    return bool(_HEX12.match(text)) or any(pattern.match(text) for pattern in _GROUPED)
+
+
 def same_mac(a: object, b: object) -> bool:
     """``True`` when ``a`` and ``b`` name the same MAC in any accepted form."""
     left = normalize_mac(a)
     return bool(left) and left == normalize_mac(b)
 
 
-__all__ = ["normalize_mac", "same_mac"]
+__all__ = ["is_mac", "normalize_mac", "same_mac"]

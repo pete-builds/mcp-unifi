@@ -161,6 +161,8 @@ class Backend(Protocol):
     async def find_user_by_mac(self, mac: str) -> UniFiRecord | None: ...
     async def create_dhcp_lease(self, payload: dict[str, Any]) -> UniFiRecord: ...
     async def update_dhcp_lease(self, user_id: str, payload: dict[str, Any]) -> UniFiRecord: ...
+    async def list_user_records(self) -> list[UniFiRecord]: ...
+    async def update_user(self, user_id: str, patch: dict[str, Any]) -> UniFiRecord: ...
     async def delete_dhcp_lease(self, lease_id: str) -> bool: ...
 
     # ----- Port forwarding ------------------------------------------------
@@ -434,6 +436,12 @@ class StubBackend:
 
     async def update_dhcp_lease(self, user_id: str, payload: dict[str, Any]) -> UniFiRecord:
         return self.state.update_dhcp_lease(user_id, payload)
+
+    async def list_user_records(self) -> list[UniFiRecord]:
+        return self.state.list_user_records()
+
+    async def update_user(self, user_id: str, patch: dict[str, Any]) -> UniFiRecord:
+        return self.state.update_user(user_id, patch)
 
     async def delete_dhcp_lease(self, lease_id: str) -> bool:
         return self.state.delete_dhcp_lease(lease_id)
@@ -798,6 +806,12 @@ class RealBackend:
 
     async def update_dhcp_lease(self, user_id: str, payload: dict[str, Any]) -> UniFiRecord:
         return await self.client.update_dhcp_lease(user_id, payload)
+
+    async def list_user_records(self) -> list[UniFiRecord]:
+        return await self.client.list_user_records()
+
+    async def update_user(self, user_id: str, patch: dict[str, Any]) -> UniFiRecord:
+        return await self.client.update_user(user_id, patch)
 
     async def delete_dhcp_lease(self, lease_id: str) -> bool:
         return await self.client.delete_dhcp_lease(lease_id)

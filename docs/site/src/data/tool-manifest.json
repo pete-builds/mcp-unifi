@@ -1,5 +1,5 @@
 {
-  "tool_count": 139,
+  "tool_count": 140,
   "tools": [
     {
       "description": "Return credentials expiring within ``days_ahead`` days.\n\nSide effects: None (read-only).\n\nIterates ``list_credentials`` client-side and filters to those whose\n``expires_at`` (epoch milliseconds) falls inside the window\n``[now, now + days_ahead]``. Each entry includes ``days_until_expiry``\nso the LLM can sort and summarise without re-doing the math.\nCredentials with no ``expires_at`` (typical for mobile credentials)\nare left out and only counted in ``no_expiry_count``. Two more lists\nkeep nothing hidden: ``already_expired`` holds credentials whose\n``expires_at`` is already in the past (with ``days_since_expiry``),\nand ``unparseable_expiry`` holds credentials whose ``expires_at`` is\npresent but is not an epoch-millisecond number (a string, seconds, 0),\nso a bad value is reported rather than skipped.\n\nExample: audit_expiring_credentials(days_ahead=14)",
@@ -3687,6 +3687,75 @@
       "name": "unblock_client"
     },
     {
+      "description": "Set or clear the display name and note of one or more clients by MAC.\n\nCosmetic only: no IP reservation, network, AP or group is touched.\nTo pin an IP use ``update_static_dhcp_lease`` instead; that tool\nalways sets ``use_fixedip``, so renaming through it reserves an IP.\n\nSide effects:\n- For each client whose name or note differs, sends one partial\n  ``PUT /rest/user/{_id}`` carrying only the changed fields, plus\n  ``noted`` when it has to flip (it is true exactly when the client\n  has a name or a note, as a UI rename sets it). A client whose\n  values already match gets no write.\n- A clear is sent as an empty string, which the long-standing\n  Art-of-WiFi client documents as removing the name. Applying a\n  clear through this REST endpoint is not live-verified.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n- The same MAC twice in one call is refused before anything is\n  written. One client failing does not stop the others; each MAC\n  gets its own ``status``. If no client was updated or already\n  matched, the response is an error envelope that still carries\n  every per-MAC result.\n\nExample: update_clients(updates=[{\"mac\": \"aa:bb:cc:00:00:02\", \"name\": \"Pete's iPhone\"}, {\"mac\": \"aa:bb:cc:00:00:04\", \"note\": None}])",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "description": "Preview the change without applying it. Returns, per\nMAC, the ``{old, new}`` value of each field that would\nchange (``noted`` marked ``dependent``), and flags MACs the\ncontroller has no record of.",
+            "type": "boolean"
+          },
+          "updates": {
+            "description": "1 to 100 items, each ``{\"mac\": ..., \"name\": ...,\n\"note\": ...}``. ``mac`` is required. Leave a field out to\nkeep it; send ``null`` or ``\"\"`` to clear it. Each item must\nname at least one of ``name`` (max 128) or ``note``\n(max 1024). Surrounding whitespace is stripped, control\ncharacters are refused, other keys are refused.",
+            "items": {
+              "additionalProperties": false,
+              "description": "One client's name and note change. A field left out is kept; null or \"\" clears it.",
+              "properties": {
+                "mac": {
+                  "description": "Client MAC in any common form, e.g. \"aa:bb:cc:00:00:01\".",
+                  "type": "string"
+                },
+                "name": {
+                  "anyOf": [
+                    {
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "New display name. Leave out to keep it; null or empty clears it."
+                },
+                "note": {
+                  "anyOf": [
+                    {
+                      "maxLength": 1024,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "New note. Leave out to keep it; null or empty clears it."
+                }
+              },
+              "required": [
+                "mac"
+              ],
+              "type": "object"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "updates"
+        ],
+        "type": "object"
+      },
+      "name": "update_clients"
+    },
+    {
       "description": "Patch fields on an existing content-filtering profile (read-modify-write).\n\nSide effects:\n- Modifies the named profile in place. The v2 PUT replaces the whole\n  object, so this reads the current profile first and merges\n  ``updates`` onto it before writing: only the keys you supply change,\n  everything else (scope, schedule, the other lists) is preserved.\n- Takes effect immediately on DNS resolution for the in-scope clients\n  and networks: enabling a category starts blocking it; adding a\n  ``block_list`` domain starts NXDOMAIN-ing it.\n- List fields (``categories``, ``allow_list``, ``block_list``,\n  ``client_macs``, ``network_ids``, ``safe_search``) are **replaced\n  wholesale**, not appended, so pass the full desired list. Read the\n  current value with ``get_content_filter_details`` first.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: update_content_filter(filter_id=\"65f...\", updates={\"enabled\": False})",
       "input_schema": {
         "additionalProperties": false,
@@ -4021,7 +4090,7 @@
       "name": "update_route"
     },
     {
-      "description": "Convert or update an existing client to a fixed-IP reservation.\n\nUse this instead of ``create_static_dhcp_lease`` when the MAC already\nhas a user record on the controller (any client that has ever\nconnected). The controller rejects POST ``/rest/user`` for known MACs\nwith ``api.err.MacUsed``; this tool resolves the existing ``_id`` and\nPUTs an update to ``/rest/user/{_id}`` instead.\n\nSide effects:\n- Sets ``use_fixedip=true`` and pins ``fixed_ip`` on the user record.\n- If ``local_dns_record`` is supplied, also sets\n  ``local_dns_record_enabled=true`` so the name resolves on the LAN\n  (controller version permitting).\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n- If no user record exists for ``mac``, the call fails with a clear\n  error. In that case use ``create_static_dhcp_lease`` instead.\n\nExample: update_static_dhcp_lease(mac=\"d0:11:e5:03:f6:3a\", fixed_ip=\"192.168.1.50\", network_id=\"6a0...\", name=\"cypher\")",
+      "description": "Convert or update an existing client to a fixed-IP reservation.\n\nUse this instead of ``create_static_dhcp_lease`` when the MAC already\nhas a user record on the controller (any client that has ever\nconnected). The controller rejects POST ``/rest/user`` for known MACs\nwith ``api.err.MacUsed``; this tool resolves the existing ``_id`` and\nPUTs an update to ``/rest/user/{_id}`` instead.\n\nThis always reserves an IP. To rename a client or set its note with\nno reservation, use ``update_clients``.\n\nSide effects:\n- Sets ``use_fixedip=true`` and pins ``fixed_ip`` on the user record.\n- ``network_id`` is sent only when given. Left out, the record keeps\n  the network it already has, as the Art-of-WiFi client's\n  ``edit_client_fixedip`` treats it. Omitting it is not live-verified.\n- If ``local_dns_record`` is supplied, also sets\n  ``local_dns_record_enabled=true`` so the name resolves on the LAN\n  (controller version permitting).\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n- If no user record exists for ``mac``, the call fails with a clear\n  error. In that case use ``create_static_dhcp_lease`` instead.\n\nExample: update_static_dhcp_lease(mac=\"d0:11:e5:03:f6:3a\", fixed_ip=\"192.168.1.50\", network_id=\"6a0...\", name=\"cypher\")",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -4056,14 +4125,14 @@
             "type": "string"
           },
           "network_id": {
-            "description": "``_id`` of the network/VLAN the IP belongs to.",
+            "default": "",
+            "description": "``_id`` of the network/VLAN the IP belongs to\n(optional). Leave it out to keep the record's current\nnetwork.",
             "type": "string"
           }
         },
         "required": [
           "mac",
-          "fixed_ip",
-          "network_id"
+          "fixed_ip"
         ],
         "type": "object"
       },

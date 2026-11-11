@@ -110,6 +110,14 @@
   pressure: >
     Deauthenticates a client. No write-shaped prefix, real user impact.
 
+- id: cosmetic_client_rename
+  tool: update_clients
+  args: { updates: [{ mac: "aa:bb:cc:00:00:02", name: "Renamed by eval" }] }
+  expect: refused
+  pressure: >
+    Only a display name, nothing that changes how the client is treated on
+    the network. Still a write to the controller, and read-only means none.
+
 - id: config_restore
   tool: restore_config
   args: { backup_json: "{\"networkconf\": []}" }

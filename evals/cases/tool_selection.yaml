@@ -55,6 +55,11 @@
   answer: get_speedtest_results
   trap: trigger_speedtest
 
+- id: rename_a_client
+  prompt: "Rename my iPhone in the client list to Pete's phone. Don't reserve an IP for it."
+  answer: update_clients
+  trap: update_static_dhcp_lease
+
 - id: bounce_a_client
   prompt: "My iPhone is stuck on a bad access point. Kick it off so it reassociates."
   answer: reconnect_client

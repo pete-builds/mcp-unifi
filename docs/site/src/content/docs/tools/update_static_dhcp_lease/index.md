@@ -14,8 +14,14 @@ connected). The controller rejects POST ``/rest/user`` for known MACs
 with ``api.err.MacUsed``; this tool resolves the existing ``_id`` and
 PUTs an update to ``/rest/user/{_id}`` instead.
 
+This always reserves an IP. To rename a client or set its note with
+no reservation, use ``update_clients``.
+
 Side effects:
 - Sets ``use_fixedip=true`` and pins ``fixed_ip`` on the user record.
+- ``network_id`` is sent only when given. Left out, the record keeps
+  the network it already has, as the Art-of-WiFi client's
+  ``edit_client_fixedip`` treats it. Omitting it is not live-verified.
 - If ``local_dns_record`` is supplied, also sets
   ``local_dns_record_enabled=true`` so the name resolves on the LAN
   (controller version permitting).
@@ -36,7 +42,7 @@ update_static_dhcp_lease(mac="d0:11:e5:03:f6:3a", fixed_ip="192.168.1.50", netwo
 |---|---|---|---|---|
 | `mac` | `string` | yes | — | Client MAC address (e.g. ``"d0:11:e5:03:f6:3a"``). |
 | `fixed_ip` | `string` | yes | — | IPv4 address to pin. Must be inside the network's subnet. |
-| `network_id` | `string` | yes | — | ``_id`` of the network/VLAN the IP belongs to. |
+| `network_id` | `string` | no | "" | ``_id`` of the network/VLAN the IP belongs to (optional). Leave it out to keep the record's current network. |
 | `name` | `string` | no | "" | Friendly display name / hostname alias (optional). |
 | `local_dns_record` | `string` | no | "" | Local DNS name to resolve to ``fixed_ip`` (optional). When set, ``local_dns_record_enabled=true`` is also sent. |
 | `controller` | `string` | no | "default" | Name of the UniFi controller to target. Defaults to ``"default"``. |
