@@ -145,19 +145,24 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             dry_run: Preview the change without applying it. Returns the
                 predicted change set.
         """
-        if dry_run:
-            return format_json(
-                {
-                    "dry_run": True,
-                    "controller": controller,
-                    "would_update": {"profile_id": profile_id, "patch": updates},
-                    "summary": (
-                        f"Would update port profile {profile_id} ({len(updates)} field(s))"
-                    ),
-                }
-            )
         try:
             backend = resolve_backend(registry, controller)
+            if dry_run:
+                # Resolve the target so a dry run reports the same "not
+                # found" the real call would, rather than previewing success.
+                profiles = await backend.list_port_profiles()
+                if not any(isinstance(p, dict) and p.get("_id") == profile_id for p in profiles):
+                    return err(f"port profile {profile_id} not found")
+                return format_json(
+                    {
+                        "dry_run": True,
+                        "controller": controller,
+                        "would_update": {"profile_id": profile_id, "patch": updates},
+                        "summary": (
+                            f"Would update port profile {profile_id} ({len(updates)} field(s))"
+                        ),
+                    }
+                )
             updated = await backend.update_port_profile(profile_id, updates)
             if updated is None:
                 return err(f"port profile {profile_id} not found")
@@ -196,15 +201,6 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 ``{"dry_run": true, ...}`` envelope. ``False`` (default)
                 generates a preview token that must be confirmed.
         """
-        if dry_run:
-            return format_json(
-                {
-                    "dry_run": True,
-                    "controller": controller,
-                    "would_delete": {"profile_id": profile_id},
-                    "summary": f"Would delete port profile {profile_id}",
-                }
-            )
         try:
             backend = resolve_backend(registry, controller)
             profiles = await backend.list_port_profiles()
@@ -219,6 +215,16 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         )
         if target is None:
             return err(f"port profile {profile_id} not found")
+
+        if dry_run:
+            return format_json(
+                {
+                    "dry_run": True,
+                    "controller": controller,
+                    "would_delete": {"profile_id": profile_id},
+                    "summary": f"Would delete port profile {profile_id}",
+                }
+            )
 
         resource = {
             "_id": profile_id,

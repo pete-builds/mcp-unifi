@@ -10,6 +10,7 @@ The split-module fixtures (``stub_server``, ``real_server``) and helpers
 from __future__ import annotations
 
 import httpx
+import pytest
 import respx
 from fastmcp import FastMCP
 
@@ -827,3 +828,34 @@ async def test_real_set_wan_ipv6_handles_404(real_server: FastMCP) -> None:
     )
     result = await _call(real_server, "set_wan_ipv6", {"connection_type": "dhcpv6"})
     assert "error" in result
+
+
+async def test_set_lan_ipv6_refuses_a_prefix_id_no_delegation_can_hold(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    lan_id = _lan_id(stub_state)
+    result = await _call(
+        stub_server,
+        "set_lan_ipv6",
+        {"network_id": lan_id, "interface_type": "pd", "prefix_id": 100000, "dry_run": True},
+    )
+    assert "prefix_id 100000 out of range" in result["error"]
+    ok = await _call(
+        stub_server,
+        "set_lan_ipv6",
+        {"network_id": lan_id, "interface_type": "pd", "prefix_id": 65535, "dry_run": True},
+    )
+    assert "error" not in ok, ok
+
+
+@pytest.mark.parametrize("server", ["8.8.8.8", "not-an-address", "2001:db8::zz"])
+async def test_set_lan_ipv6_refuses_dns_servers_that_are_not_ipv6(
+    stub_server: FastMCP, stub_state: StubState, server: str
+) -> None:
+    lan_id = _lan_id(stub_state)
+    result = await _call(
+        stub_server,
+        "set_lan_ipv6",
+        {"network_id": lan_id, "dns_auto": False, "dns_servers": [server], "dry_run": True},
+    )
+    assert "is not an IPv6 address" in result["error"]

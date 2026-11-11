@@ -138,7 +138,9 @@ async def test_delete_dynamic_dns_round_trip(stub_server: FastMCP, stub_state: S
     assert not any(d["_id"] == did for d in stub_state.list_dynamic_dns())
 
 
-async def test_delete_dynamic_dns_dry_run(stub_server: FastMCP) -> None:
+async def test_delete_dynamic_dns_dry_run(stub_server: FastMCP, stub_state: StubState) -> None:
+    # The dry run resolves the config like the preview does, so it needs one.
+    stub_state.dynamic_dns.append({"_id": "x", "service": "noip", "host_name": "h.example"})
     result = await _call(stub_server, "delete_dynamic_dns", {"ddns_id": "x", "dry_run": True})
     assert result["dry_run"] is True
     assert result["would_delete"]["ddns_id"] == "x"
@@ -238,3 +240,23 @@ async def test_real_delete_dynamic_dns_handles_500_on_lookup(real_server: FastMC
     respx.get(f"{BASE}/rest/dynamicdns").mock(return_value=httpx.Response(500))
     result = await _call(real_server, "delete_dynamic_dns", {"ddns_id": "dd1"})
     assert "error" in result
+
+
+async def test_create_dynamic_dns_custom_requires_server(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """``server`` is documented as required for ``service="custom"`` but was
+    never checked, so the config was created with nowhere to send updates."""
+    before = list(stub_state.dynamic_dns)
+    args = {"service": "custom", "host_name": "a.example.com", "login": "l", "password": "p"}
+    for dry_run in (True, False):
+        result = await _call(stub_server, "create_dynamic_dns", {**args, "dry_run": dry_run})
+        assert "requires server" in result.get("error", ""), result
+    assert stub_state.dynamic_dns == before
+
+    ok = await _call(
+        stub_server,
+        "create_dynamic_dns",
+        {**args, "server": "ddns.example.net", "dry_run": True},
+    )
+    assert ok.get("dry_run") is True

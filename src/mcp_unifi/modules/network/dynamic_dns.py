@@ -153,6 +153,8 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             dry_run: Preview the change without applying it. Returns the
                 predicted change set (with the password redacted).
         """
+        if service.strip().lower() == "custom" and not server.strip():
+            return err("service='custom' requires server (the custom update-URL host)")
         payload: dict[str, Any] = {
             "service": service,
             "host_name": host_name,
@@ -213,20 +215,26 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         """
         if not updates:
             return err("update_dynamic_dns requires a non-empty updates object")
-        if dry_run:
-            redacted = (
-                {**updates, "x_password": "[REDACTED]"} if "x_password" in updates else updates
-            )
-            return format_json(
-                {
-                    "dry_run": True,
-                    "controller": controller,
-                    "would_update": {"ddns_id": ddns_id, "patch": redacted},
-                    "summary": (f"Would update dynamic DNS {ddns_id} ({len(updates)} field(s))"),
-                }
-            )
         try:
             backend = resolve_backend(registry, controller)
+            if dry_run:
+                # Resolve the target so a dry run reports the same "not
+                # found" the real call would, rather than previewing success.
+                if await _find_ddns(backend, ddns_id) is None:
+                    return err(f"dynamic DNS config {ddns_id} not found")
+                redacted = (
+                    {**updates, "x_password": "[REDACTED]"} if "x_password" in updates else updates
+                )
+                return format_json(
+                    {
+                        "dry_run": True,
+                        "controller": controller,
+                        "would_update": {"ddns_id": ddns_id, "patch": redacted},
+                        "summary": (
+                            f"Would update dynamic DNS {ddns_id} ({len(updates)} field(s))"
+                        ),
+                    }
+                )
             updated = await backend.update_dynamic_dns(ddns_id, updates)
             if updated is None:
                 return err(f"dynamic DNS config {ddns_id} not found")
@@ -266,6 +274,15 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 ``{"dry_run": true, ...}`` envelope. ``False`` (default)
                 generates a preview token that must be confirmed.
         """
+        try:
+            backend = resolve_backend(registry, controller)
+            target = await _find_ddns(backend, ddns_id)
+        except UniFiError as exc:
+            logger.exception("delete_dynamic_dns preview lookup failed", extra={"ddns_id": ddns_id})
+            return err(str(exc))
+        if target is None:
+            return err(f"dynamic DNS config {ddns_id} not found")
+
         if dry_run:
             return format_json(
                 {
@@ -275,14 +292,6 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                     "summary": f"Would delete dynamic DNS {ddns_id}",
                 }
             )
-        try:
-            backend = resolve_backend(registry, controller)
-            target = await _find_ddns(backend, ddns_id)
-        except UniFiError as exc:
-            logger.exception("delete_dynamic_dns preview lookup failed", extra={"ddns_id": ddns_id})
-            return err(str(exc))
-        if target is None:
-            return err(f"dynamic DNS config {ddns_id} not found")
 
         resource = {
             "_id": ddns_id,
