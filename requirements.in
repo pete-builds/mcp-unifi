@@ -1,17 +1,17 @@
-fastmcp==4.1.5
+fastmcp==4.1.6
 httpx==0.28.1
 uvicorn==0.54.0
 python-dotenv==1.2.4
-pydantic==2.14.2
+pydantic==2.14.3
 pydantic-settings==2.16.2
 
 # Security: force-upgrade fastmcp's transitive auth deps past HIGH CVEs
 # (CVE-2026-48526, GHSA-537c-gmf6-5ccf, CVE-2026-49852, CVE-2026-53539).
 pyjwt==2.15.1
 cryptography==50.0.2
-joserfc==1.7.7
+joserfc==1.8.0
 python-multipart==0.0.33
 
 # Security: force mcp past HIGH CVEs (CVE-2026-52869, CVE-2026-52870,
-# CVE-2026-59950) and satisfy fastmcp==4.1.5's mcp>=2.0.0 floor.
+# CVE-2026-59950) and satisfy fastmcp==4.1.6's mcp>=2.0.0 floor.
 mcp==2.3.0
