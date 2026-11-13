@@ -41,7 +41,7 @@ claude mcp add --transport stdio --scope user unifi \
   --env MCP_UNIFI_READONLY=true \
   --env UNIFI_HOST=192.168.1.1 \
   --env UNIFI_API_KEY=<your-local-api-key> \
-  -- uvx --from git+https://github.com/pete-builds/mcp-unifi@v0.28.0 mcp-unifi
+  -- uvx --from git+https://github.com/pete-builds/mcp-unifi@v0.29.0 mcp-unifi
 ```
 
 Leaving `STUB_MODE` out while setting a host and key still serves the simulator's data. From 0.29.0 the server then logs a warning at startup and every answer says the data is simulated; v0.28.0 says nothing.
