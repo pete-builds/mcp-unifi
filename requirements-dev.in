@@ -5,5 +5,5 @@ pytest-cov==7.1.0
 respx==0.23.1
 ruff==0.17.3
 mypy==2.4.1
-types-PyYAML==6.0.12.20261030
+types-PyYAML==6.0.12.20261103
 hypothesis==6.170.14
