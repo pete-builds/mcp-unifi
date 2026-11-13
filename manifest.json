@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "mcp-unifi",
   "display_name": "UniFi Gateway",
-  "version": "0.28.0",
+  "version": "0.29.0",
   "description": "MCP server for self-hosted UniFi gateway management.",
   "long_description": "Self-hosted UniFi gateway management: VLANs, WLANs, firewall, clients, DHCP, observability, UniFi Protect cameras, and UniFi Access doors / credentials / badge events. Multi-site, dry-run on destructive ops, replayable audit log. Stub mode lets you try the full tool surface with no hardware.",
   "author": {
@@ -39,6 +39,7 @@
       "env": {
         "PYTHONPATH": "${__dirname}/bundle",
         "STUB_MODE": "${user_config.stub_mode}",
+        "MCP_UNIFI_READONLY": "${user_config.readonly}",
         "UNIFI_HOST": "${user_config.unifi_host}",
         "UNIFI_API_KEY": "${user_config.unifi_api_key}",
         "MCP_TRANSPORT": "stdio",
@@ -50,8 +51,15 @@
   "user_config": {
     "stub_mode": {
       "type": "boolean",
-      "title": "Stub Mode",
-      "description": "When enabled, the server returns realistic mock data and requires no UniFi hardware. Great for trying things out before pointing at a real gateway.",
+      "title": "Stub Mode (sample data)",
+      "description": "While this is on, every answer is made-up sample data from a built-in simulator, even if you fill in your host and API key below. Turn this off to see your own network.",
+      "default": true,
+      "required": false
+    },
+    "readonly": {
+      "type": "boolean",
+      "title": "Read-only",
+      "description": "While this is on, Claude can look at your network but cannot change it: every tool that would make a change is hidden and refused. Turn it off only when you want Claude to make changes.",
       "default": true,
       "required": false
     },
@@ -78,9 +86,9 @@
     }
   },
   "compatibility": {
-    "platforms": ["darwin", "win32", "linux"],
+    "platforms": ["linux"],
     "runtimes": {
-      "python": ">=3.13,<4.0"
+      "python": ">=3.13,<3.14"
     }
   }
 }
