@@ -27,7 +27,7 @@ If you don't have hardware yet, every install path supports **`STUB_MODE=true`**
 Four supported install paths. Pick the one that matches how you run Claude:
 
 - **[Docker](/mcp-unifi/install/docker/)** — long-running container, Streamable HTTP transport on port 3714. Best for homelab setups with multiple clients (Claude Code + Claude Desktop + Cursor sharing one server).
-- **[Claude Desktop (.dxt)](/mcp-unifi/install/dxt/)** — one-click install. Stdio transport. The server starts on demand, no separate container to run.
+- **[Claude Desktop (.dxt)](/mcp-unifi/install/dxt/)**: one-click install. Stdio transport. Built for Linux x86_64 only today; on macOS and Windows use the [Claude Desktop uvx config](/mcp-unifi/recipes/claude-desktop/) instead.
 - **[Helm](/mcp-unifi/install/helm/)** — Kubernetes deployment. Streamable HTTP behind a Service / Ingress. Multi-controller via a Secret. Helm repo at `https://pete-builds.github.io/mcp-unifi/`.
 - **[uvx / pipx](/mcp-unifi/install/uvx/)** — quick one-off runs straight from the GitHub repo. Stdio transport (set `MCP_TRANSPORT=stdio`; the default is Streamable HTTP). Good for trying things out without committing to a deploy shape.
 
@@ -46,4 +46,4 @@ claude mcp add --transport http --scope user unifi http://localhost:3714/mcp \
   --header "Authorization: Bearer $MCP_UNIFI_TOKEN"
 ```
 
-Then in Claude Code: *"list my UniFi devices"*. You'll get two stubbed devices back, no hardware required. See the [Claude Code recipe](/mcp-unifi/recipes/claude-code/) for the full walkthrough and the [Authentication guide](/mcp-unifi/guides/auth/) for the token model.
+Then in Claude Code: *"list my UniFi devices"*. You'll get three made-up devices back (a gateway, an access point and a switch), no hardware required. See the [Claude Code recipe](/mcp-unifi/recipes/claude-code/) for the full walkthrough and the [Authentication guide](/mcp-unifi/guides/auth/) for the token model.

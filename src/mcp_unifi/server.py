@@ -51,14 +51,16 @@ from mcp_unifi.clients.protect_stubs import ProtectStubState
 from mcp_unifi.clients.stubs import StubState
 from mcp_unifi.clients.unifi import UniFiClient
 from mcp_unifi.config import (
+    SIMULATED_DATA_NOTICE,
     Settings,
     load_settings,
     log_bare_name_warnings,
     log_legacy_shape_warnings,
+    log_stub_mode_warning,
 )
 from mcp_unifi.dispatcher import build_registry, register_modules
 from mcp_unifi.logging_setup import configure_logging
-from mcp_unifi.responses import AdaptiveResponseMiddleware
+from mcp_unifi.responses import AdaptiveResponseMiddleware, SimulatedDataNoticeMiddleware
 from mcp_unifi.scoping import WILDCARD, ScopeMiddleware, WriteGateMiddleware
 
 logger = logging.getLogger("mcp_unifi.server")
@@ -142,6 +144,9 @@ def build_server(
     # key, or TLS verification off), once per boot. ADR 0003's interim step
     # and step 1 of ADR 0007's reversal path. Nothing is refused.
     log_legacy_shape_warnings(settings)
+    # A gateway configured while stub mode answers: the simulator's devices
+    # look real, so say so loudly at boot (and on every result, below).
+    log_stub_mode_warning(settings)
 
     registry = build_registry(
         settings,
@@ -181,6 +186,9 @@ def build_server(
         return JSONResponse(body)
 
     register_modules(mcp, settings, registry)
+    # First, so it sits outermost and appends its line after every other
+    # middleware has framed the result (including a scope or write-gate refusal).
+    _install_simulated_data_notice(mcp, settings)
     _install_scope_middleware(mcp, settings)
     _install_adaptive_response_middleware(mcp, settings)
     # Added last, so it sits innermost: FastMCP builds the chain in reverse
@@ -189,6 +197,16 @@ def build_server(
     # middleware and is framed exactly like any other tool error envelope.
     _install_write_gate_middleware(mcp, settings)
     return mcp
+
+
+def _install_simulated_data_notice(mcp: FastMCP, settings: Settings) -> None:
+    """Mark every tool result as simulated while stub mode hides a configured gateway.
+
+    Not installed otherwise: plain stub mode with no gateway configured is the
+    documented way to try the server, and real mode has nothing to announce.
+    """
+    if settings.stub_mode_hides_gateway:
+        mcp.add_middleware(SimulatedDataNoticeMiddleware(SIMULATED_DATA_NOTICE))
 
 
 def _install_adaptive_response_middleware(mcp: FastMCP, settings: Settings) -> None:
