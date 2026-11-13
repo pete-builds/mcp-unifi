@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-11-13
+
+### Added
+
+- **A configured gateway that stub mode is ignoring is now announced, at
+  startup and in every answer.** `STUB_MODE` defaults to true, and the
+  controller config is built from `UNIFI_HOST` plus a key (or
+  `MCP_UNIFI_CONTROLLERS_FILE`) in either mode. So someone who configured
+  their gateway and never set `STUB_MODE=false` got the simulator's made-up
+  devices, which look real, with nothing saying so. In that state the server
+  now logs one `SIMULATED DATA` warning at boot naming the setting that
+  supplied the gateway (never a value) and whether `STUB_MODE` was unset or
+  set to true, and appends one plain-text line to every tool result:
+  "NOTE: this answer is simulated sample data, not your network...". The line
+  is a separate text block after the tool's own JSON, so `content[0]` and
+  `structuredContent` are byte for byte what they were, and a bare-list
+  result keeps its shape. Plain stub mode with no gateway configured, and
+  real mode, are unchanged. The `STUB_MODE` default itself is unchanged:
+  flipping it is a breaking change left to a later decision.
+  `tests/test_stub_mode_notice.py` covers the env and controllers-file
+  routes, the Desktop form's explicit `STUB_MODE=true`, error results, and
+  the three states that must stay silent.
+- **The Claude Desktop bundle's form has a Read-only setting, on by
+  default.** It maps to `MCP_UNIFI_READONLY`. The Stub Mode field is now
+  titled "Stub Mode (sample data)" and says plainly that every answer is
+  made-up while it is on, and to turn it off to see your own network. The
+  form's default for Stub Mode is unchanged.
+- **The README opens with "Install in Claude"**: a copy-paste
+  `claude_desktop_config.json` that runs this release through `uvx` with
+  `STUB_MODE=false` and `MCP_UNIFI_READONLY=true`, the config file location
+  on macOS and Windows, where the API key comes from, the matching
+  `claude mcp add`, and what has been tested where. The Claude Desktop,
+  Claude Code and uvx docs pages lead with the same read-only form. A docs
+  test pins the section's shape, and another fails any pinned
+  `mcp-unifi@vX.Y.Z` install URL that does not match `pyproject.toml`, so the
+  release PR bumps it with the other version surfaces.
+
+### Changed
+
+- **Desktop bundle users who make changes through Claude must untick
+  Read-only after upgrading.** The new Read-only field defaults to on, so a
+  bundle install that wrote to the network before this release becomes
+  read-only on upgrade: mutating tools are hidden and refused until the
+  field is unticked in Settings → Extensions.
+- **The `.dxt` bundle's manifest requires Python 3.13 exactly**
+  (`>=3.13,<3.14`, was `>=3.13,<4.0`). Its compiled packages are built for
+  CPython 3.13 and do not load on 3.14. A packaging test ties the range to
+  the Python `release.yml` builds the bundle with.
+- **The `.dxt` bundle's manifest declares Linux as its only platform.** The
+  release workflow builds the bundle on Linux x86_64 with
+  `pip install --target`, so the compiled packages inside it are Linux
+  builds. Started on macOS (Apple silicon, Python 3.13), the 0.28.0 bundle
+  fails at its first import (`ImportError: cannot import name 'ArgsKwargs'
+  from 'pydantic_core._pydantic_core'`); Windows needs Windows builds of the
+  same packages. The manifest named darwin and win32 regardless. The README
+  and the `.dxt` docs page now say the bundle is built for Linux x86_64 only
+  and point macOS and Windows users at the `uvx` config. A packaging test
+  fails if `compatibility.platforms` names a platform `release.yml` does not
+  build the bundle on. Claude Desktop for Linux is a beta (Ubuntu and
+  Debian, x86_64 and arm64); the bundle has x86_64 builds only and has not
+  been tried there. Follow-ups: one bundle per platform, and the manifest
+  launching `python`, a command the macOS test machine did not have at all
+  (only `python3`).
+- The docs said stub mode returns two devices. It returns three.
+
 ### Fixed
 
 - **The release version check no longer fails on a long changelog section.**

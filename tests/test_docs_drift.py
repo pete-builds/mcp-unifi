@@ -681,6 +681,93 @@ def test_tool_call_example_check_can_fail() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Test 9: the README opens with a working, pinned "Install in Claude" config
+# ---------------------------------------------------------------------------
+#
+# A newcomer asked how to install this into Claude (Discussion #225). The
+# README opened with Docker, and the stdio configs in the docs left
+# STUB_MODE at its default, which serves made-up devices even when a gateway
+# is configured. The first thing on the page is now a config that reads the
+# person's own network and cannot change it, pinned to the current release.
+
+_PINNED_GIT_URL_RE = re.compile(r"git\+https://github\.com/pete-builds/mcp-unifi@v(\d+\.\d+\.\d+)")
+
+
+def _pyproject_version() -> str:
+    text = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    match = re.search(r'^version = "([^"]+)"', text, re.M)
+    assert match, "pyproject.toml has no version line"
+    return match.group(1)
+
+
+def _stale_pins(text: str, version: str) -> tuple[int, list[str]]:
+    """Count ``mcp-unifi@vX.Y.Z`` pins in ``text`` and list those not on ``version``."""
+    pins = _PINNED_GIT_URL_RE.findall(text)
+    return len(pins), [f"v{pin}" for pin in pins if pin != version]
+
+
+def test_readme_opens_with_install_in_claude() -> None:
+    text = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    headings = re.findall(r"^## (.+)$", text, re.M)
+    assert headings and headings[0] == "Install in Claude", headings[:3]
+
+    section = text.split("## Install in Claude", 1)[1].split("\n## ", 1)[0]
+    configs = [
+        entry
+        for lang, block in _code_blocks(section)
+        if lang == "json"
+        for entry in _client_config_launches(block)
+    ]
+    assert len(configs) == 1, "the section should carry exactly one claude_desktop_config block"
+    env = configs[0]["env"]
+    assert isinstance(env, dict)
+    assert env.get("MCP_TRANSPORT") == "stdio"
+    assert env.get("STUB_MODE") == "false"
+    assert env.get("MCP_UNIFI_READONLY") == "true"
+    args = configs[0]["args"]
+    assert isinstance(args, list)
+    assert any(_PINNED_GIT_URL_RE.fullmatch(str(a)) for a in args), args
+    # Both config file locations and the Claude Code form are in the section.
+    assert "Library/Application Support/Claude/claude_desktop_config.json" in section
+    assert "%APPDATA%\\Claude\\claude_desktop_config.json" in section
+    assert "claude mcp add" in section
+
+
+def test_pinned_install_urls_name_the_current_release() -> None:
+    """A pinned install command must pin the version this tree releases.
+
+    The README pins the uvx install to a release tag so a newcomer gets a
+    tested build, not whatever main holds. That pin is a version surface: the
+    release PR that bumps pyproject.toml bumps it too, or this fails.
+    """
+    version = _pyproject_version()
+    total = 0
+    offenders: list[str] = []
+    for path in _user_facing_files():
+        found, stale = _stale_pins(path.read_text(encoding="utf-8"), version)
+        total += found
+        offenders.extend(f"  {path.relative_to(REPO_ROOT)}: {pin}" for pin in stale)
+    assert total >= 2, f"only {total} pinned install URL(s) found; detector is blind"
+    if offenders:
+        joined = "\n".join(offenders)
+        pytest.fail(
+            f"These install commands pin a release other than {version} (pyproject.toml). "
+            "Bump them with the other version surfaces.\n\n"
+            f"{joined}"
+        )
+
+
+def test_stale_pin_detector_can_fail() -> None:
+    """Control for the test above."""
+    text = (
+        "uvx --from git+https://github.com/pete-builds/mcp-unifi@v0.27.0 mcp-unifi\n"
+        '"git+https://github.com/pete-builds/mcp-unifi@v1.2.3",\n'
+        "uvx --from git+https://github.com/pete-builds/mcp-unifi@<tag> mcp-unifi\n"
+    )
+    assert _stale_pins(text, "1.2.3") == (2, ["v0.27.0"])
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
