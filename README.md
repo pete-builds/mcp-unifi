@@ -12,7 +12,7 @@
 
 ## Install in Claude
 
-Paste this into Claude Desktop's config file, put in your gateway's address and API key, then fully quit and reopen Claude Desktop. It runs the v0.28.0 release through `uvx` (install [uv](https://docs.astral.sh/uv/) first), reads your own network, and cannot change anything on it.
+Paste this into Claude Desktop's config file, put in your gateway's address and API key, then fully quit and reopen Claude Desktop. It runs the v0.29.0 release through `uvx` (install [uv](https://docs.astral.sh/uv/) first), reads your own network, and cannot change anything on it.
 
 ```json
 {
@@ -21,7 +21,7 @@ Paste this into Claude Desktop's config file, put in your gateway's address and 
       "command": "uvx",
       "args": [
         "--from",
-        "git+https://github.com/pete-builds/mcp-unifi@v0.28.0",
+        "git+https://github.com/pete-builds/mcp-unifi@v0.29.0",
         "mcp-unifi"
       ],
       "env": {
@@ -38,7 +38,7 @@ Paste this into Claude Desktop's config file, put in your gateway's address and 
 
 - **Where the file is.** macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`. Windows: `%APPDATA%\Claude\claude_desktop_config.json`. If the file already has an `mcpServers` block, add the `unifi` entry inside it.
 - **Where the API key comes from.** On the gateway: **Settings → Control Plane → Integrations → Create API Key**. The config file is plain text on disk, so keep it as private as the key.
-- **`STUB_MODE` is `false` on purpose.** The server's default is a simulator that answers with made-up devices. To try it with no gateway, set `STUB_MODE` to `true` and leave out the host and key. From 0.29.0, a gateway configured while stub mode is on gets a startup warning and a line on every answer saying the data is simulated; v0.28.0, which this config pins, says nothing.
+- **`STUB_MODE` is `false` on purpose.** The server's default is a simulator that answers with made-up devices. To try it with no gateway, set `STUB_MODE` to `true` and leave out the host and key. From 0.29.0, a gateway configured while stub mode is on gets a startup warning and a line on every answer saying the data is simulated; v0.28.0 and earlier say nothing.
 - **`MCP_UNIFI_READONLY` is `true` on purpose.** Every tool that would change your network is hidden and refused. Remove that line when you want Claude to make changes; destructive tools still offer a `dry_run` preview.
 
 The same thing for Claude Code:
@@ -50,7 +50,7 @@ claude mcp add --transport stdio --scope user unifi \
   --env MCP_UNIFI_READONLY=true \
   --env UNIFI_HOST=192.168.1.1 \
   --env UNIFI_API_KEY=<your-local-api-key> \
-  -- uvx --from git+https://github.com/pete-builds/mcp-unifi@v0.28.0 mcp-unifi
+  -- uvx --from git+https://github.com/pete-builds/mcp-unifi@v0.29.0 mcp-unifi
 ```
 
 **What has been tested where.** The `uvx` route: tested on macOS (Apple silicon) in stub mode. Windows: not tested yet. The one-click `.dxt` bundle on the releases page: built on Linux, and it fails at startup on macOS (and, for the same reason, cannot work on Windows). It is built for Linux x86_64 only, where Claude Desktop is in beta, and it has not been tried there. Details under [Install](#install).
