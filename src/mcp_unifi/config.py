@@ -311,6 +311,11 @@ class Settings(BaseSettings):
             "machine. If False, it talks to a real UniFi gateway."
         ),
     )
+    #: Which setting supplied real controller config, when one did: the
+    #: controllers file or ``UNIFI_HOST`` plus a key. ``None`` when the
+    #: controllers were synthesised for stub mode or passed in directly.
+    #: Read through :attr:`stub_mode_hides_gateway`.
+    _gateway_config_source: str | None = PrivateAttr(default=None)
 
     # ------------------------------------------------------------------
     # Read-only write gate (v0.21.0+)
@@ -761,7 +766,9 @@ class Settings(BaseSettings):
         if not self.controllers:
             if self.controllers_file is not None:
                 self.controllers = _load_controllers_from_yaml(self.controllers_file)
+                self._gateway_config_source = "MCP_UNIFI_CONTROLLERS_FILE"
             elif self.unifi_host and (self.unifi_api_key or self.unifi_api_key_file is not None):
+                self._gateway_config_source = "UNIFI_HOST and an API key"
                 self.controllers = [
                     ControllerConfig(
                         name="default",
@@ -833,6 +840,25 @@ class Settings(BaseSettings):
             raise ValueError("Real mode requires at least one controller.")
 
         return self
+
+    @property
+    def stub_mode_hides_gateway(self) -> bool:
+        """True when a real gateway is configured but stub mode answers every call.
+
+        ``STUB_MODE`` defaults to true, and the controller config is built from
+        ``UNIFI_HOST`` plus a key, or from a controllers file, whatever the
+        mode. So someone who configures their gateway and never sets
+        ``STUB_MODE=false`` gets the simulator's made-up devices, which look
+        real. This is that state. The default is not changed here: flipping
+        it is a breaking change. What changes is that the state is announced
+        (:func:`log_stub_mode_warning`, and a line on every tool result).
+        """
+        return self.stub_mode and self._gateway_config_source is not None
+
+    @property
+    def gateway_config_source(self) -> str | None:
+        """The setting that supplied real controller config, or ``None``. Never a value."""
+        return self._gateway_config_source
 
     def safe_repr(self) -> dict[str, object]:
         """Return a redacted dict suitable for logging at startup.
@@ -926,6 +952,45 @@ def log_legacy_shape_warnings(settings: Settings) -> None:
             "Supported through 0.x; it becomes mandatory only at a major release. See %s.",
             ADR_0007,
         )
+
+
+#: The line appended to every tool result while :attr:`Settings.stub_mode_hides_gateway`
+#: holds. Plain words, because the model relays it to a person who may not
+#: know what stub mode is. Every result carries it, not only the first: a
+#: conversation can start anywhere, and the data never stops being made up.
+SIMULATED_DATA_NOTICE = (
+    "NOTE: this answer is simulated sample data, not your network. A UniFi "
+    "gateway is configured, but stub mode is on (STUB_MODE defaults to true), "
+    "so mcp-unifi answered from its built-in simulator and did not contact the "
+    "gateway. Set STUB_MODE=false to read your own network."
+)
+
+
+def log_stub_mode_warning(settings: Settings) -> bool:
+    """Warn once per boot when a configured gateway is being ignored for stub data.
+
+    Covers both ways into the state: ``STUB_MODE`` unset (it defaults to
+    true), and ``STUB_MODE=true`` set alongside a gateway, which is what the
+    Claude Desktop form sends while its Stub Mode box is still ticked. The
+    message says which it saw and names the setting that supplied the
+    gateway, never a value from it. Returns whether it warned.
+    """
+    if not settings.stub_mode_hides_gateway:
+        return False
+    how = (
+        "STUB_MODE is true"
+        if "stub_mode" in settings.model_fields_set
+        else "STUB_MODE is unset, and it defaults to true"
+    )
+    logger.warning(
+        "SIMULATED DATA: a UniFi gateway is configured (%s) but %s, so every tool "
+        "answers from the built-in simulator with made-up devices and the gateway is "
+        "never contacted. Set STUB_MODE=false to use your own network. Each tool "
+        "result says this too.",
+        settings.gateway_config_source,
+        how,
+    )
+    return True
 
 
 #: Bare names that are documented and stay supported, so they get no warning.
