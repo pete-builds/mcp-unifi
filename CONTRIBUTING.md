@@ -66,6 +66,12 @@ Plus one the workflow does *not* check: `charts/mcp-unifi/Chart.yaml`
 `CR_SKIP_EXISTING: "true"`, so leaving it alone means the chart silently is
 not republished. Bump it whenever the chart or the app version changes.
 
+And the pinned install commands: every
+`git+https://github.com/pete-builds/mcp-unifi@vX.Y.Z` in `README.md` (the
+"Install in Claude" section) and the docs site. The release workflow does not
+read them, but `tests/test_docs_drift.py` fails the release PR if any of them
+names a version other than `pyproject.toml`'s.
+
 `CHANGELOG.md` needs a literal `## [X.Y.Z] - YYYY-MM-DD` heading. The workflow
 extracts that section verbatim as the GitHub release body and aborts if it is
 missing or empty, so rename `## [Unreleased]` rather than adding a heading

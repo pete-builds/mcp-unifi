@@ -262,9 +262,9 @@ cryptography==50.0.2 \
     #   authlib
     #   joserfc
     #   pyjwt
-cyclopts==5.4.0 \
-    --hash=sha256:29a4639849e9161f64bce7904c787b85f6a8accfb08cd675ad70b7753af57e81 \
-    --hash=sha256:a853c9394fde3e3ec0a1b50c7e20b64bb49dfd71baef5f24eceb7bb397171a41
+cyclopts==5.4.2 \
+    --hash=sha256:f0374ffae32bba180db7eae1d17a97a1bcd656455a3b7436f2133c4132f7c5b5 \
+    --hash=sha256:f8a07bf41d14447960fb75d07b564b13faea1b9a7530cb669db08e43134bbff9
     # via fastmcp-slim
 dnspython==2.9.2 \
     --hash=sha256:8d4d39a513e649d634004ce4d39ade2352efcea472a0247535a5c2d18a9d7ba9 \
