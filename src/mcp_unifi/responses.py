@@ -285,6 +285,39 @@ class AdaptiveResponseMiddleware(Middleware):
         )
 
 
+class SimulatedDataNoticeMiddleware(Middleware):
+    """Append one plain-text line to every tool result saying the data is simulated.
+
+    Installed only when a real gateway is configured but stub mode is on
+    (``Settings.stub_mode_hides_gateway``). The tool's own blocks are left
+    exactly as they were, JSON first, so nothing that parses ``content[0]``
+    or ``structuredContent`` changes; the notice is an extra text block after
+    them. A separate block rather than a JSON field because several tools
+    return a bare list, which has nowhere to put a field without changing its
+    shape. Hosts that show the model the text blocks show it this one too, so
+    the model can tell the person that the devices are made up.
+
+    Registered outermost, after the response shaper has framed the result:
+    the shaper only rewrites single-block results, and must not see this one.
+    """
+
+    def __init__(self, notice: str) -> None:
+        self._notice = notice
+
+    async def on_call_tool(
+        self,
+        context: MiddlewareContext[mt.CallToolRequestParams],
+        call_next: CallNext[mt.CallToolRequestParams, ToolResult],
+    ) -> ToolResult:
+        result = await call_next(context)
+        return ToolResult(
+            content=[*result.content, mt.TextContent(type="text", text=self._notice)],
+            structured_content=result.structured_content,
+            meta=result.meta,
+            is_error=result.is_error,
+        )
+
+
 def _negotiated_revision(context: MiddlewareContext[Any]) -> str | None:
     """Return the MCP revision this client negotiated, or ``None``.
 
@@ -311,6 +344,7 @@ __all__ = [
     "MAX_COMPACT_TEXT_CHARS",
     "STRUCTURED_CONTENT_REVISION",
     "AdaptiveResponseMiddleware",
+    "SimulatedDataNoticeMiddleware",
     "compact_content_text",
     "supports_structured_content",
 ]
