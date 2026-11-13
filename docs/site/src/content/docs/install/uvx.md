@@ -32,16 +32,21 @@ claude mcp add --transport stdio --scope user unifi \
   -- uvx --from git+https://github.com/pete-builds/mcp-unifi mcp-unifi
 ```
 
-`STUB_MODE` defaults to `true`, so that registration serves mock data with no hardware. For real mode, pass the gateway env vars as well:
+`STUB_MODE` defaults to `true`, so that registration serves made-up sample data with no hardware. For your own network, pass the gateway env vars as well. This form is read-only and pinned to a release; drop `MCP_UNIFI_READONLY=true` when you want Claude to make changes:
 
 ```bash
 claude mcp add --transport stdio --scope user unifi \
   --env MCP_TRANSPORT=stdio \
   --env STUB_MODE=false \
+  --env MCP_UNIFI_READONLY=true \
   --env UNIFI_HOST=192.168.1.1 \
   --env UNIFI_API_KEY=<your-local-api-key> \
-  -- uvx --from git+https://github.com/pete-builds/mcp-unifi mcp-unifi
+  -- uvx --from git+https://github.com/pete-builds/mcp-unifi@v0.28.0 mcp-unifi
 ```
+
+Leaving `STUB_MODE` out while setting a host and key still serves the simulator's data. The server then logs a warning at startup and every answer says the data is simulated.
+
+**Tested where:** the `uvx` route was tested on macOS (Apple silicon) in stub mode. Not yet tested on Windows.
 
 Verify with `claude mcp list`. The `unifi` entry should report `Connected`.
 

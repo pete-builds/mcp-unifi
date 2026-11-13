@@ -141,6 +141,98 @@ def test_smithery_stdio_command_keeps_stdin_open() -> None:
 
 
 # ---------------------------------------------------------------------------
+# manifest.json (the Claude Desktop .dxt bundle)
+# ---------------------------------------------------------------------------
+
+
+def _dxt_manifest() -> dict[str, Any]:
+    loaded: dict[str, Any] = json.loads((REPO_ROOT / "manifest.json").read_text(encoding="utf-8"))
+    return loaded
+
+
+def test_dxt_form_offers_read_only_and_ticks_it_by_default() -> None:
+    """A first install from the Desktop form should not be able to change the network.
+
+    The form had Stub Mode and no way to ask for read-only. A person who
+    unticked Stub Mode got every mutating tool at once.
+    """
+    manifest = _dxt_manifest()
+    field = manifest["user_config"]["readonly"]
+    assert field["type"] == "boolean"
+    assert field["default"] is True
+    env = manifest["server"]["mcp_config"]["env"]
+    assert env["MCP_UNIFI_READONLY"] == "${user_config.readonly}"
+
+
+def test_dxt_form_says_plainly_to_turn_stub_mode_off() -> None:
+    """Stub Mode is ticked by default; the field has to say what leaving it on means."""
+    description = _dxt_manifest()["user_config"]["stub_mode"]["description"].lower()
+    assert "turn this off to see your own network" in description
+    assert "made-up" in description
+
+
+def test_dxt_form_fields_are_all_wired_to_the_server() -> None:
+    """A form field no env entry reads is a setting that silently does nothing."""
+    manifest = _dxt_manifest()
+    env_values = " ".join(manifest["server"]["mcp_config"]["env"].values())
+    unused = [key for key in manifest["user_config"] if f"${{user_config.{key}}}" not in env_values]
+    assert not unused, f"user_config fields nothing passes to the server: {unused}"
+
+
+def test_dxt_env_names_are_variables_the_server_reads() -> None:
+    env = set(_dxt_manifest()["server"]["mcp_config"]["env"]) - {"PYTHONPATH"}
+    unknown = sorted(env - _settings_env_names())
+    assert not unknown, f"manifest.json passes variables nothing reads: {unknown}"
+
+
+#: The ``runs-on`` image family a release job uses, and the manifest platform
+#: name a bundle built there can run on.
+_RUNNER_PLATFORM = {"ubuntu": "linux", "macos": "darwin", "windows": "win32"}
+
+
+def _dxt_build_platforms() -> set[str]:
+    """The platforms ``release.yml`` builds the ``.dxt`` on, from the job that builds it.
+
+    ``pip install --target`` downloads wheels for the machine it runs on, so
+    the compiled extensions in the bundle (pydantic-core, cryptography,
+    PyYAML and others) only load on that platform. Verified on macOS arm64
+    with the 0.28.0 bundle: the import of pydantic-core fails at startup.
+    """
+    workflow = yaml.safe_load(
+        (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    )
+    platforms: set[str] = set()
+    for job in workflow["jobs"].values():
+        steps = job.get("steps", [])
+        if not any(".dxt" in str(step.get("name", "")) for step in steps):
+            continue
+        runner = str(job["runs-on"])
+        family = runner.split("-", 1)[0]
+        assert family in _RUNNER_PLATFORM, (
+            f"the .dxt build runs on {runner!r}, which this test cannot map to a "
+            "platform. Teach _RUNNER_PLATFORM about it (a matrix build lists each "
+            "runner) and keep manifest.json compatibility.platforms in step."
+        )
+        platforms.add(_RUNNER_PLATFORM[family])
+    assert platforms, "no release.yml job builds the .dxt; this guard is reading nothing"
+    return platforms
+
+
+def test_dxt_declares_only_platforms_the_release_builds_it_on() -> None:
+    """Claude Desktop installs a bundle on any platform its manifest names.
+
+    The 0.28.0 manifest named darwin and win32 for a bundle built on Linux,
+    so it installed on a Mac and then failed at the first import.
+    """
+    declared = set(_dxt_manifest()["compatibility"]["platforms"])
+    assert declared, "compatibility.platforms is empty"
+    assert declared <= _dxt_build_platforms(), (
+        f"manifest.json declares {sorted(declared)} but release.yml builds the bundle "
+        f"for {sorted(_dxt_build_platforms())} only"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Helm chart
 # ---------------------------------------------------------------------------
 
