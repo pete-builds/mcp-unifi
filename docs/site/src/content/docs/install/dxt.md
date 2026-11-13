@@ -7,7 +7,7 @@ description: The Desktop Extension bundle. Built for Linux x86_64 only today; on
 :::caution[Built for Linux x86_64 only today]
 On macOS or Windows, use the [Claude Desktop recipe](/mcp-unifi/recipes/claude-desktop/) (`uvx`) instead.
 
-The release workflow builds the `.dxt` on a Linux x86_64 machine with `pip install --target`, so the compiled Python packages inside it (pydantic-core, cryptography, PyYAML and others) are Linux builds. Started on macOS (Apple silicon, Python 3.13), the 0.28.0 bundle stops at its first import with `ImportError: cannot import name 'ArgsKwargs' from 'pydantic_core._pydantic_core'`. Windows has not been tried, but it needs Windows builds of the same packages, which the bundle does not contain. The bundle has not been tried on Linux either. From the next release the bundle's manifest declares Linux as its only platform. One bundle per platform is planned follow-up work.
+The release workflow builds the `.dxt` on a Linux x86_64 machine with `pip install --target`, so the compiled Python packages inside it (pydantic-core, cryptography, PyYAML and others) are Linux builds. Started on macOS (Apple silicon, Python 3.13), the 0.28.0 bundle stops at its first import with `ImportError: cannot import name 'ArgsKwargs' from 'pydantic_core._pydantic_core'`. Windows has not been tried, but it needs Windows builds of the same packages, which the bundle does not contain. Claude Desktop for Linux exists as a beta (Ubuntu 22.04 or later and Debian 12 or later, on x86_64 and arm64, per [Anthropic's Linux page](https://code.claude.com/docs/en/desktop-linux)); this bundle only has x86_64 builds, and it has not been tried on Linux. From 0.29.0 the bundle's manifest declares Linux as its only platform and Python 3.13 exactly. One bundle per platform is planned follow-up work.
 :::
 
 The Desktop Extension bundle (`.dxt`) installs mcp-unifi into Claude Desktop from one file, configured through a built-in form instead of JSON. The bundle includes the server and its Python dependencies, but not a Python interpreter: its manifest launches `python`, which must be a Python 3.13 (the compiled packages are built for 3.13 exactly).
@@ -23,21 +23,19 @@ The bundle uses **stdio transport**: Claude Desktop spawns the server as a subpr
 
 ## Configure
 
-Click the extension's gear icon in **Settings → Extensions** to open the configuration form. Five fields:
+Click the extension's gear icon in **Settings → Extensions** to open the configuration form. Five fields from 0.29.0 (the 0.28.0 bundle has no Read-only field):
 
 | Field | What it sets | Default |
 |---|---|---|
 | **Stub Mode (sample data)** | `STUB_MODE`. While on, every answer is made-up sample data, even with a host and key filled in. **Turn it off to see your own network.** | On |
-| **Read-only** | `MCP_UNIFI_READONLY`. While on, Claude can look but not change anything: every tool that would make a change is hidden and refused. | On |
+| **Read-only** (from 0.29.0) | `MCP_UNIFI_READONLY`. While on, Claude can look but not change anything: every tool that would make a change is hidden and refused. | On |
 | **UniFi Host** | `UNIFI_HOST`. IP or hostname (e.g. `192.168.1.1`). Required when Stub Mode is off. | (empty) |
 | **UniFi API Key** | `UNIFI_API_KEY`. Local API key from the gateway. The bundle manifest marks this field sensitive. | (empty) |
 | **Modules Enabled** | `MCP_UNIFI_MODULES_ENABLED`. Comma-separated. Use `network,protect,access` to enable all three. | `network` |
 
-The Read-only field is new in the bundle after 0.28.0; the 0.28.0 bundle has the other four.
-
 To get the API key, log into the gateway UI, go to **Settings → Control Plane → Integrations**, and click **Create API Key**.
 
-If you fill in the host and key and leave Stub Mode on, the server logs a warning at startup and every answer carries a line saying the data is simulated.
+If you fill in the host and key and leave Stub Mode on, the 0.29.0 bundle logs a warning at startup and every answer carries a line saying the data is simulated. The 0.28.0 bundle says nothing.
 
 ## Verify
 

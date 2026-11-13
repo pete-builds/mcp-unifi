@@ -44,6 +44,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Desktop bundle users who make changes through Claude must untick
+  Read-only after upgrading.** The new Read-only field defaults to on, so a
+  bundle install that wrote to the network before this release becomes
+  read-only on upgrade: mutating tools are hidden and refused until the
+  field is unticked in Settings → Extensions.
+- **The `.dxt` bundle's manifest requires Python 3.13 exactly**
+  (`>=3.13,<3.14`, was `>=3.13,<4.0`). Its compiled packages are built for
+  CPython 3.13 and do not load on 3.14. A packaging test ties the range to
+  the Python `release.yml` builds the bundle with.
 - **The `.dxt` bundle's manifest declares Linux as its only platform.** The
   release workflow builds the bundle on Linux x86_64 with
   `pip install --target`, so the compiled packages inside it are Linux
@@ -54,7 +63,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the `.dxt` docs page now say the bundle is built for Linux x86_64 only
   and point macOS and Windows users at the `uvx` config. A packaging test
   fails if `compatibility.platforms` names a platform `release.yml` does not
-  build the bundle on. Building one bundle per platform is follow-up work.
+  build the bundle on. Claude Desktop for Linux is a beta (Ubuntu and
+  Debian, x86_64 and arm64); the bundle has x86_64 builds only and has not
+  been tried there. Follow-ups: one bundle per platform, and the manifest
+  launching `python`, a command the macOS test machine did not have at all
+  (only `python3`).
 - The docs said stub mode returns two devices. It returns three.
 
 ### Fixed

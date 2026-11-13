@@ -41,7 +41,7 @@ The recommended first config. It reads your own gateway and cannot change anythi
 }
 ```
 
-`STUB_MODE` must be `false`: its default is `true`, which answers from a simulator with made-up devices even when a host and key are set. (When that happens the server logs a warning and every answer says the data is simulated.) `MCP_UNIFI_READONLY=true` hides and refuses every tool that would change your network; remove it when you want Claude to make changes.
+`STUB_MODE` must be `false`: its default is `true`, which answers from a simulator with made-up devices even when a host and key are set. (From 0.29.0, when that happens the server logs a warning and every answer says the data is simulated; v0.28.0, pinned above, says nothing.) `MCP_UNIFI_READONLY=true` hides and refuses every tool that would change your network; remove it when you want Claude to make changes.
 
 ## Stdio (uvx): stub mode
 

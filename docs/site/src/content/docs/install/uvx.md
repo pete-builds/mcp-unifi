@@ -44,7 +44,7 @@ claude mcp add --transport stdio --scope user unifi \
   -- uvx --from git+https://github.com/pete-builds/mcp-unifi@v0.28.0 mcp-unifi
 ```
 
-Leaving `STUB_MODE` out while setting a host and key still serves the simulator's data. The server then logs a warning at startup and every answer says the data is simulated.
+Leaving `STUB_MODE` out while setting a host and key still serves the simulator's data. From 0.29.0 the server then logs a warning at startup and every answer says the data is simulated; v0.28.0 says nothing.
 
 **Tested where:** the `uvx` route was tested on macOS (Apple silicon) in stub mode. Not yet tested on Windows.
 

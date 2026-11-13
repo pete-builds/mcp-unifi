@@ -218,6 +218,26 @@ def _dxt_build_platforms() -> set[str]:
     return platforms
 
 
+def test_dxt_python_range_is_the_one_minor_the_bundle_is_built_for() -> None:
+    """Compiled extensions are built for one CPython minor (``cpython-313-...so``).
+
+    ``>=3.13,<4.0`` invited Python 3.14, which cannot load them.
+    """
+    workflow = yaml.safe_load(
+        (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    )
+    built = {
+        str(step["with"]["python-version"])
+        for job in workflow["jobs"].values()
+        for step in job.get("steps", [])
+        if "setup-python" in str(step.get("uses", "")) and ".dxt" in str(step.get("name", ""))
+    }
+    assert len(built) == 1, f"expected one Python for the .dxt build, found {built}"
+    major, minor = next(iter(built)).split(".")[:2]
+    expected = f">={major}.{minor},<{major}.{int(minor) + 1}"
+    assert _dxt_manifest()["compatibility"]["runtimes"]["python"] == expected
+
+
 def test_dxt_declares_only_platforms_the_release_builds_it_on() -> None:
     """Claude Desktop installs a bundle on any platform its manifest names.
 

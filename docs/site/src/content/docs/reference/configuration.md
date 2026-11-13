@@ -10,7 +10,7 @@ All configuration is read from environment variables (and a `.env` file when pre
 
 | Variable | Type | Default | Required | Notes |
 |---|---|---|---|---|
-| `STUB_MODE` | bool | `true` | no | `true` answers every tool from a built-in simulator with made-up devices. When `false`, real-mode controller config is required (either legacy env vars or `MCP_UNIFI_CONTROLLERS_FILE`). If that config is present while this is `true` (set, or left unset), the server logs a `SIMULATED DATA` warning at startup and appends a line to every tool result saying the data is simulated. |
+| `STUB_MODE` | bool | `true` | no | `true` answers every tool from a built-in simulator with made-up devices. When `false`, real-mode controller config is required (either legacy env vars or `MCP_UNIFI_CONTROLLERS_FILE`). From 0.29.0, if that config is present while this is `true` (set, or left unset), the server logs a `SIMULATED DATA` warning at startup and appends a line to every tool result saying the data is simulated. |
 
 ## Legacy single-controller (auto-promoted)
 

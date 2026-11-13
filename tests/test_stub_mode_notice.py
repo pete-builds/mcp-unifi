@@ -29,6 +29,7 @@ import pytest
 from fastmcp import Client, FastMCP
 
 from mcp_unifi.config import Settings
+from mcp_unifi.responses import SimulatedDataNoticeMiddleware
 from mcp_unifi.server import build_server
 
 pytestmark = pytest.mark.usefixtures("clean_unifi_env")
@@ -153,6 +154,14 @@ async def test_every_tool_answer_says_the_data_is_simulated(
     assert devices and devices[0]["name"] == "Gateway"
     # And a plain line after it says what the data is.
     assert any(_says_simulated(t) for t in texts[1:]), texts
+    # structuredContent is still the parsed records. The notice must sit
+    # outside the response shaper: installed inside it, the result has two
+    # blocks, the shaper skips it, and structuredContent falls back to the
+    # JSON text as one string.
+    structured = result.structured_content
+    assert isinstance(structured, dict)
+    assert isinstance(structured["result"], list), structured
+    assert structured["result"] == devices
 
 
 async def test_an_error_answer_carries_the_notice_too(
@@ -208,6 +217,31 @@ def test_real_mode_does_not_warn(
     )
     build_server(settings)  # builds clients; makes no request
     assert not [m for m in warnings_seen() if _says_simulated(m)]
+
+
+async def test_real_mode_answers_are_untouched(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Real mode is the owner's own deployment: no notice middleware, one block per answer.
+
+    The call names an unknown controller so it is refused before any request
+    is built; nothing contacts 192.0.2.1.
+    """
+    settings = _settings_from_env(
+        monkeypatch,
+        tmp_path,
+        {"STUB_MODE": "false", "UNIFI_HOST": "192.0.2.1", "UNIFI_API_KEY": "test-key-not-real"},
+    )
+    server = build_server(settings)
+    assert not [m for m in server.middleware if isinstance(m, SimulatedDataNoticeMiddleware)]
+
+    async with Client(server) as client:
+        result = await client.call_tool("list_devices", {"controller": "nope"})
+
+    assert len(result.content) == 1, [block.text for block in result.content]
+    envelope = json.loads(result.content[0].text)
+    assert envelope["stub_mode"] is False
+    assert "error" in envelope
 
 
 def test_a_host_without_a_key_is_not_a_configured_gateway(

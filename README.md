@@ -38,7 +38,7 @@ Paste this into Claude Desktop's config file, put in your gateway's address and 
 
 - **Where the file is.** macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`. Windows: `%APPDATA%\Claude\claude_desktop_config.json`. If the file already has an `mcpServers` block, add the `unifi` entry inside it.
 - **Where the API key comes from.** On the gateway: **Settings → Control Plane → Integrations → Create API Key**. The config file is plain text on disk, so keep it as private as the key.
-- **`STUB_MODE` is `false` on purpose.** The server's default is a simulator that answers with made-up devices. To try it with no gateway, set `STUB_MODE` to `true` and leave out the host and key. If a gateway is configured while stub mode is on, the server logs a warning and every answer says the data is simulated.
+- **`STUB_MODE` is `false` on purpose.** The server's default is a simulator that answers with made-up devices. To try it with no gateway, set `STUB_MODE` to `true` and leave out the host and key. From 0.29.0, a gateway configured while stub mode is on gets a startup warning and a line on every answer saying the data is simulated; v0.28.0, which this config pins, says nothing.
 - **`MCP_UNIFI_READONLY` is `true` on purpose.** Every tool that would change your network is hidden and refused. Remove that line when you want Claude to make changes; destructive tools still offer a `dry_run` preview.
 
 The same thing for Claude Code:
@@ -53,7 +53,7 @@ claude mcp add --transport stdio --scope user unifi \
   -- uvx --from git+https://github.com/pete-builds/mcp-unifi@v0.28.0 mcp-unifi
 ```
 
-**What has been tested where.** The `uvx` route: tested on macOS (Apple silicon) in stub mode. Windows: not tested yet. The one-click `.dxt` bundle on the releases page: built on Linux, and it fails at startup on macOS (and, for the same reason, cannot work on Windows), so today it is built for Linux x86_64 only, where it has not been tried either. Details under [Install](#install).
+**What has been tested where.** The `uvx` route: tested on macOS (Apple silicon) in stub mode. Windows: not tested yet. The one-click `.dxt` bundle on the releases page: built on Linux, and it fails at startup on macOS (and, for the same reason, cannot work on Windows). It is built for Linux x86_64 only, where Claude Desktop is in beta, and it has not been tried there. Details under [Install](#install).
 
 ## What it is
 
@@ -86,7 +86,7 @@ client gets admin-equivalent access to the controller.
 
 ### Claude Desktop (.dxt bundle): built for Linux x86_64 only today
 
-On macOS or Windows, use [Install in Claude](#install-in-claude) above instead. The `.dxt` bundle on the [releases page](https://github.com/pete-builds/mcp-unifi/releases) is built on a Linux x86_64 machine and carries compiled Python packages for that platform only. Started on macOS (Apple silicon, Python 3.13), the 0.28.0 bundle stops at its first import with `ImportError: cannot import name 'ArgsKwargs' from 'pydantic_core._pydantic_core'`. Windows has not been tried, but it needs Windows builds of the same packages, which the bundle does not contain. From the next release the bundle's manifest declares Linux as its only platform. One bundle per platform is planned follow-up work.
+On macOS or Windows, use [Install in Claude](#install-in-claude) above instead. The `.dxt` bundle on the [releases page](https://github.com/pete-builds/mcp-unifi/releases) is built on a Linux x86_64 machine and carries compiled Python packages for that platform only. Started on macOS (Apple silicon, Python 3.13), the 0.28.0 bundle stops at its first import with `ImportError: cannot import name 'ArgsKwargs' from 'pydantic_core._pydantic_core'`. Windows has not been tried, but it needs Windows builds of the same packages, which the bundle does not contain. Claude Desktop for Linux exists as a beta (Ubuntu 22.04+ and Debian 12+, x86_64 and arm64, per [Anthropic's Linux page](https://code.claude.com/docs/en/desktop-linux)); this bundle only has x86_64 builds and has not been tried there. From 0.29.0 the bundle's manifest declares Linux as its only platform and Python 3.13 exactly. One bundle per platform is planned follow-up work.
 
 Where it does apply: double-click the file and configure it in Claude Desktop's built-in form. The bundle includes the server and its Python dependencies but not a Python interpreter: its manifest launches `python`, which must be a Python 3.13 (the compiled packages are built for 3.13 exactly). Uses stdio transport.
 
@@ -173,7 +173,7 @@ All config is read from environment variables (and `.env` when present). The mos
 
 | Variable | Default | Notes |
 |---|---|---|
-| `STUB_MODE` | `true` | `true` answers from a simulator with made-up devices; set `false` to use your gateway, which then requires real-mode controller config. A gateway configured while this is `true` gets a startup warning and a notice on every tool result. |
+| `STUB_MODE` | `true` | `true` answers from a simulator with made-up devices; set `false` to use your gateway, which then requires real-mode controller config. From 0.29.0, a gateway configured while this is `true` gets a startup warning and a notice on every tool result. |
 | `UNIFI_HOST` | (empty) | Gateway IP or hostname. Required in real mode. |
 | `UNIFI_API_KEY` | (empty) | Local API key. Required in real mode. |
 | `MCP_UNIFI_READONLY` | `false` | When `true`, mutating tools are hidden and refused. See the [Security guide](https://pete-builds.github.io/mcp-unifi/guides/security/#read-only-mode). |
