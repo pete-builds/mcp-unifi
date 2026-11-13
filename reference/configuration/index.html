@@ -89,7 +89,7 @@
 <td>bool</td>
 <td><code dir="auto">true</code></td>
 <td>no</td>
-<td>When <code dir="auto">false</code>, real-mode controller config is required (either legacy env vars or <code dir="auto">MCP_UNIFI_CONTROLLERS_FILE</code>).</td>
+<td><code dir="auto">true</code> answers every tool from a built-in simulator with made-up devices. When <code dir="auto">false</code>, real-mode controller config is required (either legacy env vars or <code dir="auto">MCP_UNIFI_CONTROLLERS_FILE</code>). From 0.29.0, if that config is present while this is <code dir="auto">true</code> (set, or left unset), the server logs a <code dir="auto">SIMULATED DATA</code> warning at startup and appends a line to every tool result saying the data is simulated.</td>
 </tr>
 </tbody>
 </table>
