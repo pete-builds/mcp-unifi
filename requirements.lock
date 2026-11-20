@@ -27,9 +27,9 @@ attrs==26.1.0 \
     #   jsonschema
     #   jsonschema-path
     #   referencing
-authlib==1.9.9 \
-    --hash=sha256:0199649865fefb4304fc57683eaebb15614523073e41e09d98c72f3268ce5cbc \
-    --hash=sha256:cca3dffa51c8d80d6df19aee2279e47219dc996f5a527c06ac2e39d0757c99ef
+authlib==1.9.10 \
+    --hash=sha256:c62d10e1b23945c6d4c578a16170bfefe4879bd23d4be62edea494993dce70aa \
+    --hash=sha256:f7453c4a3f5975f94cc55223c4d48ff9c7d8d3b4e3d727ed2549edaeb9b85d50
     # via fastmcp-slim
 beartype==0.23.1 \
     --hash=sha256:4461b4dc57e3fdd6c8a8464b22cf118002eea107c33e9fef651c69068ab3cce3 \
@@ -282,13 +282,13 @@ exceptiongroup==1.3.2 \
     --hash=sha256:41c6a70dfec22050d3d8b43386b059a4dc0bca3f3d40a40971cb206fff1785af \
     --hash=sha256:ca82e69f0cb535fbde934885744b67669a3efddd50fe7bc00d3398839fcaddec
     # via fastmcp-slim
-fastmcp==4.1.6 \
-    --hash=sha256:5e307ae4ac3048a1b586aac6fc31e08661141bb69b8a2b473070e5becae0176c \
-    --hash=sha256:f54367fdca3d1a37c53164ebf864fb2461acdd92a9d9df731a244078c0332926
+fastmcp==4.2.0 \
+    --hash=sha256:441351551edac39eed248f0ea0f1d87fd95f44812ffee8b72fa05a5053db903d \
+    --hash=sha256:833508360b9a5db6ae3524cf12471b31716c210feee0c726a867e38c43a9287f
     # via -r requirements.in
-fastmcp-slim==4.1.6 \
-    --hash=sha256:cd181b9b780161bbfdfc16ca6e417aaa8efd75d0a9ae961fdd20fa992d3d789f \
-    --hash=sha256:d25691ae70a7f2b9d8197d6261bdd0f4b9ff33064087cd35c20539b0b48bb1ca
+fastmcp-slim==4.2.0 \
+    --hash=sha256:01578f6d1a1423ca073e9d2ea4a193eed3ed9a5330e121fbcd9415511cfd1c0f \
+    --hash=sha256:174239bed3ac47275afa7fe82941a65f86ad0314205195766c92b138c6dcfebe
     # via fastmcp
 griffelib==2.4.1 \
     --hash=sha256:40c028dd2e623f464423f0e11e3c553158f1cf4f1368239a370534d73e1407ff \
@@ -341,7 +341,9 @@ jsonref==1.1.0 \
 jsonschema==4.26.0 \
     --hash=sha256:0c26707e2efad8aa1bfc5b7ce170f3fccc2e4918ff85989ba9ffa9facb2be326 \
     --hash=sha256:d489f15263b8d200f8387e64b4c3a75f06629559fb73deb8fdfb525f2dab50ce
-    # via mcp
+    # via
+    #   fastmcp-slim
+    #   mcp
 jsonschema-path==0.5.0 \
     --hash=sha256:2790a070bc7abb08ea3dbe4d340ece4efadf639223001f020c7503229ba068e2 \
     --hash=sha256:493b156ba895c97602655b620a8456caa2ce08c1aa389f5a7addec065e6e855c
@@ -388,9 +390,9 @@ pathable==0.6.0 \
     --hash=sha256:6404b8b82aef5ff0fd478934137128b99b12212ba35afdde5525ca4f8388ea58 \
     --hash=sha256:82c4ca6c98c502ad12e0d4e9779b6210afee93c38990988c8c5d1b49bdcdf566
     # via jsonschema-path
-platformdirs==4.14.7 \
-    --hash=sha256:391513b74707c42335fff3ea17eaac657a7ee9ffcadd809634d34ea594d0122c \
-    --hash=sha256:5472257c1cf97a14658af52997011c7e59e4aebf3a24950b973c11b579e1b074
+platformdirs==4.14.8 \
+    --hash=sha256:1e34af590de4d978631b751eb2202f2fee4497537a17c1720b12fcf57b331392 \
+    --hash=sha256:96893d686e84e9e6f358a9ea41a8de544df66dbf2ba6cda250e7dc73acf85b9b
     # via fastmcp-slim
 py-key-value-aio==0.4.6 \
     --hash=sha256:267c03c3e24cb99d3097612f8a5cfd8e11785c6a2975e272db0e303ea1850bfd \
@@ -552,9 +554,9 @@ pydantic-core==2.50.4 \
     --hash=sha256:fc04affef30be98c1f36f0c422a4061ef618fdc1dde79f5ad5458dd496fecffa \
     --hash=sha256:ffb616d8d55965839670301dc3bae3abacff560a7e137a89056058a8a9da4d96
     # via pydantic
-pydantic-settings==2.16.2 \
-    --hash=sha256:3dc08ffabed2bbd5dc2dd55ead7b78b4e4c5cd776aecd04310db5f1224caaf46 \
-    --hash=sha256:8d523e5c129b097686bde019bd6109bff53f4c8c3f63f1ddf9933ffa42e5ab4f
+pydantic-settings==2.16.3 \
+    --hash=sha256:10e36f616623ebb586c05ca3d3cd22927146869db413d4f14c20c514442a1337 \
+    --hash=sha256:d1db16a2d34006323a1b42c0640898da58adfbad7ec30baaa9e2b18aafc08999
     # via
     #   -r requirements.in
     #   fastmcp-slim
@@ -581,9 +583,9 @@ python-dotenv==1.2.4 \
     #   -r requirements.in
     #   fastmcp-slim
     #   pydantic-settings
-python-multipart==0.0.33 \
-    --hash=sha256:8f16c07b36add9da6b2ee87d3efcaf0a45a6de9c3d0a5dd94e9ccf7675a7bc45 \
-    --hash=sha256:b8112424a6abd162ec08d390565dd113ad699f2fe6fef3c987b8bbcbfe9e390d
+python-multipart==0.0.34 \
+    --hash=sha256:b998ae90ca6e1e363261ce2e0e230281b8af53867b757970abd69ee9edcd843a \
+    --hash=sha256:ebacd224bd686eee2f9aa1066a657affe07435a185834e05e5235e2e59173e91
     # via
     #   -r requirements.in
     #   fastmcp-slim
