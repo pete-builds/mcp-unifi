@@ -1,5 +1,5 @@
 {
-  "tool_count": 140,
+  "tool_count": 141,
   "tools": [
     {
       "description": "Return credentials expiring within ``days_ahead`` days.\n\nSide effects: None (read-only).\n\nIterates ``list_credentials`` client-side and filters to those whose\n``expires_at`` (epoch milliseconds) falls inside the window\n``[now, now + days_ahead]``. Each entry includes ``days_until_expiry``\nso the LLM can sort and summarise without re-doing the math.\nCredentials with no ``expires_at`` (typical for mobile credentials)\nare left out and only counted in ``no_expiry_count``. Two more lists\nkeep nothing hidden: ``already_expired`` holds credentials whose\n``expires_at`` is already in the past (with ``days_since_expiry``),\nand ``unparseable_expiry`` holds credentials whose ``expires_at`` is\npresent but is not an epoch-millisecond number (a string, seconds, 0),\nso a bad value is reported rather than skipped.\n\nExample: audit_expiring_credentials(days_ahead=14)",
@@ -2123,19 +2123,24 @@
       "name": "list_access_users"
     },
     {
-      "description": "List controller alarms, active or archived.\n\nSide effects: None (read-only).\n\nDoes not work on UniFi Network 10.5 or 10.6: those controllers answer\n400 ``api.err.InvalidObject`` on every alarm route, so the call\nreturns an unsupported-feature error and never an empty list. Do not\nread that error as \"no alarms\"; the alarms cannot be read from that\ncontroller at all. It works on 10.4 and older. Stub mode returns\nsample alarms either way, so a stub result says nothing about a real\ncontroller.\n\nReturns the most recent ``limit`` alarm records.\n\nExample: list_alarms(limit=20, archived=False)",
+      "description": "List controller alarms: the critical system log, or archived legacy alarms.\n\nSide effects: None (read-only).\n\nActive alarms (``archived=False``) come from the v2 critical system log\n(``POST .../v2/api/site/<site>/system-log/critical``), which replaced\nthe legacy ``/list/alarm`` route on UniFi Network 10.x; the legacy\nroute is tried only when the v2 one is absent. The v2 log has no\narchived state, so ``archived=True`` reads the legacy route alone and\nreturns an error on 10.x. Any failure is an error naming the exact\npath and HTTP status, never an empty list.\n\nReturns an envelope: ``source``, ``window``, ``total``, ``returned``,\n``more_available``, and ``alarms``, newest first. Stub mode returns\nsample alarms with ``source`` saying so.\n\nExample: list_alarms(limit=20, hours=72)",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
           "archived": {
             "default": false,
-            "description": "``True`` lists dismissed/archived alarms; ``False``\n(default) lists active alarms only.",
+            "description": "``True`` lists dismissed/archived alarms (legacy\ncontrollers only); ``False`` (default) lists the critical log.",
             "type": "boolean"
           },
           "controller": {
             "default": "default",
             "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
             "type": "string"
+          },
+          "hours": {
+            "default": 24,
+            "description": "How far back to read the critical log, in hours (default\n24, max 720). Not used for archived alarms.",
+            "type": "integer"
           },
           "limit": {
             "default": 50,
@@ -2318,7 +2323,7 @@
       "name": "list_dynamic_dns"
     },
     {
-      "description": "List recent controller events (connections, disconnections, etc.).\n\nSide effects: None (read-only).\n\nDoes not work on UniFi Network 10.5 or 10.6: those controllers expose\nno event log on the local API-key surface (``/stat/event`` answers\n404), so the call returns an unsupported-feature error and never an\nempty list. Do not read that error as \"no events\"; the events cannot\nbe read from that controller at all. It works on 10.4 and older. Stub\nmode returns sample events either way, so a stub result says nothing\nabout a real controller.\n\nReturns the most recent ``limit`` event records, newest first.\n\nExample: list_events(limit=100)",
+      "description": "List the controller's event log (connections, WAN changes, updates, admin activity).\n\nSide effects: None (read-only).\n\nReads the v2 system log (``POST .../v2/api/site/<site>/system-log/all``),\nwhich replaced the legacy ``/stat/event`` route that UniFi Network 10.x\nremoved. Only when the v2 route is absent (an older controller) does it\nfall back to ``/stat/event``. If the log cannot be read, the call\nreturns an error naming the exact path and HTTP status, never an empty\nlist, so an empty ``events`` list really means nothing was logged in\nthe window.\n\nReturns an envelope: ``source`` (the route that answered), ``window``,\n``total`` (entries the controller holds for the window),\n``returned``, ``more_available``, and ``events``, newest first. Each\nevent keeps the controller's fields (``timestamp`` in ms, ``category``,\n``key``, ``severity``, ``parameters``) plus ``time`` (UTC) and a\nrendered ``message``. Stub mode returns sample events with\n``source`` saying so.\n\nExample: list_events(limit=100, hours=48)",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -2326,6 +2331,11 @@
             "default": "default",
             "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
             "type": "string"
+          },
+          "hours": {
+            "default": 24,
+            "description": "How far back to read, in hours (default 24, max 720).",
+            "type": "integer"
           },
           "limit": {
             "default": 50,
@@ -2593,6 +2603,36 @@
         "type": "object"
       },
       "name": "list_smart_detections"
+    },
+    {
+      "description": "List what Threat Management (IDS/IPS) detected or blocked, newest first.\n\nSide effects: None (read-only).\n\nReads two v2 sources and merges them: intrusion-prevention matches from\n``POST .../v2/api/site/<site>/traffic-flows`` (ports, protocol,\nsignature, action) and ``POST .../system-log/threat-alert`` (the\nconsole's alerts, including honeypot hits; no ports or signature).\nEach detection has ``time``, ``action`` (``blocked``, ``alerted`` or\n``unknown``), ``src_ip``, ``src_port``, ``dst_ip``, ``dst_port``,\n``protocol``, ``signature``, ``category``, ``severity``,\n``client_name`` when the controller knows it, and ``source``.\n\nIf both sources fail the call returns an error naming each path and\nHTTP status. If one fails the envelope opens with ``warning`` and\n``complete: false``, because a partial list is not proof nothing was\nblocked. ``sources`` reports what each route returned. Use\n``get_threat_management`` for the IPS settings themselves.\n\nExample: list_threat_detections(hours=24, client=\"192.0.2.20\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "client": {
+            "default": "",
+            "description": "Keep only detections with this IP or MAC at either end.\nEmpty (default) returns every detection.",
+            "type": "string"
+          },
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          },
+          "hours": {
+            "default": 24,
+            "description": "How far back to read, in hours (default 24, max 720).",
+            "type": "integer"
+          },
+          "limit": {
+            "default": 100,
+            "description": "Max number of detections to return (default 100, max 1000).",
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_threat_detections"
     },
     {
       "description": "List the connected clients that have moved the most data.\n\nSide effects: None (read-only).\n\nRanks the clients connected right now by bytes sent plus received\nsince each one connected, so it is not a per-day or per-month total\nand a client that has left is not listed. Returns one record per\nclient, highest ``total_bytes`` first, with ``mac``, ``hostname``,\n``ip``, ``tx_bytes``, ``rx_bytes``, and ``total_bytes``.\n\nExample: list_top_talkers(limit=10)",

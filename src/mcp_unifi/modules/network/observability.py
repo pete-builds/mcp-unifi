@@ -1,4 +1,4 @@
-"""Observability tools: site health, WAN, events, alarms, speedtest, top talkers."""
+"""Observability tools: site health, WAN, events, alarms, IPS detections, speedtest, top talkers."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from mcp_unifi.annotations import ACTION, READ_ONLY
+from mcp_unifi.clients.system_log import client_matcher
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
@@ -18,6 +19,9 @@ if TYPE_CHECKING:
     from mcp_unifi.dispatcher import ControllerRegistry
 
 logger = logging.getLogger("mcp_unifi.network.observability")
+
+#: Longest look-back the log tools accept, in hours (30 days).
+MAX_LOG_HOURS = 720
 
 
 def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> None:
@@ -72,33 +76,42 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
 
     @mcp.tool(annotations=READ_ONLY)
     @audited("list_events", mutates=False)
-    async def list_events(limit: int = 50, controller: str = "default") -> str:
-        """List recent controller events (connections, disconnections, etc.).
+    async def list_events(limit: int = 50, hours: int = 24, controller: str = "default") -> str:
+        """List the controller's event log (connections, WAN changes, updates, admin activity).
 
         Side effects: None (read-only).
 
-        Does not work on UniFi Network 10.5 or 10.6: those controllers expose
-        no event log on the local API-key surface (``/stat/event`` answers
-        404), so the call returns an unsupported-feature error and never an
-        empty list. Do not read that error as "no events"; the events cannot
-        be read from that controller at all. It works on 10.4 and older. Stub
-        mode returns sample events either way, so a stub result says nothing
-        about a real controller.
+        Reads the v2 system log (``POST .../v2/api/site/<site>/system-log/all``),
+        which replaced the legacy ``/stat/event`` route that UniFi Network 10.x
+        removed. Only when the v2 route is absent (an older controller) does it
+        fall back to ``/stat/event``. If the log cannot be read, the call
+        returns an error naming the exact path and HTTP status, never an empty
+        list, so an empty ``events`` list really means nothing was logged in
+        the window.
 
-        Returns the most recent ``limit`` event records, newest first.
+        Returns an envelope: ``source`` (the route that answered), ``window``,
+        ``total`` (entries the controller holds for the window),
+        ``returned``, ``more_available``, and ``events``, newest first. Each
+        event keeps the controller's fields (``timestamp`` in ms, ``category``,
+        ``key``, ``severity``, ``parameters``) plus ``time`` (UTC) and a
+        rendered ``message``. Stub mode returns sample events with
+        ``source`` saying so.
 
-        Example: list_events(limit=100)
+        Example: list_events(limit=100, hours=48)
 
         Args:
             limit: Max number of events to return (default 50, max 1000).
+            hours: How far back to read, in hours (default 24, max 720).
             controller: Name of the UniFi controller to target. Defaults to
                 ``"default"``.
         """
         if not 1 <= limit <= 1000:
             return err("limit must be between 1 and 1000")
+        if not 1 <= hours <= MAX_LOG_HOURS:
+            return err(f"hours must be between 1 and {MAX_LOG_HOURS}")
         try:
             backend = resolve_backend(registry, controller)
-            return format_json(await backend.list_events(limit))
+            return format_json(await backend.list_events(limit, hours))
         except UniFiError as exc:
             logger.exception("list_events failed")
             return err(str(exc))
@@ -108,38 +121,95 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     async def list_alarms(
         limit: int = 50,
         archived: bool = False,
+        hours: int = 24,
         controller: str = "default",
     ) -> str:
-        """List controller alarms, active or archived.
+        """List controller alarms: the critical system log, or archived legacy alarms.
 
         Side effects: None (read-only).
 
-        Does not work on UniFi Network 10.5 or 10.6: those controllers answer
-        400 ``api.err.InvalidObject`` on every alarm route, so the call
-        returns an unsupported-feature error and never an empty list. Do not
-        read that error as "no alarms"; the alarms cannot be read from that
-        controller at all. It works on 10.4 and older. Stub mode returns
-        sample alarms either way, so a stub result says nothing about a real
-        controller.
+        Active alarms (``archived=False``) come from the v2 critical system log
+        (``POST .../v2/api/site/<site>/system-log/critical``), which replaced
+        the legacy ``/list/alarm`` route on UniFi Network 10.x; the legacy
+        route is tried only when the v2 one is absent. The v2 log has no
+        archived state, so ``archived=True`` reads the legacy route alone and
+        returns an error on 10.x. Any failure is an error naming the exact
+        path and HTTP status, never an empty list.
 
-        Returns the most recent ``limit`` alarm records.
+        Returns an envelope: ``source``, ``window``, ``total``, ``returned``,
+        ``more_available``, and ``alarms``, newest first. Stub mode returns
+        sample alarms with ``source`` saying so.
 
-        Example: list_alarms(limit=20, archived=False)
+        Example: list_alarms(limit=20, hours=72)
 
         Args:
             limit: Max number of alarms to return (default 50, max 1000).
-            archived: ``True`` lists dismissed/archived alarms; ``False``
-                (default) lists active alarms only.
+            archived: ``True`` lists dismissed/archived alarms (legacy
+                controllers only); ``False`` (default) lists the critical log.
+            hours: How far back to read the critical log, in hours (default
+                24, max 720). Not used for archived alarms.
             controller: Name of the UniFi controller to target. Defaults to
                 ``"default"``.
         """
         if not 1 <= limit <= 1000:
             return err("limit must be between 1 and 1000")
+        if not 1 <= hours <= MAX_LOG_HOURS:
+            return err(f"hours must be between 1 and {MAX_LOG_HOURS}")
         try:
             backend = resolve_backend(registry, controller)
-            return format_json(await backend.list_alarms(limit, archived))
+            return format_json(await backend.list_alarms(limit, archived, hours))
         except UniFiError as exc:
             logger.exception("list_alarms failed")
+            return err(str(exc))
+
+    @mcp.tool(annotations=READ_ONLY)
+    @audited("list_threat_detections", mutates=False)
+    async def list_threat_detections(
+        hours: int = 24,
+        client: str = "",
+        limit: int = 100,
+        controller: str = "default",
+    ) -> str:
+        """List what Threat Management (IDS/IPS) detected or blocked, newest first.
+
+        Side effects: None (read-only).
+
+        Reads two v2 sources and merges them: intrusion-prevention matches from
+        ``POST .../v2/api/site/<site>/traffic-flows`` (ports, protocol,
+        signature, action) and ``POST .../system-log/threat-alert`` (the
+        console's alerts, including honeypot hits; no ports or signature).
+        Each detection has ``time``, ``action`` (``blocked``, ``alerted`` or
+        ``unknown``), ``src_ip``, ``src_port``, ``dst_ip``, ``dst_port``,
+        ``protocol``, ``signature``, ``category``, ``severity``,
+        ``client_name`` when the controller knows it, and ``source``.
+
+        If both sources fail the call returns an error naming each path and
+        HTTP status. If one fails the envelope opens with ``warning`` and
+        ``complete: false``, because a partial list is not proof nothing was
+        blocked. ``sources`` reports what each route returned. Use
+        ``get_threat_management`` for the IPS settings themselves.
+
+        Example: list_threat_detections(hours=24, client="192.0.2.20")
+
+        Args:
+            hours: How far back to read, in hours (default 24, max 720).
+            client: Keep only detections with this IP or MAC at either end.
+                Empty (default) returns every detection.
+            limit: Max number of detections to return (default 100, max 1000).
+            controller: Name of the UniFi controller to target. Defaults to
+                ``"default"``.
+        """
+        if not 1 <= limit <= 1000:
+            return err("limit must be between 1 and 1000")
+        if not 1 <= hours <= MAX_LOG_HOURS:
+            return err(f"hours must be between 1 and {MAX_LOG_HOURS}")
+        if client and client_matcher(client) is None:
+            return err(f"client must be an IP address or a MAC address, got {client!r}")
+        try:
+            backend = resolve_backend(registry, controller)
+            return format_json(await backend.list_threat_detections(hours, limit, client))
+        except UniFiError as exc:
+            logger.exception("list_threat_detections failed")
             return err(str(exc))
 
     @mcp.tool(annotations=ACTION)

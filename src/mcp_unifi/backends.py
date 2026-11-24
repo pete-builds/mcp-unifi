@@ -12,6 +12,7 @@ audit + dry-run uniformly.
 
 from __future__ import annotations
 
+import time
 from typing import Any, Protocol, runtime_checkable
 
 from mcp_unifi.clients.access import AccessClient
@@ -28,6 +29,12 @@ from mcp_unifi.clients.stats_shape import (
     shape_system_info,
 )
 from mcp_unifi.clients.stubs import StubState
+from mcp_unifi.clients.system_log import (
+    client_matcher,
+    detection_from_alert,
+    detection_from_flow,
+    finish_detections,
+)
 from mcp_unifi.clients.unifi import UniFiClient, UniFiError
 from mcp_unifi.clients.zone_firewall_stubs import v1_network_id as stub_v1_network_id
 from mcp_unifi.models import UniFiRecord
@@ -176,8 +183,9 @@ class Backend(Protocol):
     # ----- Observability --------------------------------------------------
     async def get_site_health(self) -> list[UniFiRecord]: ...
     async def get_wan_status(self) -> UniFiRecord: ...
-    async def list_events(self, limit: int) -> list[UniFiRecord]: ...
-    async def list_alarms(self, limit: int, archived: bool) -> list[UniFiRecord]: ...
+    async def list_events(self, limit: int, hours: int) -> UniFiRecord: ...
+    async def list_alarms(self, limit: int, archived: bool, hours: int) -> UniFiRecord: ...
+    async def list_threat_detections(self, hours: int, limit: int, client: str) -> UniFiRecord: ...
     async def trigger_speedtest(self) -> UniFiRecord: ...
     async def get_speedtest_results(self, limit: int) -> list[UniFiRecord]: ...
 
@@ -468,11 +476,46 @@ class StubBackend:
     async def get_wan_status(self) -> UniFiRecord:
         return self.state.get_wan_status()
 
-    async def list_events(self, limit: int) -> list[UniFiRecord]:
-        return self.state.list_events(limit)
+    @staticmethod
+    def _stub_log(key: str, records: list[UniFiRecord]) -> UniFiRecord:
+        # Same keys as the real client's envelope, so a caller (or a test)
+        # cannot tell the shapes apart; ``source`` says it is the stub.
+        return {
+            "source": "stub mode (sample data, no controller was called)",
+            "window": None,
+            "total": len(records),
+            "returned": len(records),
+            "more_available": False,
+            key: records,
+        }
 
-    async def list_alarms(self, limit: int, archived: bool) -> list[UniFiRecord]:
-        return self.state.list_alarms(limit, archived)
+    async def list_events(self, limit: int, hours: int) -> UniFiRecord:
+        return self._stub_log("events", self.state.list_events(limit))
+
+    async def list_alarms(self, limit: int, archived: bool, hours: int) -> UniFiRecord:
+        return self._stub_log("alarms", self.state.list_alarms(limit, archived))
+
+    async def list_threat_detections(self, hours: int, limit: int, client: str) -> UniFiRecord:
+        if client and client_matcher(client) is None:
+            raise UniFiError(f"client must be an IP address or a MAC address, got {client!r}")
+        end_ms = int(time.time() * 1000)
+        start_ms = end_ms - hours * 3_600_000
+        flow_rows, alert_rows = self.state.ips_rows(start_ms, end_ms)
+        flows = [d for d in (detection_from_flow(r) for r in flow_rows) if d is not None]
+        alerts = [detection_from_alert(r) for r in alert_rows]
+        sources: list[dict[str, Any]] = [
+            {"endpoint": "stub traffic-flows", "ok": True, "rows_read": len(flow_rows)},
+            {"endpoint": "stub system-log/threat-alert", "ok": True, "rows_read": len(alert_rows)},
+        ]
+        return finish_detections(
+            flows,
+            alerts,
+            sources=sources,
+            failures=[],
+            window=(hours, start_ms, end_ms),
+            client=client,
+            limit=limit,
+        )
 
     async def trigger_speedtest(self) -> UniFiRecord:
         return self.state.trigger_speedtest()
@@ -842,11 +885,14 @@ class RealBackend:
                 return h
         return {"subsystem": "wan", "status": "unknown"}
 
-    async def list_events(self, limit: int) -> list[UniFiRecord]:
-        return await self.client.list_events(limit)
+    async def list_events(self, limit: int, hours: int) -> UniFiRecord:
+        return await self.client.list_events(limit, hours)
 
-    async def list_alarms(self, limit: int, archived: bool) -> list[UniFiRecord]:
-        return await self.client.list_alarms(limit, archived)
+    async def list_alarms(self, limit: int, archived: bool, hours: int) -> UniFiRecord:
+        return await self.client.list_alarms(limit, archived, hours)
+
+    async def list_threat_detections(self, hours: int, limit: int, client: str) -> UniFiRecord:
+        return await self.client.list_threat_detections(hours, limit, client)
 
     async def trigger_speedtest(self) -> UniFiRecord:
         return await self.client.trigger_speedtest()

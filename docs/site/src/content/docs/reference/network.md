@@ -95,8 +95,9 @@ update_clients(updates=[{"mac": "aa:bb:cc:00:00:02", "name": "Pete's iPhone"}, {
 |---|---|---|---|
 | `get_site_health` | read | — | Per-subsystem health (wan, lan, wlan, www, vpn). |
 | `get_wan_status` | read | — | WAN subsystem record (link, ISP, public IP, throughput, latency). |
-| `list_events` | read | — | Recent controller events. |
-| `list_alarms` | read | — | Active or archived alarms. |
+| `list_events` | read | — | Controller event log for the last N hours, from the v2 system log (`system-log/all`). |
+| `list_alarms` | read | — | Critical system log (`system-log/critical`); archived alarms on legacy controllers only. |
+| `list_threat_detections` | read | — | IDS/IPS detections and blocks (`traffic-flows` + `system-log/threat-alert`), filterable by client IP or MAC. |
 | `trigger_speedtest` | write | — | Kick off a UniFi WAN speed test. (Read-side-effects only; no config mutation.) |
 | `get_speedtest_results` | read | — | Recent speed-test results, newest first. |
 | `list_top_talkers` | read | — | Connected clients ranked by bytes moved since each connected. |

@@ -26,7 +26,18 @@ MIN_MASKED_SECRET_CHARS = 4
 
 
 class UniFiError(RuntimeError):
-    """Raised on any non-2xx response or transport failure."""
+    """Raised on any non-2xx response or transport failure.
+
+    ``status`` is the HTTP status when the controller answered, and ``None``
+    for a transport failure (refused, timed out, TLS). ``detail`` is a short,
+    already-redacted description of the error body (for the Network client,
+    the suffix :func:`describe_error_body` produced).
+    Callers that need to branch on the status (fall back on a 404, surface
+    anything else) read the attribute instead of parsing the message.
+    """
+
+    status: int | None = None
+    detail: str = ""
 
 
 class UniFiUnsupportedError(UniFiError):
@@ -34,8 +45,10 @@ class UniFiUnsupportedError(UniFiError):
 
     Distinct from a generic :class:`UniFiError` so callers can tell "this
     controller version cannot answer that question" apart from "the call
-    failed". Both surface to the operator as an error — which is the entire
-    point. See :meth:`UniFiClient._get_or_unsupported` for why.
+    failed". Both surface to the operator as an error, which is the entire
+    point: an earlier version turned the 404 into ``[]``, and "no events"
+    read as a quiet network while the truth was "this controller cannot show
+    events". See the event-log section of :class:`UniFiClient` for the rule.
     """
 
 
