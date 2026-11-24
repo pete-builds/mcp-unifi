@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`pyproject.toml` asks for the PyYAML the image actually ships.** The
+  package pinned `pyyaml==6.0.3`, but PyYAML was never listed in
+  `requirements.in`, so the lock carried it only as a transitive dependency
+  and the #255 recompile moved it to 6.0.4. The image installs from
+  `requirements.lock` and shipped 6.0.4 while the package metadata asked for
+  6.0.3, and `pip` reported the conflict on every install from the lock. Both
+  now say 6.0.4, and `requirements.in` pins PyYAML like every other direct
+  dependency. `tests/test_dependency_pins.py` fails when any exact pin in
+  `pyproject.toml` is missing from, or differs from, `requirements.in` /
+  `requirements-dev.in` or its lock.
+
 ## [0.29.0] - 2026-11-13
 
 ### Added

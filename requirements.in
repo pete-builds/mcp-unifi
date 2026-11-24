@@ -4,6 +4,10 @@ uvicorn==0.54.0
 python-dotenv==1.2.4
 pydantic==2.14.3
 pydantic-settings==2.16.3
+# Imported directly (config.py, drift.py), so pinned here like the rest of
+# pyproject's dependencies. Without this line the lock carried it only as a
+# transitive dependency and a recompile moved it away from pyproject's pin.
+pyyaml==6.0.4
 
 # Security: force-upgrade fastmcp's transitive auth deps past HIGH CVEs
 # (CVE-2026-48526, GHSA-537c-gmf6-5ccf, CVE-2026-49852, CVE-2026-53539).
