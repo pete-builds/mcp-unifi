@@ -2323,7 +2323,7 @@
       "name": "list_dynamic_dns"
     },
     {
-      "description": "List the controller's event log (connections, WAN changes, updates, admin activity).\n\nSide effects: None (read-only).\n\nReads the v2 system log (``POST .../v2/api/site/<site>/system-log/all``)\nin place of the legacy ``/stat/event`` route, which answers 404 on\nNetwork 10.5.67. Only when the v2 route is absent (an older\ncontroller) does it fall back to ``/stat/event``. If the log cannot be\nread, the call\nreturns an error naming the exact path and HTTP status, never an empty\nlist, so an empty ``events`` list really means nothing was logged in\nthe window.\n\nReturns an envelope: ``source`` (the route that answered), ``window``,\n``window_fully_read`` (false, with a ``note``, when the window held more\nthan one call reads), ``total`` (entries the controller holds for the\nwindow), ``returned``, ``more_available``, and ``events``, newest\nfirst. Each\nevent keeps the controller's fields (``timestamp`` in ms, ``category``,\n``key``, ``severity``, ``parameters``) plus ``time`` (UTC) and a\nrendered ``message``. Stub mode returns sample events with\n``source`` saying so.\n\nExample: list_events(limit=100, hours=48)",
+      "description": "List the controller's event log (connections, WAN changes, updates, admin activity).\n\nSide effects: None (read-only).\n\nReads the v2 system log (``POST .../v2/api/site/<site>/system-log/all``)\nin place of the legacy ``/stat/event`` route, which answers 404 on\nNetwork 10.5.67. Only when the v2 route is absent (an older\ncontroller) does it fall back to ``/stat/event``. If the log cannot be\nread, the call\nreturns an error naming the exact path and HTTP status, never an empty\nlist, so an empty ``events`` list really means nothing was logged in\nthe window.\n\nReturns an envelope: ``source`` (the route that answered), ``window``,\n``window_fully_read`` (false, with a ``note``, when the window was not\nread to the end), ``total`` (entries the controller holds for the\nwindow), ``returned``, ``more_available``, and ``events``, newest\nfirst. Each\nevent keeps the controller's fields (``timestamp`` in ms, ``category``,\n``key``, ``severity``, ``parameters``) plus ``time`` (UTC) and a\nrendered ``message``. Stub mode returns sample events with\n``source`` saying so.\n\nExample: list_events(limit=100, hours=48)",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -2611,7 +2611,7 @@
         "properties": {
           "client": {
             "default": "",
-            "description": "Keep only detections with this IP or MAC at either end.\nEmpty (default) returns every detection.",
+            "description": "Keep only detections with this IP or MAC at either end.\nA honeypot hit that names the device by MAC alone matches\nonly a MAC. Empty (default) returns every detection.",
             "type": "string"
           },
           "controller": {

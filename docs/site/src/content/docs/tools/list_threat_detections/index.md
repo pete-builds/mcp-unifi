@@ -36,7 +36,7 @@ list_threat_detections(hours=24, client="192.0.2.20")
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `hours` | `integer` | no | 24 | How far back to read, in hours (default 24, max 720). |
-| `client` | `string` | no | "" | Keep only detections with this IP or MAC at either end. Empty (default) returns every detection. |
+| `client` | `string` | no | "" | Keep only detections with this IP or MAC at either end. A honeypot hit that names the device by MAC alone matches only a MAC. Empty (default) returns every detection. |
 | `limit` | `integer` | no | 100 | Max number of detections to return (default 100, max 1000). |
 | `controller` | `string` | no | "default" | Name of the UniFi controller to target. Defaults to ``"default"``. |
 

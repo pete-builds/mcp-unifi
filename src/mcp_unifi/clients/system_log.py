@@ -54,6 +54,7 @@ well-formed page is a real "nothing in this window".
 from __future__ import annotations
 
 import ipaddress
+import math
 import re
 from datetime import UTC, datetime
 from typing import Any
@@ -149,13 +150,15 @@ def ips_flow_body(start_ms: int, end_ms: int, page: int) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def parse_page(body: Any, label: str) -> tuple[list[dict[str, Any]], int | None, bool]:
+def parse_page(body: Any, label: str) -> tuple[list[dict[str, Any]], int | None, bool | None]:
     """Return ``(rows, total, has_more)`` from one v2 page, or raise.
 
     ``has_more`` is what the page claims (``has_next``, else ``page_number``
     against ``total_page_count``), even on an empty page: an empty page that
     still claims more is a reason to stop paging, not proof the window is
-    exhausted, so the caller reports it as ``more_available``.
+    exhausted, so the caller reports it as ``more_available``. ``None`` means
+    the page carries no paging metadata at all; the pager then treats a full
+    page as "maybe more", as kcorr does.
 
     Accepts the documented envelope (``{"data": [...], "total_page_count":
     N, ...}``) and a bare list (unpoller's endpoint catalogue describes
@@ -164,7 +167,7 @@ def parse_page(body: Any, label: str) -> tuple[list[dict[str, Any]], int | None,
     to read the log, never an empty log.
     """
     if isinstance(body, list):
-        return [r for r in body if isinstance(r, dict)], len(body), False
+        return [r for r in body if isinstance(r, dict)], None, None
     if not isinstance(body, dict) or not isinstance(body.get("data"), list):
         kind = type(body).__name__ if not isinstance(body, dict) else "object without a data list"
         raise UniFiError(
@@ -174,6 +177,7 @@ def parse_page(body: Any, label: str) -> tuple[list[dict[str, Any]], int | None,
     rows = [r for r in body["data"] if isinstance(r, dict)]
     total = body.get("total_element_count")
     total_int = total if isinstance(total, int) and not isinstance(total, bool) else None
+    has_more: bool | None = None
     if isinstance(body.get("has_next"), bool):
         has_more = bool(body["has_next"])
     else:
@@ -181,8 +185,6 @@ def parse_page(body: Any, label: str) -> tuple[list[dict[str, Any]], int | None,
         page_no = body.get("page_number")
         if isinstance(pages, int) and isinstance(page_no, int):
             has_more = page_no + 1 < pages
-        else:
-            has_more = False
     return rows, total_int, has_more
 
 
@@ -191,12 +193,12 @@ def parse_page(body: Any, label: str) -> tuple[list[dict[str, Any]], int | None,
 # ---------------------------------------------------------------------------
 
 
-def iso_utc(ms: object) -> str | None:
-    """Epoch milliseconds (or seconds) as an ISO-8601 UTC string."""
-    if isinstance(ms, bool) or not isinstance(ms, int | float) or ms <= 0:
+def iso_utc(value: object) -> str | None:
+    """An epoch timestamp (s or ms, see :func:`ts_ms`) as an ISO-8601 UTC string."""
+    ms = ts_ms(value)
+    if ms is None:
         return None
-    seconds = ms / 1000 if ms > 1e12 else float(ms)
-    return datetime.fromtimestamp(seconds, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.fromtimestamp(ms / 1000, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def render_message(entry: dict[str, Any]) -> str:
@@ -257,13 +259,26 @@ def _int(value: object) -> int | None:
 def ts_ms(value: object) -> int | None:
     """An epoch timestamp in milliseconds, whether it arrived in s or ms.
 
-    Same rule as kcorr ``tsMs()``: a positive value below ``1e12`` is seconds.
-    Applied before the flow/alert dedupe, which compares milliseconds.
+    Same rule as kcorr ``tsMs()`` and its ``n()``: an int, a float or a
+    numeric string (decimals allowed) is read as a number, and a positive
+    value below ``1e12`` is seconds. :func:`iso_utc` uses this too, so the
+    two cannot disagree at the boundary. Applied before the flow/alert dedupe,
+    which compares milliseconds.
     """
-    number = _int(value)
-    if number is None or number <= 0:
+    if isinstance(value, bool):
         return None
-    return number * 1000 if number < 1_000_000_000_000 else number
+    if isinstance(value, int | float):
+        number = float(value)
+    elif isinstance(value, str):
+        try:
+            number = float(value.strip())
+        except ValueError:
+            return None
+    else:
+        return None
+    if not math.isfinite(number) or number <= 0:
+        return None
+    return round(number * 1000) if number < 1e12 else round(number)
 
 
 def _ip(*values: object) -> str | None:
@@ -295,15 +310,28 @@ def _flow_action(value: object) -> str:
     return "unknown"
 
 
+#: Signature kcorr gives a honeypot hit, which carries no IPS signature.
+HONEYPOT_SIGNATURE = "UniFi internal honeypot triggered"
+
+
+def _policies(row: dict[str, Any]) -> list[dict[str, Any]]:
+    return [p for p in row.get("policies") or [] if isinstance(p, dict)]
+
+
+def _is_honeypot_flow(row: dict[str, Any]) -> bool:
+    """kcorr ``mentionsHoneypot(p.type, p.internal_type, p.name)``."""
+    return any(
+        "HONEYPOT" in str(p.get(field) or "").upper()
+        for p in _policies(row)
+        for field in ("type", "internal_type", "name")
+    )
+
+
 def _is_ips_flow(row: dict[str, Any]) -> bool:
-    policies = row.get("policies")
-    if isinstance(policies, list):
-        for policy in policies:
-            if not isinstance(policy, dict):
-                continue
-            kind = str(policy.get("type", "")).upper()
-            if kind == "INTRUSION_PREVENTION" or "HONEYPOT" in kind:
-                return True
+    if _is_honeypot_flow(row):
+        return True
+    if any(str(p.get("type", "")).upper() == "INTRUSION_PREVENTION" for p in _policies(row)):
+        return True
     return bool(_obj(row.get("ips")))
 
 
@@ -319,7 +347,8 @@ def detection_from_flow(row: dict[str, Any]) -> dict[str, Any] | None:
     src = _obj(row.get("source"))
     dst = _obj(row.get("destination"))
     ips = _obj(row.get("ips"))
-    policies = [p for p in row.get("policies") or [] if isinstance(p, dict)]
+    policies = _policies(row)
+    honeypot = _is_honeypot_flow(row)
     ips_policy = next(
         (p for p in policies if str(p.get("type", "")).upper() == "INTRUSION_PREVENTION"), {}
     )
@@ -338,9 +367,13 @@ def detection_from_flow(row: dict[str, Any]) -> dict[str, Any] | None:
         "dst_mac": _mac(dst.get("mac")),
         "protocol": _str(row.get("protocol")),
         "direction": _str(row.get("direction")),
-        "signature": _str(ips.get("signature")) or _str(ips_policy.get("name")),
+        "signature": HONEYPOT_SIGNATURE
+        if honeypot
+        else (_str(ips.get("signature")) or _str(ips_policy.get("name"))),
         "signature_id": _int(ips.get("signature_id")),
-        "category": _str(ips.get("category_name")) or _str(ips_policy.get("ips_category")),
+        "category": "honeypot"
+        if honeypot
+        else (_str(ips.get("category_name")) or _str(ips_policy.get("ips_category"))),
         "severity": _str(row.get("risk")),
         "client_name": src_name or dst_name,
         "source": "traffic-flows",
@@ -430,14 +463,21 @@ def merge_detections(
 
     A flow and an alert describe the same detection when they are within
     :data:`_SAME_DETECTION_MS` of each other and join the same two ends, in
-    either direction. The flow wins because it carries ports and signature.
+    either direction. A honeypot alert often names no decoy address, so (as
+    in kcorr) it matches a honeypot flow on the source end alone. The flow
+    wins because it carries ports and signature.
     """
 
     def covered(alert: dict[str, Any]) -> bool:
         a_ts = alert.get("timestamp_ms") or 0
+        alert_is_honeypot = alert.get("category") == "honeypot"
         for flow in flows:
             f_ts = flow.get("timestamp_ms") or 0
             if abs(f_ts - a_ts) >= _SAME_DETECTION_MS:
+                continue
+            if alert_is_honeypot:
+                if flow.get("category") == "honeypot" and _same_end(alert, flow, "src", "src"):
+                    return True
                 continue
             forward = _same_end(alert, flow, "src", "src") and _same_end(alert, flow, "dst", "dst")
             reverse = _same_end(alert, flow, "src", "dst") and _same_end(alert, flow, "dst", "src")
@@ -532,6 +572,7 @@ def matches_client(detection: dict[str, Any], matcher: tuple[str, str]) -> bool:
 
 
 __all__ = [
+    "HONEYPOT_SIGNATURE",
     "MAX_SCAN_ROWS",
     "SYSTEM_LOG_PAGE_SIZE",
     "TRAFFIC_FLOW_PAGE_SIZE",

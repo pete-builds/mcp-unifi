@@ -23,9 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   error naming each path and HTTP status; one failing, or one cut at the
   2000-row scan cap, returns what was read under a leading `warning` and
   `complete: false`, and the warning says when a `client` filter ran over
-  that partial set. Honeypot hits take the touching device's IP as the
-  source, so a client filter finds them. The legacy `/stat/ips/event` route
-  answered 404 on the maintainer's console and is not tried.
+  that partial set. A honeypot hit takes the touching device (`CLIENT`) as
+  its source, so a client-IP filter finds it only when `CLIENT` carries an
+  IP; when it names the device by MAC alone, filter on the MAC. A honeypot
+  flow and its alert are listed once, labelled `honeypot`. The legacy
+  `/stat/ips/event` route answered 404 on the maintainer's console and is
+  not tried.
 
 ### Changed
 
@@ -45,10 +48,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   route that answered), `window`, `window_fully_read`, `total`, `returned`,
   `more_available`, and `events` or `alarms`. No source states the order the
   controller returns rows in, so the tools read the whole window (up to 2000
-  rows), sort newest first, and only then apply `limit`; a window cut at that
-  cap says so with `window_fully_read: false` and a `note`.
+  rows), sort newest first, and only then apply `limit`. A window not read to
+  the end (the cap, a `total_element_count` above the rows read, a full page
+  with no paging metadata, or an empty page that still claims more) says so
+  with `window_fully_read: false` and a `note`. The legacy fallback sorts
+  too; its envelope says `more_available: true` when rows were dropped and
+  notes that the controller applied its own `_limit` / `_sort`.
   `list_alarms(archived=True)` still reads only the legacy route, because the
-  v2 log has no archived state, and on 10.5.67 that is an error that says so. Stub mode answers in the same shape.
+  v2 log has no archived state, and on 10.5.67 that is an error that says so.
+  Stub mode answers in the same shape.
 
 ### Fixed
 

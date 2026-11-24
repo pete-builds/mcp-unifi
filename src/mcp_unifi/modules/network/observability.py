@@ -91,8 +91,8 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         the window.
 
         Returns an envelope: ``source`` (the route that answered), ``window``,
-        ``window_fully_read`` (false, with a ``note``, when the window held more
-        than one call reads), ``total`` (entries the controller holds for the
+        ``window_fully_read`` (false, with a ``note``, when the window was not
+        read to the end), ``total`` (entries the controller holds for the
         window), ``returned``, ``more_available``, and ``events``, newest
         first. Each
         event keeps the controller's fields (``timestamp`` in ms, ``category``,
@@ -198,7 +198,8 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         Args:
             hours: How far back to read, in hours (default 24, max 720).
             client: Keep only detections with this IP or MAC at either end.
-                Empty (default) returns every detection.
+                A honeypot hit that names the device by MAC alone matches
+                only a MAC. Empty (default) returns every detection.
             limit: Max number of detections to return (default 100, max 1000).
             controller: Name of the UniFi controller to target. Defaults to
                 ``"default"``.

@@ -740,22 +740,39 @@ class UniFiClient:
         """POST a paged v2 read until it is exhausted or ``max_rows`` is reached.
 
         Returns ``(rows, total, more_available)``. ``more_available`` is
-        ``True`` when the controller had rows past ``max_rows``, so a caller
-        can say the window was cut rather than imply it was complete.
+        ``True`` whenever the window may hold rows that were not read: rows
+        past ``max_rows``, an empty page that still claims more, a full page
+        with no paging metadata (kcorr treats that as "maybe more"), or a
+        ``total_element_count`` above the rows read. A caller can then say
+        the window was cut rather than imply it was complete.
         """
         label = self._v2_label("POST", path)
         rows: list[dict[str, Any]] = []
         total: int | None = None
+        previous: list[dict[str, Any]] | None = None
         for page in range(_MAX_PAGES):
-            body = await self._v2_request("POST", path, json=make_body(page))
-            page_rows, page_total, has_more = parse_page(body, label)
+            request = make_body(page)
+            page_size = int(request.get("pageSize") or 0)
+            body = await self._v2_request("POST", path, json=request)
+            page_rows, page_total, claimed = parse_page(body, label)
+            full_page = bool(page_size) and len(page_rows) >= page_size
+            if isinstance(body, list):
+                # A bare array has no paging at all: asking for page 1 would
+                # only return it again. A full one may still be cut.
+                return page_rows[:max_rows], None, full_page or len(page_rows) > max_rows
+            if page_rows and page_rows == previous:
+                # The controller ignored pageNumber and repeated the page.
+                return rows[:max_rows], total, True
+            previous = page_rows
             if total is None:
                 total = page_total
             rows.extend(page_rows)
+            has_more = full_page if claimed is None else claimed
             if len(rows) >= max_rows:
                 return rows[:max_rows], total, has_more or len(rows) > max_rows
             if not has_more:
-                return rows, total, False
+                short_of_total = total is not None and total > len(rows)
+                return rows, total, short_of_total
             if not page_rows:
                 # An empty page that still claims more: stop, and say the
                 # window was not read to the end.
@@ -791,9 +808,10 @@ class UniFiClient:
         }
         if capped:
             result["note"] = (
-                f"The window holds more than the {MAX_SCAN_ROWS} entries one call "
-                f"reads, so these are the newest of a partial read, not necessarily "
-                f"the newest in the window; narrow ``hours``."
+                f"The window was not read to the end (one call reads at most "
+                f"{MAX_SCAN_ROWS} entries, and the controller reported more, or "
+                f"stopped paging early), so these are the newest of a partial read, "
+                f"not necessarily the newest in the window; narrow ``hours``."
             )
         return result
 
@@ -811,15 +829,32 @@ class UniFiClient:
         return rows
 
     @staticmethod
-    def _legacy_envelope(source: str, v2_outcome: str, records: list[UniFiRecord]) -> UniFiRecord:
+    def _legacy_envelope(
+        source: str,
+        v2_outcome: str,
+        records: list[UniFiRecord],
+        *,
+        limit: int,
+        known_complete: bool,
+        note: str,
+    ) -> UniFiRecord:
+        """Wrap legacy rows, already sorted newest first, and apply ``limit``.
+
+        ``more_available`` is ``True`` whenever rows were dropped here. When
+        none were, it is ``False`` only if ``known_complete`` (the route
+        returned everything), else ``None``: the controller may have applied
+        its own limit, and nothing here can tell.
+        """
+        dropped = len(records) > limit
         return {
             "source": f"{source} (legacy fallback, because {v2_outcome})",
             "window": None,
             "window_fully_read": None,
             "total": None,
-            "returned": len(records),
-            "more_available": None,
-            "entries": records,
+            "returned": min(limit, len(records)),
+            "more_available": True if dropped else (False if known_complete else None),
+            "note": note,
+            "entries": records[:limit],
         }
 
     async def list_events(self, limit: int, hours: int) -> UniFiRecord:
@@ -853,7 +888,18 @@ class UniFiClient:
                     f"the legacy fallback {self._outcome(legacy_label, legacy_exc)}, "
                     f"so this is an error and not an empty result"
                 ) from legacy_exc
-            result = self._legacy_envelope(legacy_label, v2_outcome, records[:limit])
+            result = self._legacy_envelope(
+                legacy_label,
+                v2_outcome,
+                records,
+                limit=limit,
+                known_complete=False,
+                note=(
+                    "The legacy route takes no time window: the controller applied "
+                    "its own _limit and _sort, so how much of the log exists past "
+                    "these rows is unknown."
+                ),
+            )
         result["events"] = result.pop("entries")
         return result
 
@@ -885,7 +931,18 @@ class UniFiClient:
                     f"error and not an empty result"
                 ) from legacy_exc
             filtered = [r for r in records if bool(r.get("archived", False)) == archived]
-            return self._legacy_envelope(legacy_label, reason, filtered[:limit])
+            return self._legacy_envelope(
+                legacy_label,
+                reason,
+                filtered,
+                limit=limit,
+                known_complete=True,
+                note=(
+                    "The legacy route takes no time window and returned every "
+                    "alarm it holds; they were filtered on archived, sorted newest "
+                    "first, then cut to limit."
+                ),
+            )
 
         if archived:
             envelope = await legacy(

@@ -20,8 +20,8 @@ list, so an empty ``events`` list really means nothing was logged in
 the window.
 
 Returns an envelope: ``source`` (the route that answered), ``window``,
-``window_fully_read`` (false, with a ``note``, when the window held more
-than one call reads), ``total`` (entries the controller holds for the
+``window_fully_read`` (false, with a ``note``, when the window was not
+read to the end), ``total`` (entries the controller holds for the
 window), ``returned``, ``more_available``, and ``events``, newest
 first. Each
 event keeps the controller's fields (``timestamp`` in ms, ``category``,

@@ -42,10 +42,12 @@ import respx
 from fastmcp import FastMCP
 
 from mcp_unifi.clients.system_log import (
+    HONEYPOT_SIGNATURE,
     iso_utc,
     parse_page,
     render_message,
     system_log_body,
+    ts_ms,
 )
 from mcp_unifi.clients.unifi import UniFiError
 from tests.network.conftest import _call
@@ -468,6 +470,112 @@ async def test_list_events_legacy_200_dict_is_rejected_not_empty(real_server: Fa
     assert "instead of a list of records" in error
 
 
+@respx.mock
+async def test_list_events_legacy_rows_are_sorted_newest_first(real_server: FastMCP) -> None:
+    """The legacy fallback sorts for itself (review L1): rows out of order,
+    one timed in seconds, come back newest first, cut to ``limit``."""
+    respx.post(f"{V2}/system-log/all").mock(return_value=httpx.Response(404, json=V2_NOT_FOUND))
+    rows = [
+        {"_id": "mid", "time": NOW_MS - 60_000},
+        {"_id": "old", "time": (NOW_MS - 3_600_000) // 1000},
+        {"_id": "new", "time": NOW_MS},
+    ]
+    respx.get(path=f"{LEGACY_PATH}/stat/event").mock(
+        return_value=httpx.Response(200, json={"data": rows})
+    )
+    result = await _call(real_server, "list_events", {"limit": 2})
+    assert [e["_id"] for e in result["events"]] == ["new", "mid"]
+    # Rows were dropped here, so that much is known; the controller's own
+    # _limit/_sort is named rather than a window being claimed.
+    assert result["more_available"] is True
+    assert result["window_fully_read"] is None
+    assert "_limit" in result["note"]
+
+    result = await _call(real_server, "list_events", {"limit": 5})
+    assert [e["_id"] for e in result["events"]] == ["new", "mid", "old"]
+    assert result["more_available"] is None
+
+
+@respx.mock
+async def test_list_alarms_legacy_rows_are_filtered_sorted_then_cut(real_server: FastMCP) -> None:
+    """Archived filter, newest-first sort, then ``limit`` (review L1, L2):
+    cutting before filtering would return the archived row or nothing."""
+    respx.post(f"{V2}/system-log/critical").mock(
+        return_value=httpx.Response(404, json=V2_NOT_FOUND)
+    )
+    rows = [
+        {"_id": "archived-newest", "archived": True, "time": NOW_MS},
+        {"_id": "old", "archived": False, "time": NOW_MS - 7_200_000},
+        {"_id": "new", "archived": False, "time": NOW_MS - 60_000},
+        {"_id": "mid", "archived": False, "time": NOW_MS - 3_600_000},
+    ]
+    respx.get(path=f"{LEGACY_PATH}/list/alarm").mock(
+        return_value=httpx.Response(200, json={"data": rows})
+    )
+    result = await _call(real_server, "list_alarms", {"limit": 2})
+    assert [a["_id"] for a in result["alarms"]] == ["new", "mid"]
+    assert result["more_available"] is True
+
+    result = await _call(real_server, "list_alarms", {"limit": 10})
+    assert [a["_id"] for a in result["alarms"]] == ["new", "mid", "old"]
+    assert result["more_available"] is False
+
+
+@respx.mock
+async def test_list_events_full_page_without_paging_metadata_is_maybe_more(
+    real_server: FastMCP,
+) -> None:
+    """A full page (100 rows) with no has_next or page counts is "maybe more",
+    as kcorr treats it (review L3); a short one ends the read."""
+    pages = {
+        0: {"data": [_log_entry(i) for i in range(100)]},
+        1: {"data": [_log_entry(i) for i in range(100, 130)]},
+    }
+    route = respx.post(f"{V2}/system-log/all").mock(
+        side_effect=lambda request: httpx.Response(
+            200, json=pages[json.loads(request.content)["pageNumber"]]
+        )
+    )
+    result = await _call(real_server, "list_events", {"limit": 1000})
+    assert route.call_count == 2
+    assert result["returned"] == 130
+    assert result["window_fully_read"] is True
+    assert result["more_available"] is False
+
+
+@respx.mock
+async def test_list_events_total_above_rows_read_is_not_fully_read(real_server: FastMCP) -> None:
+    """The controller says 500 entries but the pages end after 30 (review L3)."""
+    respx.post(f"{V2}/system-log/all").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [_log_entry(i) for i in range(30)],
+                "page_number": 0,
+                "total_page_count": 1,
+                "total_element_count": 500,
+            },
+        )
+    )
+    result = await _call(real_server, "list_events", {"limit": 1000})
+    assert result["returned"] == 30
+    assert result["total"] == 500
+    assert result["more_available"] is True
+    assert result["window_fully_read"] is False
+    assert "not read to the end" in result["note"]
+
+
+@respx.mock
+async def test_list_events_repeated_page_stops_the_read(real_server: FastMCP) -> None:
+    """A controller that ignores pageNumber must not be read 20 times over."""
+    page = {"data": [_log_entry(i) for i in range(100)]}
+    route = respx.post(f"{V2}/system-log/all").mock(return_value=httpx.Response(200, json=page))
+    result = await _call(real_server, "list_events", {"limit": 1000})
+    assert route.call_count == 2
+    assert result["returned"] == 100
+    assert result["window_fully_read"] is False
+
+
 async def test_list_events_rejects_out_of_range_hours(stub_server: FastMCP) -> None:
     for hours in (0, 721):
         result = await _call(stub_server, "list_events", {"hours": hours})
@@ -698,9 +806,8 @@ async def test_list_threat_detections_cut_window_is_not_complete(
 
     def flows(request: httpx.Request) -> httpx.Response:
         page = json.loads(request.content)["pageNumber"]
-        return httpx.Response(
-            200, json={"data": [FLOW_BLOCKED] * 500, "has_next": True, "page_number": page}
-        )
+        rows = [{**FLOW_BLOCKED, "id": f"flow-{page}-{i}"} for i in range(500)]
+        return httpx.Response(200, json={"data": rows, "has_next": True, "page_number": page})
 
     flows_route = respx.post(f"{V2}/traffic-flows").mock(side_effect=flows)
     respx.post(f"{V2}/system-log/threat-alert").mock(
@@ -766,6 +873,43 @@ async def test_list_threat_detections_flow_time_in_seconds_still_dedupes(
     result = await _call(real_server, "list_threat_detections", {})
     assert result["matched"] == 2  # the flow plus the alert-only detection
     assert result["detections"][0]["timestamp_ms"] == NOW_MS - 300_000
+
+
+@respx.mock
+async def test_list_threat_detections_honeypot_hit_is_listed_once(real_server: FastMCP) -> None:
+    """A honeypot flow and its alert are one hit (review L4): the flow is
+    labelled honeypot with kcorr's fixed signature, and the alert, which names
+    no decoy address the flow shares, is matched on the source end."""
+    flow = {
+        "id": "6740cc00000000000000hp01",
+        "time": NOW_MS - 60_000,
+        "action": "blocked",
+        "protocol": "TCP",
+        "source": {"ip": "192.0.2.50", "port": 40000, "mac": "00:00:5e:00:53:50"},
+        "destination": {"port": 22},
+        "policies": [{"type": "FIREWALL", "internal_type": "HONEYPOT", "name": "Honeypot"}],
+    }
+    alert = {
+        "id": "6740bb00000000000000hp01",
+        "timestamp": NOW_MS - 60_000 + 3_000,
+        "subcategory": "SECURITY_HONEYPOT",
+        "key": "HONEYPOT_HIT_DETECTED_V2",
+        "title_raw": "Honeypot Triggered",
+        "parameters": {
+            "CLIENT": {"id": "00:00:5e:00:53:50", "ip": "192.0.2.50", "name": "Test Plug"},
+            "HONEYPOT_IP": {"id": "192.0.2.250", "name": "192.0.2.250"},
+        },
+    }
+    _mock_threat_sources(
+        flows=httpx.Response(200, json={"data": [flow], "has_next": False}),
+        alerts=httpx.Response(200, json={"data": [alert], "has_next": False}),
+    )
+    result = await _call(real_server, "list_threat_detections", {})
+    [hit] = result["detections"]
+    assert hit["source"] == "traffic-flows"
+    assert hit["category"] == "honeypot"
+    assert hit["signature"] == HONEYPOT_SIGNATURE
+    assert hit["src_ip"] == "192.0.2.50"
 
 
 async def test_list_threat_detections_stub(stub_server: FastMCP) -> None:
@@ -837,3 +981,32 @@ def test_render_message_fills_placeholders_and_keeps_unknown_ones() -> None:
     }
     assert render_message(entry) == "00:00:5e:00:53:01 left Home via {AP}."
     assert render_message({"title_raw": "Title only"}) == "Title only"
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (1_700_000_000, 1_700_000_000_000),
+        (1_700_000_000.5, 1_700_000_000_500),
+        ("1700000000.25", 1_700_000_000_250),
+        ("1700000000000", 1_700_000_000_000),
+        (1_700_000_000_000.0, 1_700_000_000_000),
+        (1e12, 1_000_000_000_000),
+        (999_999_999_999, 999_999_999_999_000),
+        ("soon", None),
+        (True, None),
+        (0, None),
+        (-5, None),
+        (None, None),
+        (float("nan"), None),
+    ],
+)
+def test_ts_ms_reads_numbers_like_kcorr(value: object, expected: int | None) -> None:
+    assert ts_ms(value) == expected
+
+
+def test_iso_utc_and_ts_ms_agree_at_the_boundary() -> None:
+    # 1e12 is milliseconds to both (2001-09-09), and just below it is seconds.
+    assert iso_utc(1e12) == "2001-09-09T01:46:40Z"
+    assert iso_utc(1_000_000_000_000) == "2001-09-09T01:46:40Z"
+    assert iso_utc("1700000000.9") == "2023-11-14T22:13:20Z"
