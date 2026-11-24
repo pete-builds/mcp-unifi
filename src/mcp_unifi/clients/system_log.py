@@ -1,0 +1,592 @@
+"""Request bodies and response shaping for the v2 system log and IPS reads.
+
+WHY THIS EXISTS
+---------------
+The legacy log readers this server used are gone on the UCG-Fiber it is
+tested against. Probed live by the maintainer on UniFi Network 10.5.67
+(2026-08-08; 10.4.57 for the IPS route on 2026-06-12): ``/stat/event``
+answers 404, ``/list/alarm`` answers 400 ``api.err.InvalidObject`` and
+``/stat/ips/event`` answers 404. Those probes are this repository's own
+evidence; the sources below date the change differently, and say so. The
+replacement is the v2 system log, a paged ``POST`` under
+``/proxy/network/v2/api/site/<site>/system-log/<class>``. Sources, read
+2026-11-24:
+
+* Art-of-WiFi ``UniFi-API-client`` ``src/Client.php`` at commit
+  ``e1f7f63b`` (v2.4.0): ``get_system_log()`` (lines 3989-4053) builds the
+  body ``{pageNumber, pageSize, timestampFrom, timestampTo}`` and adds
+  ``threatTypes: ["HONEYPOT", "THREAT"]`` for the ``threat-alert`` class.
+  It dates the removals to **Network Application 11.x**, not 10.x: lines
+  1198-1199 (``stat/ips/event`` 404), 3507-3508 (``stat/event`` 404),
+  3533-3534 (``list/alarm`` 400) and 3999 ("on Network Application 11.x
+  'all' replaces list_events(), 'threat-alert' replaces stat_ips_events() and
+  'critical' replaces list_alarms()").
+* unpoller ``unifi`` ``system_log.go`` at commit ``132b9d92``: the entry
+  fields (``id``, ``timestamp`` in ms, ``category``, ``subcategory``,
+  ``event``, ``key``, ``severity``, ``status``, ``type``, ``title_raw``,
+  ``message_raw``, ``parameters``) and the page envelope (``data``,
+  ``page_number``, ``total_element_count``, ``total_page_count``).
+  ``endpoints_data/ENDPOINTS.md`` there (lines 299-311, tested on 10.3.58)
+  lists ``stat/event`` and ``stat/ips/event`` as removed on Network 10.x,
+  points event readers at the system-log POST API, and says plainly that
+  "IDS events have no current replacement". Neither source states the
+  order rows come back in, so every reader here sorts for itself.
+
+IPS detections come from two v2 reads, because neither carries everything:
+
+* ``POST /traffic-flows`` filtered to ``policy_type: ["INTRUSION_PREVENTION"]``
+  carries ports, protocol, the signature and the ``blocked`` / ``allowed``
+  action. The body and row shape follow kcorr ``unifi-security-console``
+  ``server/unifi/threats.ts`` (commit ``73515f5b``, ``fetchThreats`` and
+  ``parseTrafficFlow``). That is one project's reading of the controller, not
+  a vendor document, so it is the least certain shape in this module.
+* ``POST /system-log/threat-alert`` carries the alert as the console shows it
+  (``THREAT_BLOCKED`` / ``THREAT_DETECTED`` keys, ``SRC_IP`` / ``DST_IP``
+  parameters) but no ports and no signature, and catches honeypot hits.
+
+THE RULE
+--------
+Nothing here turns a failure into an empty list. A page that is not the
+documented shape raises :class:`UniFiError`; an empty ``data`` list on a
+well-formed page is a real "nothing in this window".
+"""
+
+from __future__ import annotations
+
+import ipaddress
+import math
+import re
+from datetime import UTC, datetime
+from typing import Any
+
+from mcp_unifi.clients.errors import UniFiError
+from mcp_unifi.clients.mac import is_mac, normalize_mac
+
+#: Page size for the system log. Art-of-WiFi's default; a third-party fake
+#: console caps ``threat-alert`` pages at 100, so asking for more buys nothing.
+SYSTEM_LOG_PAGE_SIZE = 100
+
+#: Page size for ``traffic-flows`` (kcorr uses 1000; 500 keeps one page small).
+TRAFFIC_FLOW_PAGE_SIZE = 500
+
+#: Most rows read from one source for one call. A window holding more is
+#: reported as ``more_available`` so the caller narrows it, never truncated
+#: silently.
+MAX_SCAN_ROWS = 2000
+
+#: Two reports of one detection (a flow and an alert) land within this many
+#: milliseconds of each other.
+_SAME_DETECTION_MS = 120_000
+
+#: Empty filter set the ``traffic-flows`` body carries alongside
+#: ``policy_type`` (copied from kcorr ``EMPTY_FLOW_FILTERS``). An empty list
+#: means "no filter" on that field.
+_EMPTY_FLOW_FILTERS: dict[str, Any] = {
+    "risk": [],
+    "action": [],
+    "direction": [],
+    "protocol": [],
+    "policy": [],
+    "service": [],
+    "source_host": [],
+    "source_mac": [],
+    "source_ip": [],
+    "source_port": [],
+    "source_network_id": [],
+    "source_domain": [],
+    "source_zone_id": [],
+    "source_region": [],
+    "destination_host": [],
+    "destination_mac": [],
+    "destination_ip": [],
+    "destination_port": [],
+    "destination_network_id": [],
+    "destination_domain": [],
+    "destination_zone_id": [],
+    "destination_region": [],
+    "in_network_id": [],
+    "out_network_id": [],
+    "next_ai_query": [],
+    "except_for": [],
+    "search_text": "",
+}
+
+_PLACEHOLDER = re.compile(r"\{(\w+)\}")
+
+
+# ---------------------------------------------------------------------------
+# Request bodies
+# ---------------------------------------------------------------------------
+
+
+def system_log_body(log_class: str, start_ms: int, end_ms: int, page: int) -> dict[str, Any]:
+    """The ``POST /system-log/<class>`` body, as Art-of-WiFi builds it."""
+    body: dict[str, Any] = {
+        "pageNumber": page,
+        "pageSize": SYSTEM_LOG_PAGE_SIZE,
+        "timestampFrom": start_ms,
+        "timestampTo": end_ms,
+    }
+    if log_class == "threat-alert":
+        body["threatTypes"] = ["HONEYPOT", "THREAT"]
+    return body
+
+
+def ips_flow_body(start_ms: int, end_ms: int, page: int) -> dict[str, Any]:
+    """The ``POST /traffic-flows`` body filtered to intrusion prevention."""
+    return {
+        **_EMPTY_FLOW_FILTERS,
+        "timestampFrom": start_ms,
+        "timestampTo": end_ms,
+        "pageNumber": page,
+        "pageSize": TRAFFIC_FLOW_PAGE_SIZE,
+        "skip_count": False,
+        "policy_type": ["INTRUSION_PREVENTION"],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Page parsing
+# ---------------------------------------------------------------------------
+
+
+def parse_page(body: Any, label: str) -> tuple[list[dict[str, Any]], int | None, bool | None]:
+    """Return ``(rows, total, has_more)`` from one v2 page, or raise.
+
+    ``has_more`` is what the page claims (``has_next``, else ``page_number``
+    against ``total_page_count``), even on an empty page: an empty page that
+    still claims more is a reason to stop paging, not proof the window is
+    exhausted, so the caller reports it as ``more_available``. ``None`` means
+    the page carries no paging metadata at all; the pager then treats a full
+    page as "maybe more", as kcorr does.
+
+    Accepts the documented envelope (``{"data": [...], "total_page_count":
+    N, ...}``) and a bare list (unpoller's endpoint catalogue describes
+    ``system-log/critical`` as an array). Anything else raises
+    :class:`UniFiError` naming ``label``: an unrecognised body is a failure
+    to read the log, never an empty log.
+    """
+    if isinstance(body, list):
+        return [r for r in body if isinstance(r, dict)], None, None
+    if not isinstance(body, dict) or not isinstance(body.get("data"), list):
+        kind = type(body).__name__ if not isinstance(body, dict) else "object without a data list"
+        raise UniFiError(
+            f"{label} answered 200 with a body that is not a system-log page ({kind}), "
+            f"so the log could not be read"
+        )
+    rows = [r for r in body["data"] if isinstance(r, dict)]
+    total = body.get("total_element_count")
+    total_int = total if isinstance(total, int) and not isinstance(total, bool) else None
+    has_more: bool | None = None
+    if isinstance(body.get("has_next"), bool):
+        has_more = bool(body["has_next"])
+    else:
+        pages = body.get("total_page_count")
+        page_no = body.get("page_number")
+        if isinstance(pages, int) and isinstance(page_no, int):
+            has_more = page_no + 1 < pages
+    return rows, total_int, has_more
+
+
+# ---------------------------------------------------------------------------
+# Entry shaping
+# ---------------------------------------------------------------------------
+
+
+def iso_utc(value: object) -> str | None:
+    """An epoch timestamp (s or ms, see :func:`ts_ms`) as an ISO-8601 UTC string."""
+    ms = ts_ms(value)
+    if ms is None:
+        return None
+    return datetime.fromtimestamp(ms / 1000, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def render_message(entry: dict[str, Any]) -> str:
+    """Fill ``message_raw``'s ``{PLACEHOLDER}`` tokens from ``parameters``.
+
+    Same rule as unpoller ``SystemLogEntry.Msg()``: a parameter's ``name``,
+    else its ``id``, else the placeholder stays as written.
+    """
+    raw = entry.get("message_raw")
+    if not isinstance(raw, str) or not raw:
+        title = entry.get("message") or entry.get("title_raw") or ""
+        return str(title)
+    params = entry.get("parameters")
+    params = params if isinstance(params, dict) else {}
+
+    def fill(match: re.Match[str]) -> str:
+        param = params.get(match.group(1))
+        if isinstance(param, dict):
+            for field in ("name", "id"):
+                value = param.get(field)
+                if isinstance(value, str) and value:
+                    return value
+        return match.group(0)
+
+    return _PLACEHOLDER.sub(fill, raw)
+
+
+def shape_log_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    """A system-log entry with ``time`` and a rendered ``message`` added."""
+    shaped = dict(entry)
+    shaped["time"] = iso_utc(entry.get("timestamp"))
+    shaped["message"] = render_message(entry)
+    return shaped
+
+
+def _obj(value: object) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _str(value: object) -> str | None:
+    if isinstance(value, str) and value:
+        return value
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    return None
+
+
+def _int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
+def ts_ms(value: object) -> int | None:
+    """An epoch timestamp in milliseconds, whether it arrived in s or ms.
+
+    Same rule as kcorr ``tsMs()`` and its ``n()``: an int, a float or a
+    numeric string (decimals allowed) is read as a number, and a positive
+    value below ``1e12`` is seconds. :func:`iso_utc` uses this too, so the
+    two cannot disagree at the boundary. Applied before the flow/alert dedupe,
+    which compares milliseconds.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        number = float(value)
+    elif isinstance(value, str):
+        try:
+            number = float(value.strip())
+        except ValueError:
+            return None
+    else:
+        return None
+    if not math.isfinite(number) or number <= 0:
+        return None
+    return round(number * 1000) if number < 1e12 else round(number)
+
+
+def _ip(*values: object) -> str | None:
+    for value in values:
+        text = _str(value)
+        if text is None:
+            continue
+        try:
+            ipaddress.ip_address(text)
+        except ValueError:
+            continue
+        return text
+    return None
+
+
+def _mac(*values: object) -> str | None:
+    for value in values:
+        if is_mac(value):
+            return normalize_mac(value)
+    return None
+
+
+def _flow_action(value: object) -> str:
+    text = str(value or "").lower()
+    if text in {"blocked", "block", "drop", "dropped"}:
+        return "blocked"
+    if text in {"allowed", "allow", "alert", "alerted"}:
+        return "alerted"
+    return "unknown"
+
+
+#: Signature kcorr gives a honeypot hit, which carries no IPS signature.
+HONEYPOT_SIGNATURE = "UniFi internal honeypot triggered"
+
+
+def _policies(row: dict[str, Any]) -> list[dict[str, Any]]:
+    return [p for p in row.get("policies") or [] if isinstance(p, dict)]
+
+
+def _is_honeypot_flow(row: dict[str, Any]) -> bool:
+    """kcorr ``mentionsHoneypot(p.type, p.internal_type, p.name)``."""
+    return any(
+        "HONEYPOT" in str(p.get(field) or "").upper()
+        for p in _policies(row)
+        for field in ("type", "internal_type", "name")
+    )
+
+
+def _is_ips_flow(row: dict[str, Any]) -> bool:
+    if _is_honeypot_flow(row):
+        return True
+    if any(str(p.get("type", "")).upper() == "INTRUSION_PREVENTION" for p in _policies(row)):
+        return True
+    return bool(_obj(row.get("ips")))
+
+
+def detection_from_flow(row: dict[str, Any]) -> dict[str, Any] | None:
+    """One ``traffic-flows`` row as a detection, or ``None`` if not an IPS match.
+
+    A row with no intrusion-prevention policy and no ``ips`` block is dropped,
+    so a controller that ignored the ``policy_type`` filter cannot pass
+    ordinary traffic off as detections.
+    """
+    if not _is_ips_flow(row):
+        return None
+    src = _obj(row.get("source"))
+    dst = _obj(row.get("destination"))
+    ips = _obj(row.get("ips"))
+    policies = _policies(row)
+    honeypot = _is_honeypot_flow(row)
+    ips_policy = next(
+        (p for p in policies if str(p.get("type", "")).upper() == "INTRUSION_PREVENTION"), {}
+    )
+    ts = ts_ms(row.get("time")) or ts_ms(row.get("flow_start_time"))
+    src_name = _str(src.get("client_name")) or _str(src.get("device_name"))
+    dst_name = _str(dst.get("client_name")) or _str(dst.get("device_name"))
+    return {
+        "time": iso_utc(ts),
+        "timestamp_ms": ts,
+        "action": _flow_action(row.get("action")),
+        "src_ip": _ip(src.get("ip")),
+        "src_port": _int(src.get("port")),
+        "src_mac": _mac(src.get("mac")),
+        "dst_ip": _ip(dst.get("ip")),
+        "dst_port": _int(dst.get("port")),
+        "dst_mac": _mac(dst.get("mac")),
+        "protocol": _str(row.get("protocol")),
+        "direction": _str(row.get("direction")),
+        "signature": HONEYPOT_SIGNATURE
+        if honeypot
+        else (_str(ips.get("signature")) or _str(ips_policy.get("name"))),
+        "signature_id": _int(ips.get("signature_id")),
+        "category": "honeypot"
+        if honeypot
+        else (_str(ips.get("category_name")) or _str(ips_policy.get("ips_category"))),
+        "severity": _str(row.get("risk")),
+        "client_name": src_name or dst_name,
+        "source": "traffic-flows",
+        "id": _str(row.get("id")),
+    }
+
+
+def detection_from_alert(row: dict[str, Any]) -> dict[str, Any]:
+    """One ``system-log/threat-alert`` entry as a detection.
+
+    These rows carry no ports and no signature; the alert title stands in for
+    the signature so the caller still sees what fired.
+    """
+    params = _obj(row.get("parameters"))
+    key = str(row.get("key") or row.get("event") or "").upper()
+    honeypot = any(
+        "HONEYPOT" in str(v or "").upper()
+        for v in (key, row.get("subcategory"), row.get("title_raw"))
+    )
+    # kcorr parseThreatAlert: a known device appears as SRC_CLIENT / DST_CLIENT.
+    # A honeypot hit names the device that touched the decoy as CLIENT, often
+    # with no address, and any other address it carries (apart from the
+    # gateway's DEVICE) is the decoy's.
+    src_client = _obj(params.get("SRC_CLIENT") or (params.get("CLIENT") if honeypot else None))
+    dst_client = _obj(params.get("DST_CLIENT"))
+    decoy: list[object] = []
+    if honeypot:
+        for name_, value in params.items():
+            if name_ in {"SRC_IP", "SRC_CLIENT", "CLIENT", "DEVICE"}:
+                continue
+            ref = _obj(value)
+            decoy.extend((ref.get("ip"), ref.get("id"), ref.get("name")))
+    if "BLOCKED" in key:
+        action = "blocked"
+    elif "DETECTED" in key or honeypot:
+        action = "alerted"
+    else:
+        action = "unknown"
+    src_ip_param = _obj(params.get("SRC_IP"))
+    dst_ip_param = _obj(params.get("DST_IP"))
+    ts = ts_ms(row.get("timestamp"))
+    name = (
+        _str(src_client.get("name"))
+        or _str(dst_client.get("name"))
+        or _str(src_client.get("hostname"))
+        or _str(dst_client.get("hostname"))
+    )
+    return {
+        "time": iso_utc(ts),
+        "timestamp_ms": ts,
+        "action": action,
+        "src_ip": _ip(src_ip_param.get("id"), src_ip_param.get("name"), src_client.get("ip")),
+        "src_port": None,
+        "src_mac": _mac(src_client.get("mac"), src_client.get("id")),
+        "dst_ip": _ip(
+            dst_ip_param.get("id"), dst_ip_param.get("name"), dst_client.get("ip"), *decoy
+        ),
+        "dst_port": None,
+        "dst_mac": _mac(dst_client.get("id"), dst_client.get("mac")),
+        "protocol": None,
+        "direction": None,
+        "signature": _str(row.get("title_raw")) or _str(row.get("message")),
+        "signature_id": None,
+        "category": "honeypot"
+        if honeypot
+        else (_str(row.get("subcategory")) or _str(row.get("category"))),
+        "severity": _str(row.get("severity")),
+        "client_name": name,
+        "source": "system-log/threat-alert",
+        "id": _str(row.get("id")),
+        "message": render_message(row) or None,
+    }
+
+
+def _same_end(a: dict[str, Any], b: dict[str, Any], a_side: str, b_side: str) -> bool:
+    a_ip, b_ip = a.get(f"{a_side}_ip"), b.get(f"{b_side}_ip")
+    if a_ip and a_ip == b_ip:
+        return True
+    a_mac, b_mac = a.get(f"{a_side}_mac"), b.get(f"{b_side}_mac")
+    return bool(a_mac) and a_mac == b_mac
+
+
+def merge_detections(
+    flows: list[dict[str, Any]], alerts: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Flows first, plus every alert no flow already describes; newest first.
+
+    A flow and an alert describe the same detection when they are within
+    :data:`_SAME_DETECTION_MS` of each other and join the same two ends, in
+    either direction. A honeypot alert often names no decoy address, so (as
+    in kcorr) it matches a honeypot flow on the source end alone. The flow
+    wins because it carries ports and signature.
+    """
+
+    def covered(alert: dict[str, Any]) -> bool:
+        a_ts = alert.get("timestamp_ms") or 0
+        alert_is_honeypot = alert.get("category") == "honeypot"
+        for flow in flows:
+            f_ts = flow.get("timestamp_ms") or 0
+            if abs(f_ts - a_ts) >= _SAME_DETECTION_MS:
+                continue
+            if alert_is_honeypot:
+                if flow.get("category") == "honeypot" and _same_end(alert, flow, "src", "src"):
+                    return True
+                continue
+            forward = _same_end(alert, flow, "src", "src") and _same_end(alert, flow, "dst", "dst")
+            reverse = _same_end(alert, flow, "src", "dst") and _same_end(alert, flow, "dst", "src")
+            if forward or reverse:
+                return True
+        return False
+
+    merged = list(flows) + [a for a in alerts if not covered(a)]
+    merged.sort(key=lambda d: d.get("timestamp_ms") or 0, reverse=True)
+    return merged
+
+
+def finish_detections(
+    flows: list[dict[str, Any]],
+    alerts: list[dict[str, Any]],
+    *,
+    sources: list[dict[str, Any]],
+    failures: list[str],
+    window: tuple[int, int, int],
+    client: str,
+    limit: int,
+) -> dict[str, Any]:
+    """Merge, filter and wrap detections in the ``list_threat_detections`` envelope.
+
+    Shared by the real client and stub mode so both answer in one shape.
+    ``window`` is ``(hours, start_ms, end_ms)``. When a source failed, or a
+    source reports ``more_available`` (the scan cap cut the window), the
+    envelope opens with a ``warning`` and says ``complete: false``: a partial
+    list must never read as a full one.
+    """
+    hours, start_ms, end_ms = window
+    detections = merge_detections(flows, alerts)
+    matcher = client_matcher(client) if client else None
+    if matcher is not None:
+        detections = [d for d in detections if matches_client(d, matcher)]
+    returned = detections[:limit]
+    cut = [str(s.get("endpoint")) for s in sources if s.get("more_available")]
+    problems: list[str] = []
+    if failures:
+        problems.append(
+            f"Only part of the IPS record was read: {'; '.join(failures)}. Detections "
+            f"from that source are missing"
+        )
+    if cut:
+        problems.append(
+            f"The window holds more rows than one call reads (the cap is "
+            f"{MAX_SCAN_ROWS} per source), so {' and '.join(cut)} was cut off and "
+            f"detections past the cut are missing; narrow ``hours``"
+        )
+    if problems and client:
+        problems.append(f"The client filter {client!r} ran over that partial set only")
+    result: dict[str, Any] = {}
+    if problems:
+        result["warning"] = (
+            ". ".join(problems) + ". A short or empty list here is not proof that "
+            "nothing was blocked."
+        )
+    result.update(
+        {
+            "complete": not problems,
+            "window": {"hours": hours, "from": iso_utc(start_ms), "to": iso_utc(end_ms)},
+            "client_filter": client or None,
+            "sources": sources,
+            "matched": len(detections),
+            "returned": len(returned),
+            "detections": returned,
+        }
+    )
+    return result
+
+
+def client_matcher(client: str) -> tuple[str, str] | None:
+    """Parse a client filter into ``("ip", value)`` or ``("mac", value)``.
+
+    Returns ``None`` when ``client`` is neither, so the tool can refuse it
+    rather than filter on something that can never match.
+    """
+    text = client.strip()
+    try:
+        return ("ip", str(ipaddress.ip_address(text)))
+    except ValueError:
+        pass
+    if is_mac(text):
+        return ("mac", normalize_mac(text))
+    return None
+
+
+def matches_client(detection: dict[str, Any], matcher: tuple[str, str]) -> bool:
+    """``True`` when either end of ``detection`` is the matched IP or MAC."""
+    kind, value = matcher
+    return value in (detection.get(f"src_{kind}"), detection.get(f"dst_{kind}"))
+
+
+__all__ = [
+    "HONEYPOT_SIGNATURE",
+    "MAX_SCAN_ROWS",
+    "SYSTEM_LOG_PAGE_SIZE",
+    "TRAFFIC_FLOW_PAGE_SIZE",
+    "client_matcher",
+    "detection_from_alert",
+    "detection_from_flow",
+    "finish_detections",
+    "ips_flow_body",
+    "iso_utc",
+    "matches_client",
+    "merge_detections",
+    "parse_page",
+    "render_message",
+    "shape_log_entry",
+    "system_log_body",
+    "ts_ms",
+]

@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import logging
 import ssl
+import time
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -26,9 +28,25 @@ from mcp_unifi.clients.ids import path_segment
 from mcp_unifi.clients.mac import normalize_mac, same_mac
 from mcp_unifi.clients.retry import request_with_retry
 from mcp_unifi.clients.stats_shape import shape_speedtest_results, shape_top_talkers
+from mcp_unifi.clients.system_log import (
+    MAX_SCAN_ROWS,
+    client_matcher,
+    detection_from_alert,
+    detection_from_flow,
+    finish_detections,
+    ips_flow_body,
+    iso_utc,
+    parse_page,
+    shape_log_entry,
+    system_log_body,
+    ts_ms,
+)
 from mcp_unifi.models import UniFiRecord
 
 logger = logging.getLogger("mcp_unifi.client")
+
+#: Hard stop on pages for one paged v2 read, whatever the controller claims.
+_MAX_PAGES = 50
 
 
 #: Kept for existing imports; the helper now lives in ``clients.errors``.
@@ -97,13 +115,14 @@ class UniFiClient:
             json=json,
         )
         if resp.status_code >= 400:
-            raise UniFiError(
-                f"UniFi {method} {path} returned {resp.status_code}"
-                f"{describe_error_body(resp, json)}"
-            )
+            detail = describe_error_body(resp, json)
+            error = UniFiError(f"UniFi {method} {path} returned {resp.status_code}{detail}")
+            error.status = resp.status_code
+            error.detail = detail
+            raise error
         if not resp.content:
             return None
-        body = parse_json_body(resp, f"UniFi {method} {path}")
+        body = self._json_or_raise(resp, f"UniFi {method} {path}")
         # Legacy UniFi controller wraps payloads in {"meta": {...}, "data": [...]}.
         if isinstance(body, dict) and "data" in body:
             return body["data"]
@@ -139,60 +158,36 @@ class UniFiClient:
             json=json,
         )
         if resp.status_code >= 400:
-            raise UniFiError(
-                f"UniFi {method} (v2) {path} returned {resp.status_code}"
-                f"{describe_error_body(resp, json)}"
-            )
+            detail = describe_error_body(resp, json)
+            error = UniFiError(f"UniFi {method} (v2) {path} returned {resp.status_code}{detail}")
+            error.status = resp.status_code
+            error.detail = detail
+            raise error
         if not resp.content:
             return None
-        return parse_json_body(resp, f"UniFi {method} (v2) {path}")
+        return self._json_or_raise(resp, f"UniFi {method} (v2) {path}")
+
+    @staticmethod
+    def _json_or_raise(resp: httpx.Response, label: str) -> Any:
+        """Parse a 2xx body, keeping the status on the error if it is not JSON.
+
+        The controller did answer, so the error carries ``status`` and a
+        ``detail`` naming the body type, and an outcome built from it reads
+        "answered HTTP 200 with a body that is not JSON", never "failed before
+        any HTTP answer".
+        """
+        try:
+            return parse_json_body(resp, label)
+        except UniFiError as exc:
+            exc.status = resp.status_code
+            content_type = resp.headers.get("content-type", "unknown")
+            exc.detail = (
+                f" with a body that is not JSON ({content_type}, {len(resp.content)} bytes)"
+            )
+            raise
 
     async def _get(self, path: str) -> Any:
         return await self._request("GET", f"{self._site_path}{path}")
-
-    async def _get_or_unsupported(
-        self,
-        path: str,
-        params: dict[str, Any] | None = None,
-        *,
-        feature: str = "",
-    ) -> Any:
-        """GET a route, raising :class:`UniFiUnsupportedError` if it is absent.
-
-        HISTORY — do not revert this to returning ``[]``. This helper used to
-        swallow 404 (``api.err.NotFound``) and 400 (``api.err.InvalidObject``)
-        and return an empty list, on the theory that "no working alternative"
-        justified a benign-looking answer. It does not. During the 2026-08-08
-        outage ``list_events`` reported "no events" while the real answer was
-        "this endpoint no longer exists on 10.5.67" — a plausible negative that
-        cost real debugging time, because an empty result is indistinguishable
-        from a quiet network.
-
-        A tool that cannot answer must say so. Fabricating a successful-looking
-        empty result is worse than failing loudly: the caller cannot tell the
-        difference between "nothing happened" and "I cannot see anything".
-
-        Genuine transport and auth failures propagate as before.
-        """
-        query = ""
-        if params:
-            query = "?" + "&".join(f"{k}={v}" for k, v in params.items())
-        try:
-            return await self._request("GET", f"{self._site_path}{path}{query}")
-        except UniFiError as exc:
-            text = str(exc)
-            if " returned 404" in text or " returned 400" in text:
-                label = feature or path
-                logger.warning(
-                    "UniFi route not exposed by this controller version",
-                    extra={"path": path, "error": text[:200]},
-                )
-                raise UniFiUnsupportedError(
-                    f"{label} is not available on this UniFi Network version "
-                    f"(the controller answered: {text[:200]}), so this is a "
-                    f"firmware limitation and not an empty result."
-                ) from exc
-            raise
 
     async def _post(self, path: str, payload: dict[str, Any]) -> Any:
         return await self._request("POST", f"{self._site_path}{path}", json=payload)
@@ -675,95 +670,389 @@ class UniFiClient:
     async def get_site_health(self) -> list[UniFiRecord]:
         return await self._get("/stat/health") or []
 
-    async def list_events(self, limit: int) -> list[UniFiRecord]:
-        """Return recent controller events, newest first.
+    # ------------------------------------------------------------------
+    # Event log, alarms and IPS detections (v2 system log)
+    # ------------------------------------------------------------------
+    #
+    # HISTORY. ``list_events`` read ``GET /stat/event`` and ``list_alarms``
+    # read ``GET /list/alarm``. On the maintainer's UCG-Fiber, Network
+    # 10.5.67, both are gone (404 and 400 ``api.err.InvalidObject``, the
+    # probe record below). Art-of-WiFi dates the same removals to Network
+    # 11.x and unpoller to 10.x; the 10.5.67 result is this repository's own
+    # probe, not theirs. An earlier version of this client turned the
+    # failure into ``[]``, so "this controller cannot show events" read as
+    # "nothing happened". The replacement is the v2 system log; see
+    # :mod:`mcp_unifi.clients.system_log` for the sources. Every failure
+    # below raises with the full path and HTTP status, and the success
+    # envelope names the route that answered, so one call says which
+    # surface was read.
+    #
+    # ORDER. No source states the order the v2 routes return rows in, so
+    # every reader pages through the window (up to the scan cap), sorts by
+    # timestamp newest first, and only then applies ``limit``. When the cap
+    # cuts the window, the envelope says so rather than present the newest
+    # of a partial read as the newest of all.
+    #
+    # PROBE RECORD (the old docstrings, kept). UCG-Fiber, Network 10.4.57
+    # (2026-06-03): ``GET``/``POST /stat/event`` 404, ``/rest/event`` 400,
+    # ``GET /list/alarm`` 200. Network 10.5.67 (2026-08-08, settled
+    # controller, ``stat/sysinfo`` 200 as the control): ``GET``/``POST
+    # /stat/event`` 404, ``GET``/``POST /rest/event`` 400, ``GET /list/event``
+    # 400, ``GET /list/alarm`` (with or without ``?archived=``) 400,
+    # ``GET /rest/alarm`` 400, ``POST /stat/alarm`` 404, and v2 ``/event``,
+    # ``/events`` and ``/system-log`` 404. That last probe named no class
+    # suffix and no method, so it says nothing about ``POST
+    # /system-log/all``; whether that route accepts this server's API key is
+    # NOT yet verified live. If it does not, the tools return the 404 or 401
+    # as an error, which is the point.
 
-        Probed live against a UCG-Fiber on UniFi Network 10.4.57 (2026-06-03):
-        the legacy event log route is **not exposed** on this firmware via the
-        local API-key surface. ``GET``/``POST /stat/event`` both return HTTP 404
-        (``api.err.NotFound``), the v2 (``/v2/api/site/default/...``) tree has no
-        event path, and the official Integration API (``/integration/v1/...``)
-        has no events resource. ``/rest/event`` answers 400
-        (``api.err.InvalidObject``) — it is a config collection, not a log
-        reader. The 404 is route-absence, not a scope gate: sibling ``stat/*``
-        routes (``stat/sta``, ``stat/rogueap``, ``stat/health``) all return 200
-        with the same key.
+    #: Statuses that mean "this route does not exist on this controller",
+    #: the only case where a legacy fallback is tried. Anything else (401,
+    #: 403, 400 on a body, 5xx, transport) is surfaced as it is, because a
+    #: fallback would hide the real fault behind a second, older one.
+    _ROUTE_ABSENT = frozenset({404, 405})
 
-        Re-probed live on **UniFi Network 10.5.67** (2026-08-08), on a settled
-        controller (not mid-restart), with a valid key and ``stat/sysinfo``
-        answering 200 as the control:
+    def _v2_label(self, method: str, path: str) -> str:
+        return f"{method} /proxy/network/v2/api/site/{self.site}{path}"
 
-        * ``GET  /stat/event``            → 404 ``api.err.NotFound``
-        * ``POST /stat/event``            → 404 ``api.err.NotFound``
-        * ``GET  /rest/event``            → 400 ``api.err.InvalidObject``
-        * ``POST /rest/event``            → 400 ``api.err.InvalidObject``
-        * ``GET  /list/event``            → 400 ``api.err.InvalidObject``
-        * v2 ``/event``, ``/events``, ``/system-log`` → 404
+    def _legacy_label(self, method: str, path: str) -> str:
+        return f"{method} /proxy/network{self._site_path}{path}"
 
-        The 400 ``InvalidObject`` on ``rest/event`` is UniFi's "that is not a
-        REST collection" error, not a request-shape complaint — the whole
-        event surface is gone from the local API-key interface on this version.
+    @staticmethod
+    def _outcome(label: str, exc: UniFiError) -> str:
+        """``label`` plus what went wrong, for an error message."""
+        if exc.status is not None:
+            return f"{label} answered HTTP {exc.status}{exc.detail}"
+        text = str(exc)
+        return text if label in text else f"{label} failed before any HTTP answer ({text})"
 
-        We still attempt ``GET /stat/event`` for forward compatibility, but a
-        missing route now raises :class:`UniFiUnsupportedError` instead of
-        returning ``[]``. Reporting "no events" when the truth is "I cannot
-        see events" is a fabricated negative; see
-        :meth:`_get_or_unsupported`.
+    @staticmethod
+    def _window(hours: int) -> tuple[int, int]:
+        end_ms = int(time.time() * 1000)
+        return end_ms - hours * 3_600_000, end_ms
+
+    async def _v2_pages(
+        self,
+        path: str,
+        make_body: Callable[[int], dict[str, Any]],
+        max_rows: int,
+    ) -> tuple[list[dict[str, Any]], int | None, bool]:
+        """POST a paged v2 read until it is exhausted or ``max_rows`` is reached.
+
+        Returns ``(rows, total, more_available)``. ``more_available`` is
+        ``True`` whenever the window may hold rows that were not read: rows
+        past ``max_rows``, an empty page that still claims more, a full page
+        with no paging metadata (kcorr treats that as "maybe more"), or a
+        ``total_element_count`` above the rows read. A caller can then say
+        the window was cut rather than imply it was complete.
         """
-        records = await self._get_or_unsupported(
-            "/stat/event",
-            params={"_limit": limit, "_sort": "-time"},
-            feature="Controller event log (list_events)",
+        label = self._v2_label("POST", path)
+        rows: list[dict[str, Any]] = []
+        total: int | None = None
+        previous: list[dict[str, Any]] | None = None
+        for page in range(_MAX_PAGES):
+            request = make_body(page)
+            page_size = int(request.get("pageSize") or 0)
+            body = await self._v2_request("POST", path, json=request)
+            page_rows, page_total, claimed = parse_page(body, label)
+            full_page = bool(page_size) and len(page_rows) >= page_size
+            if isinstance(body, list):
+                # A bare array has no paging at all: asking for page 1 would
+                # only return it again. A full one may still be cut.
+                return page_rows[:max_rows], None, full_page or len(page_rows) > max_rows
+            if page_rows and page_rows == previous:
+                # The controller ignored pageNumber and repeated the page.
+                return rows[:max_rows], total, True
+            previous = page_rows
+            if total is None:
+                total = page_total
+            rows.extend(page_rows)
+            has_more = full_page if claimed is None else claimed
+            if len(rows) >= max_rows:
+                return rows[:max_rows], total, has_more or len(rows) > max_rows
+            if not has_more:
+                short_of_total = total is not None and total > len(rows)
+                return rows, total, short_of_total
+            if not page_rows:
+                # An empty page that still claims more: stop, and say the
+                # window was not read to the end.
+                return rows, total, True
+        return rows, total, True
+
+    async def _system_log(
+        self,
+        log_class: str,
+        hours: int,
+        limit: int,
+    ) -> UniFiRecord:
+        start_ms, end_ms = self._window(hours)
+        path = f"/system-log/{log_class}"
+        rows, total, capped = await self._v2_pages(
+            path,
+            lambda page: system_log_body(log_class, start_ms, end_ms, page),
+            MAX_SCAN_ROWS,
         )
-        return records if isinstance(records, list) else []
+        entries = sorted(
+            (shape_log_entry(r) for r in rows),
+            key=lambda e: ts_ms(e.get("timestamp")) or 0,
+            reverse=True,
+        )
+        result: dict[str, Any] = {
+            "source": self._v2_label("POST", path),
+            "window": {"hours": hours, "from": iso_utc(start_ms), "to": iso_utc(end_ms)},
+            "window_fully_read": not capped,
+            "total": total,
+            "returned": min(limit, len(entries)),
+            "more_available": capped or len(entries) > limit,
+            "entries": entries[:limit],
+        }
+        if capped:
+            result["note"] = (
+                f"The window was not read to the end (one call reads at most "
+                f"{MAX_SCAN_ROWS} entries, and the controller reported more, or "
+                f"stopped paging early), so these are the newest of a partial read, "
+                f"not necessarily the newest in the window; narrow ``hours``."
+            )
+        return result
 
-    async def list_alarms(self, limit: int, archived: bool) -> list[UniFiRecord]:
-        """Return controller alarms, active or archived, newest first.
+    async def _legacy_list(self, path: str) -> list[UniFiRecord]:
+        """GET a legacy log route and insist on a list."""
+        records = await self._request("GET", f"{self._site_path}{path}")
+        if not isinstance(records, list):
+            raise UniFiError(
+                f"{self._legacy_label('GET', path)} answered 200 with a "
+                f"{type(records).__name__} instead of a list of records"
+            )
+        rows = [r for r in records if isinstance(r, dict)]
+        # Newest first whatever order the controller used (``time`` may be s or ms).
+        rows.sort(key=lambda r: ts_ms(r.get("time")) or 0, reverse=True)
+        return rows
 
-        Probed live against a UCG-Fiber on UniFi Network 10.4.57 (2026-06-03):
-        the working route is ``GET /proxy/network/api/s/{site}/list/alarm``,
-        which returns HTTP 200 with the standard ``{"meta", "data"}`` envelope
-        and honours a server-side ``?archived=<bool>`` filter. The previously
-        shipped ``POST /stat/alarm`` form returns HTTP 404 on this firmware and
-        is abandoned.
+    @staticmethod
+    def _legacy_envelope(
+        source: str,
+        v2_outcome: str,
+        records: list[UniFiRecord],
+        *,
+        limit: int,
+        known_complete: bool,
+        note: str,
+    ) -> UniFiRecord:
+        """Wrap legacy rows, already sorted newest first, and apply ``limit``.
 
-        We pass ``archived`` through as the server-side query filter and also
-        apply a defensive client-side filter, then bound the result to
-        ``limit``. Alarm records carry the originating client MAC
-        (``user`` / ``sta``), AP MAC (``ap``), ``ssid``, ``subsystem``,
-        ``key``, ``msg``, and ``time`` / ``datetime`` fields, which pass
-        straight through to callers.
+        ``more_available`` is ``True`` whenever rows were dropped here. When
+        none were, it is ``False`` only if ``known_complete`` (the route
+        returned everything), else ``None``: the controller may have applied
+        its own limit, and nothing here can tell.
+        """
+        dropped = len(records) > limit
+        return {
+            "source": f"{source} (legacy fallback, because {v2_outcome})",
+            "window": None,
+            "window_fully_read": None,
+            "total": None,
+            "returned": min(limit, len(records)),
+            "more_available": True if dropped else (False if known_complete else None),
+            "note": note,
+            "entries": records[:limit],
+        }
 
-        REGRESSION on **UniFi Network 10.5.67** (re-probed 2026-08-08 on a
-        settled controller, ``stat/sysinfo`` 200 as the control): the route
-        that worked on 10.4.57 now answers 400 ``api.err.InvalidObject``:
+    async def list_events(self, limit: int, hours: int) -> UniFiRecord:
+        """Return the controller event log for the last ``hours``, newest first.
 
-        * ``GET  /list/alarm``            → 400 ``api.err.InvalidObject``
-        * ``GET  /list/alarm?archived=…`` → 400 ``api.err.InvalidObject``
-        * ``GET  /rest/alarm``            → 400 ``api.err.InvalidObject``
-        * ``POST /stat/alarm``            → 404 ``api.err.NotFound``
+        Reads ``POST /v2/api/site/<site>/system-log/all``, which Art-of-WiFi
+        documents as the replacement for ``stat/event`` on Network 11.x. Only
+        when that route is absent (404/405) does it try the legacy ``GET
+        /stat/event``, which answered 404 on the maintainer's Network 10.5.67.
+        Any other failure, or both routes failing, raises with each path and
+        status.
+        """
+        v2_label = self._v2_label("POST", "/system-log/all")
+        try:
+            result = await self._system_log("all", hours, limit)
+        except UniFiError as exc:
+            if exc.status not in self._ROUTE_ABSENT:
+                raise UniFiError(
+                    f"list_events could not read the event log: "
+                    f"{self._outcome(v2_label, exc)}, so this is an error and not "
+                    f"an empty result"
+                ) from exc
+            v2_outcome = self._outcome(v2_label, exc)
+            legacy_path = f"/stat/event?_limit={limit}&_sort=-time"
+            legacy_label = self._legacy_label("GET", legacy_path)
+            try:
+                records = await self._legacy_list(legacy_path)
+            except UniFiError as legacy_exc:
+                raise UniFiUnsupportedError(
+                    f"list_events could not read the event log: {v2_outcome}, and "
+                    f"the legacy fallback {self._outcome(legacy_label, legacy_exc)}, "
+                    f"so this is an error and not an empty result"
+                ) from legacy_exc
+            result = self._legacy_envelope(
+                legacy_label,
+                v2_outcome,
+                records,
+                limit=limit,
+                known_complete=False,
+                note=(
+                    "The legacy route takes no time window: the controller applied "
+                    "its own _limit and _sort, so how much of the log exists past "
+                    "these rows is unknown."
+                ),
+            )
+        result["events"] = result.pop("entries")
+        return result
 
-        No working alarm route was found on this version. The call therefore
-        raises :class:`UniFiUnsupportedError` rather than returning ``[]`` —
-        "zero alarms" and "I cannot read alarms" must not look identical to
-        the caller.
+    async def list_alarms(self, limit: int, archived: bool, hours: int) -> UniFiRecord:
+        """Return controller alarms: the v2 critical log, or legacy archived alarms.
+
+        Active alarms (``archived=False``) come from ``POST
+        /v2/api/site/<site>/system-log/critical``, which Art-of-WiFi
+        (``Client.php`` lines 3533-3534 and 3999) documents as the replacement
+        for ``list/alarm`` on Network **11.x**, with a legacy ``GET
+        /list/alarm?archived=false`` fallback only when the v2 route is
+        absent. The v2 log has no archived state, so ``archived=True`` can
+        only read the legacy route. That route answered 400
+        ``api.err.InvalidObject`` on the maintainer's Network 10.5.67 probe
+        (2026-08-08), and a failure there surfaces as an error naming both
+        facts.
         """
         archived_flag = "true" if archived else "false"
-        records = (
-            await self._get_or_unsupported(
-                f"/list/alarm?archived={archived_flag}",
-                feature="Controller alarm log (list_alarms)",
+        legacy_path = f"/list/alarm?archived={archived_flag}"
+        legacy_label = self._legacy_label("GET", legacy_path)
+
+        async def legacy(reason: str) -> UniFiRecord:
+            try:
+                records = await self._legacy_list(legacy_path)
+            except UniFiError as legacy_exc:
+                raise UniFiUnsupportedError(
+                    f"list_alarms could not read alarms: {reason}, and "
+                    f"{self._outcome(legacy_label, legacy_exc)}, so this is an "
+                    f"error and not an empty result"
+                ) from legacy_exc
+            filtered = [r for r in records if bool(r.get("archived", False)) == archived]
+            return self._legacy_envelope(
+                legacy_label,
+                reason,
+                filtered,
+                limit=limit,
+                known_complete=True,
+                note=(
+                    "The legacy route takes no time window and returned every "
+                    "alarm it holds; they were filtered on archived, sorted newest "
+                    "first, then cut to limit."
+                ),
             )
-            or []
+
+        if archived:
+            envelope = await legacy(
+                "archived alarms exist only on the legacy route (the v2 "
+                "system-log/critical log that replaces it has no archived state)"
+            )
+        else:
+            v2_label = self._v2_label("POST", "/system-log/critical")
+            try:
+                envelope = await self._system_log("critical", hours, limit)
+            except UniFiError as exc:
+                if exc.status not in self._ROUTE_ABSENT:
+                    raise UniFiError(
+                        f"list_alarms could not read alarms: "
+                        f"{self._outcome(v2_label, exc)}, so this is an error and "
+                        f"not an empty result"
+                    ) from exc
+                envelope = await legacy(self._outcome(v2_label, exc))
+        envelope["alarms"] = envelope.pop("entries")
+        return envelope
+
+    async def list_threat_detections(self, hours: int, limit: int, client: str) -> UniFiRecord:
+        """Return IPS/IDS detections for the last ``hours``, newest first.
+
+        Reads two v2 sources and merges them (see
+        :mod:`mcp_unifi.clients.system_log`): ``POST /traffic-flows`` filtered
+        to intrusion prevention (ports, signature, action) and ``POST
+        /system-log/threat-alert`` (the console's alert, plus honeypot hits).
+
+        Both failing raises with each path and status. One failing still
+        returns what the other read, with ``complete: false`` and a
+        ``warning`` naming the failure first in the envelope, because a
+        partial list must never read as a full one. ``client`` (an IP or MAC,
+        or ``""``) keeps only detections with that address at either end.
+        """
+        start_ms, end_ms = self._window(hours)
+        if client and client_matcher(client) is None:
+            raise UniFiError(f"client must be an IP address or a MAC address, got {client!r}")
+
+        flows_path = "/traffic-flows"
+        alerts_path = "/system-log/threat-alert"
+        sources: list[dict[str, Any]] = []
+        failures: list[str] = []
+        failed_statuses: list[int | None] = []
+        flows: list[dict[str, Any]] = []
+        alerts: list[dict[str, Any]] = []
+
+        flows_label = self._v2_label("POST", flows_path)
+        try:
+            rows, total, more = await self._v2_pages(
+                flows_path, lambda page: ips_flow_body(start_ms, end_ms, page), MAX_SCAN_ROWS
+            )
+        except UniFiError as exc:
+            failures.append(self._outcome(flows_label, exc))
+            failed_statuses.append(exc.status)
+            sources.append({"endpoint": flows_label, "ok": False, "error": failures[-1]})
+        else:
+            shaped = [d for d in (detection_from_flow(r) for r in rows) if d is not None]
+            flows.extend(shaped)
+            sources.append(
+                {
+                    "endpoint": flows_label,
+                    "ok": True,
+                    "rows_read": len(rows),
+                    "rows_skipped_not_ips": len(rows) - len(shaped),
+                    "total": total,
+                    "more_available": more,
+                }
+            )
+
+        alerts_label = self._v2_label("POST", alerts_path)
+        try:
+            rows, total, more = await self._v2_pages(
+                alerts_path,
+                lambda page: system_log_body("threat-alert", start_ms, end_ms, page),
+                MAX_SCAN_ROWS,
+            )
+        except UniFiError as exc:
+            failures.append(self._outcome(alerts_label, exc))
+            failed_statuses.append(exc.status)
+            sources.append({"endpoint": alerts_label, "ok": False, "error": failures[-1]})
+        else:
+            alerts.extend(detection_from_alert(r) for r in rows)
+            sources.append(
+                {
+                    "endpoint": alerts_label,
+                    "ok": True,
+                    "rows_read": len(rows),
+                    "total": total,
+                    "more_available": more,
+                }
+            )
+
+        if len(failures) == 2:
+            all_absent = all(status in self._ROUTE_ABSENT for status in failed_statuses)
+            error_cls = UniFiUnsupportedError if all_absent else UniFiError
+            raise error_cls(
+                f"list_threat_detections could not read IPS detections: {failures[0]}; "
+                f"{failures[1]}; so this is an error and not an empty result"
+            )
+
+        return finish_detections(
+            flows,
+            alerts,
+            sources=sources,
+            failures=failures,
+            window=(hours, start_ms, end_ms),
+            client=client,
+            limit=limit,
         )
-        if not isinstance(records, list):
-            return []
-        filtered = [
-            rec
-            for rec in records
-            if isinstance(rec, dict) and bool(rec.get("archived", False)) == archived
-        ]
-        return filtered[:limit]
 
     async def trigger_speedtest(self) -> UniFiRecord:
         return self._first_record(await self._post("/cmd/devmgr", {"cmd": "speedtest"}))

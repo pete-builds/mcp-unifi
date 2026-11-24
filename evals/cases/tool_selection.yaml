@@ -119,6 +119,11 @@
   answer: get_threat_management
   trap: get_site_health
 
+- id: ips_detections
+  prompt: "Did intrusion prevention block anything my media server talked to today?"
+  answer: list_threat_detections
+  trap: get_threat_management
+
 - id: traffic_rules
   prompt: "List the traffic rules I've set up."
   answer: list_traffic_rules

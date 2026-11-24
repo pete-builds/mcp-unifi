@@ -7,8 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`list_threat_detections`: what Threat Management (IDS/IPS) detected or
+  blocked.** Read-only. Takes `hours` (default 24, max 720), an optional
+  `client` IP or MAC that keeps only detections with that address at either
+  end, and `limit`. It reads two v2 routes and merges them:
+  `POST .../traffic-flows` filtered to `INTRUSION_PREVENTION` (ports,
+  protocol, signature, `blocked` / `allowed`) and
+  `POST .../system-log/threat-alert` (the console's alerts and honeypot hits,
+  no ports). A flow and an alert for the same detection are reported once.
+  Each detection carries `time`, `action`, `src_ip`, `src_port`, `dst_ip`,
+  `dst_port`, `protocol`, `signature`, `category`, `severity`,
+  `client_name` and which route it came from. Both routes failing is an
+  error naming each path and HTTP status; one failing, or one cut at the
+  2000-row scan cap, returns what was read under a leading `warning` and
+  `complete: false`, and the warning says when a `client` filter ran over
+  that partial set. A honeypot hit takes the touching device (`CLIENT`) as
+  its source, so a client-IP filter finds it only when `CLIENT` carries an
+  IP; when it names the device by MAC alone, filter on the MAC. A honeypot
+  flow and its alert are listed once, labelled `honeypot`. Following kcorr's
+  rule, a honeypot alert is treated as a duplicate of any honeypot flow from
+  the same source (IP or MAC) within 120 s without comparing the decoy, so an
+  alert-only hit on a second decoy in that window can be folded into the
+  first. The legacy
+  `/stat/ips/event` route answered 404 on the maintainer's console and is
+  not tried.
+
+### Changed
+
+- **BREAKING (`list_events` and `list_alarms` result shape).** Both tools
+  now return an object instead of a bare list; callers that indexed the list
+  must read `events` or `alarms` from it. Details in the next entry.
+- **`list_events` and `list_alarms` read the v2 system log, and answer in an
+  envelope.** On the UCG-Fiber this server is tested against (Network
+  10.5.67), `/stat/event` answers 404 and `/list/alarm` answers 400, so both
+  tools had nothing to read. Art-of-WiFi dates the same removals to Network
+  11.x, unpoller to 10.x. `list_events` now reads
+  `POST .../v2/api/site/<site>/system-log/all` and `list_alarms` reads
+  `.../system-log/critical`, the replacements the Art-of-WiFi client
+  documents. Both take a new `hours` look-back (default 24). The legacy route is tried only when the v2 route answers 404 or 405, so a 401
+  or 500 on the v2 route is reported as itself rather than hidden behind an
+  older 404. The result is now an object, not a bare list: `source` (the
+  route that answered), `window`, `window_fully_read`, `total`, `returned`,
+  `more_available`, and `events` or `alarms`. No source states the order the
+  controller returns rows in, so the tools read the whole window (up to 2000
+  rows), sort newest first, and only then apply `limit`. A window not read to
+  the end (the cap, a `total_element_count` above the rows read, a full page
+  with no paging metadata, or an empty page that still claims more) says so
+  with `window_fully_read: false` and a `note`. The legacy fallback sorts
+  too; its envelope says `more_available: true` when rows were dropped and
+  notes that the controller applied its own `_limit` / `_sort`.
+  `list_alarms(archived=True)` still reads only the legacy route, because the
+  v2 log has no archived state, and on 10.5.67 that is an error that says so.
+  Stub mode answers in the same shape.
+
 ### Fixed
 
+- **A log route that fails is an error naming the path and status, never an
+  empty list.** Every failure of the three log tools (HTTP error, transport
+  error, or a 200 whose body is not a system-log page) is returned as
+  `{"error": ...}` with the full `/proxy/network/...` path, the HTTP status
+  and the controller's error code, so one call says which route is wrong.
+  An empty list now only ever means the controller answered and had nothing
+  in the window. `UniFiError` carries the HTTP `status` and error `detail`
+  so the fallback decision reads the status instead of parsing the message.
+  A 200 whose body is not JSON is reported as an HTTP 200 answer, not as a
+  transport failure. `tests/network/test_system_log.py` pins this with 404,
+  400, 401, 403, 500, 503, transport, non-JSON and bad-body cases.
 - **`pyproject.toml` asks for the PyYAML the image actually ships.** The
   package pinned `pyyaml==6.0.3`, but PyYAML was never listed in
   `requirements.in`, so the lock carried it only as a transitive dependency

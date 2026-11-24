@@ -527,6 +527,7 @@ READ_ONLY_TOOLS = (
     "get_wan_ipv6",
     "list_events",
     "list_alarms",
+    "list_threat_detections",
     "trigger_speedtest",
     "get_speedtest_results",
     "audit_open_ports",

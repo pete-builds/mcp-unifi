@@ -625,6 +625,97 @@ def _seed_alarms() -> list[UniFiRecord]:
     ]
 
 
+def _seed_ips_rows() -> tuple[list[UniFiRecord], list[UniFiRecord]]:
+    """Raw IPS rows in the two v2 shapes ``list_threat_detections`` reads.
+
+    ``traffic-flows`` rows (ports, signature, action) and
+    ``system-log/threat-alert`` rows (alert key, ``SRC_IP`` / ``DST_IP``
+    parameters), shaped like :mod:`mcp_unifi.clients.system_log` documents.
+    The second alert repeats the first flow, so the merge has a duplicate to
+    drop; the third is a honeypot hit that only the alert log carries.
+    Local ends are the seeded stub clients; remote ends are documentation
+    ranges, never a real network's.
+    """
+    now_ms = _ts() * 1000
+    flows: list[UniFiRecord] = [
+        {
+            "id": "stubflow0000000000000001",
+            "time": now_ms - 5 * 60_000,
+            "action": "blocked",
+            "direction": "outgoing",
+            "protocol": "TCP",
+            "risk": "high",
+            "source": {
+                "ip": "192.168.1.10",
+                "port": 51514,
+                "mac": "aa:bb:cc:00:00:03",
+                "client_name": "Synology NAS",
+            },
+            "destination": {"ip": "198.51.100.23", "port": 443},
+            "policies": [
+                {
+                    "type": "INTRUSION_PREVENTION",
+                    "name": "ET CINS Active Threat Intelligence Poor Reputation IP",
+                    "ips_category": "CIARMY",
+                }
+            ],
+            "ips": {
+                "signature": "ET CINS Active Threat Intelligence Poor Reputation IP group 42",
+                "signature_id": 2403341,
+                "category_name": "ciarmy",
+            },
+        },
+    ]
+    alerts: list[UniFiRecord] = [
+        {
+            "id": "stubalert000000000000001",
+            "timestamp": now_ms - 50 * 60_000,
+            "category": "SECURITY",
+            "subcategory": "SECURITY_INTRUSION_PREVENTION",
+            "event": "THREAT_DETECTED",
+            "key": "THREAT_DETECTED_V3",
+            "severity": "MEDIUM",
+            "title_raw": "Threat Detected",
+            "message_raw": (
+                "A network intrusion attempt from {SRC_IP} to {DST_IP} has been detected."
+            ),
+            "parameters": {
+                "SRC_IP": {"id": "203.0.113.77", "name": "203.0.113.77"},
+                "DST_IP": {"id": "192.168.1.102", "name": "192.168.1.102"},
+            },
+        },
+        {
+            "id": "stubalert000000000000002",
+            "timestamp": now_ms - 5 * 60_000 + 1_000,
+            "category": "SECURITY",
+            "subcategory": "SECURITY_INTRUSION_PREVENTION",
+            "event": "THREAT_BLOCKED",
+            "key": "THREAT_BLOCKED_V3",
+            "severity": "HIGH",
+            "title_raw": "Threat Detected and Blocked",
+            "parameters": {
+                "SRC_IP": {"id": "192.168.1.10", "name": "192.168.1.10"},
+                "DST_IP": {"id": "198.51.100.23", "name": "198.51.100.23"},
+            },
+        },
+        {
+            "id": "stubalert000000000000003",
+            "timestamp": now_ms - 3 * 3_600_000,
+            "category": "SECURITY",
+            "subcategory": "SECURITY_HONEYPOT",
+            "event": "HONEYPOT_HIT_DETECTED",
+            "key": "HONEYPOT_HIT_DETECTED_V2",
+            "severity": "HIGH",
+            "title_raw": "Honeypot Triggered",
+            "parameters": {
+                "CLIENT": {"id": "aa:bb:cc:00:00:04", "name": "Echo Dot"},
+                "DST_IP": {"id": "192.168.1.250", "name": "192.168.1.250"},
+            },
+        },
+    ]
+    return flows, alerts
+
+
 def _seed_health() -> list[UniFiRecord]:
     return [
         {
@@ -839,6 +930,7 @@ class StubState:
         self.port_forwards: list[UniFiRecord] = _seed_port_forwards()
         self.events: list[UniFiRecord] = _seed_events()
         self.alarms: list[UniFiRecord] = _seed_alarms()
+        self.ips_flows, self.threat_alerts = _seed_ips_rows()
         self.health: list[UniFiRecord] = _seed_health()
         self.speedtest_results: list[UniFiRecord] = _seed_speedtest_results()
         self.sysinfo: UniFiRecord = _seed_sysinfo()
@@ -1372,6 +1464,13 @@ class StubState:
     def list_alarms(self, limit: int, archived: bool) -> list[UniFiRecord]:
         filtered = [a for a in self.alarms if a.get("archived", False) == archived]
         return filtered[:limit]
+
+    def ips_rows(self, start_ms: int, end_ms: int) -> tuple[list[UniFiRecord], list[UniFiRecord]]:
+        """Raw IPS flow and alert rows inside the window, as the v2 reads return them."""
+        self._check_failure("list_threat_detections")
+        flows = [f for f in self.ips_flows if start_ms <= int(f.get("time", 0)) <= end_ms]
+        alerts = [a for a in self.threat_alerts if start_ms <= int(a.get("timestamp", 0)) <= end_ms]
+        return flows, alerts
 
     def get_site_health(self) -> list[UniFiRecord]:
         return self.health

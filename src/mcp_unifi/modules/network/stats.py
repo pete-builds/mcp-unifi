@@ -6,7 +6,10 @@ Endpoints were probed read-only against a live UCG-Fiber (UniFi Network
 surface on this firmware were deferred rather than shipped as phantom tools:
 
 * IPS/IDS threat events — ``/stat/ips/event`` (404), ``/stat/ips/events`` (404),
-  ``/rest/ips`` (400), ``/stat/threat`` (404). No working route → no tool.
+  ``/rest/ips`` (400), ``/stat/threat`` (404). No legacy route works, so the
+  reader lives in ``observability.list_threat_detections`` instead, on the
+  v2 ``traffic-flows`` and ``system-log/threat-alert`` routes (see
+  :mod:`mcp_unifi.clients.system_log`).
 * DPI app/category traffic — ``/stat/dpi``, ``/stat/sitedpi``, ``/stat/stadpi``
   all return empty (DPI not populated on this gateway) and the reference dicts
   ``/stat/dpiapp`` / ``/stat/dpigroup`` 404. No DPI tools built.

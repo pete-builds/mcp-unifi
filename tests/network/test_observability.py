@@ -31,7 +31,9 @@ async def test_get_wan_status_stub(stub_server: FastMCP) -> None:
 
 async def test_list_events_stub(stub_server: FastMCP) -> None:
     result = await _call(stub_server, "list_events", {"limit": 1})
-    assert len(result) <= 1
+    assert result["source"].startswith("stub mode")
+    assert len(result["events"]) <= 1
+    assert result["returned"] == len(result["events"])
 
 
 async def test_list_events_invalid_limit(stub_server: FastMCP) -> None:
@@ -41,7 +43,8 @@ async def test_list_events_invalid_limit(stub_server: FastMCP) -> None:
 
 async def test_list_alarms_stub(stub_server: FastMCP) -> None:
     result = await _call(stub_server, "list_alarms", {"limit": 50, "archived": False})
-    assert isinstance(result, list)
+    assert result["source"].startswith("stub mode")
+    assert isinstance(result["alarms"], list)
 
 
 async def test_list_alarms_invalid_limit(stub_server: FastMCP) -> None:
@@ -257,115 +260,6 @@ async def test_real_get_wan_status_unknown_when_missing(real_server: FastMCP) ->
     )
     result = await _call(real_server, "get_wan_status")
     assert result["status"] == "unknown"
-
-
-@respx.mock
-async def test_real_list_events_404_is_an_error_not_an_empty_list(
-    real_server: FastMCP,
-) -> None:
-    """REGRESSION (2026-08-08): a 404 must NOT be reported as "no events".
-
-    The event-log route is absent on Network 10.5.67 (``GET /stat/event`` →
-    404 ``api.err.NotFound``, re-probed live on a settled controller). The
-    client used to swallow that and return ``[]``, so ``list_events`` answered
-    "no events found" when the truth was "this controller cannot report
-    events at all". That fabricated negative cost real debugging time during
-    the 2026-08-08 outage: an empty list is indistinguishable from a quiet
-    network.
-
-    The tool must now surface an explicit error. Asserting on the *absence*
-    of a benign empty result is the whole point of this test — do not relax
-    it to ``result == []``.
-    """
-    respx.get(f"{BASE}/stat/event").mock(
-        return_value=httpx.Response(
-            404, json={"meta": {"rc": "error", "msg": "api.err.NotFound"}, "data": []}
-        )
-    )
-    result = await _call(real_server, "list_events", {"limit": 5})
-
-    assert result != [], "a missing route must never be reported as an empty result"
-    assert isinstance(result, dict), f"expected an error envelope, got {type(result)}"
-    assert "error" in result
-    assert "not available on this UniFi Network version" in result["error"]
-    # One plain sentence: what is unavailable, what the controller said, and
-    # that it is a firmware limitation. No second sentence to skim past.
-    assert result["error"].endswith("not an empty result.")
-    assert result["error"].count(". ") == 0
-
-
-@respx.mock
-async def test_real_list_alarms_400_is_an_error_not_an_empty_list(
-    real_server: FastMCP,
-) -> None:
-    """REGRESSION (2026-08-08): the alarm route regressed on 10.5.67.
-
-    ``GET /list/alarm`` worked on 10.4.57 and now answers 400
-    ``api.err.InvalidObject``. "Zero alarms" and "I cannot read alarms" must
-    not look identical to the caller.
-    """
-    respx.get(f"{BASE}/list/alarm").mock(
-        return_value=httpx.Response(
-            400, json={"meta": {"rc": "error", "msg": "api.err.InvalidObject"}, "data": []}
-        )
-    )
-    result = await _call(real_server, "list_alarms", {"limit": 5})
-
-    assert result != [], "a broken route must never be reported as zero alarms"
-    assert isinstance(result, dict)
-    assert "error" in result
-    assert "not available on this UniFi Network version" in result["error"]
-
-
-@respx.mock
-async def test_real_list_events_forward_compat(real_server: FastMCP) -> None:
-    """If a firmware restores ``GET /stat/event``, records flow through."""
-    respx.get(f"{BASE}/stat/event").mock(
-        return_value=httpx.Response(200, json={"data": [{"_id": "e1"}]})
-    )
-    result = await _call(real_server, "list_events", {"limit": 5})
-    assert result[0]["_id"] == "e1"
-
-
-@respx.mock
-async def test_real_list_alarms(real_server: FastMCP) -> None:
-    """On a UCG-Fiber (Network 10.4.57) alarms come from
-    ``GET /list/alarm?archived=<bool>`` (HTTP 200, probed live 2026-06-03). The
-    old ``POST /stat/alarm`` form 404s and is abandoned. The active query keeps
-    only non-archived records via the defensive client-side filter."""
-    respx.get(f"{BASE}/list/alarm").mock(
-        return_value=httpx.Response(
-            200,
-            json={
-                "data": [
-                    {"_id": "a1", "archived": False, "user": "aa:bb:cc:dd:ee:ff"},
-                    {"_id": "a2", "archived": True},
-                ]
-            },
-        )
-    )
-    result = await _call(real_server, "list_alarms", {"limit": 5, "archived": False})
-    # Only the active alarm survives the archived filter.
-    assert [r["_id"] for r in result] == ["a1"]
-    assert result[0]["user"] == "aa:bb:cc:dd:ee:ff"
-
-
-@respx.mock
-async def test_real_list_alarms_archived(real_server: FastMCP) -> None:
-    """Archived query returns only archived alarms."""
-    respx.get(f"{BASE}/list/alarm").mock(
-        return_value=httpx.Response(
-            200,
-            json={
-                "data": [
-                    {"_id": "a1", "archived": False},
-                    {"_id": "a2", "archived": True},
-                ]
-            },
-        )
-    )
-    result = await _call(real_server, "list_alarms", {"limit": 5, "archived": True})
-    assert [r["_id"] for r in result] == ["a2"]
 
 
 @respx.mock
@@ -846,21 +740,3 @@ async def test_real_get_site_health_handles_500(real_server: FastMCP) -> None:
     respx.get(f"{BASE}/stat/health").mock(return_value=httpx.Response(500))
     result = await _call(real_server, "get_site_health")
     assert "error" in result
-
-
-async def test_event_and_alarm_descriptions_name_the_firmware_gap(stub_server: FastMCP) -> None:
-    """The tool manifest is generated from these descriptions, and it used to
-    advertise ``list_alarms`` / ``list_events`` with no hint that Network
-    10.5 and 10.6 expose neither (issue #124, item 14)."""
-    tools = {t.name: t for t in await stub_server.list_tools()}
-    for name in ("list_events", "list_alarms"):
-        description = tools[name].description or ""
-        assert "10.6" in description, name
-        assert "unsupported" in description, name
-        # Said plainly and first, before the tool's happy-path description, and
-        # the stub's sample data is not mistaken for evidence about a console.
-        flat = " ".join(description.split())
-        assert flat.index("Does not work on UniFi Network 10.5") < flat.index(
-            "Returns the most recent"
-        ), name
-        assert "Stub mode returns" in flat, name
