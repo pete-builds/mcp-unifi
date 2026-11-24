@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-11-24
+
+> **Breaking: `list_events` and `list_alarms` return an object, not a bare
+> list.** Both tools now answer with an envelope (`source`, `window`,
+> `window_fully_read`, `total`, `returned`, `more_available`, and `events` or
+> `alarms`). A caller that indexed the result as a list must read the
+> `events` or `alarms` key instead. Both now read the v2 system log, take an
+> `hours` look-back, and report any upstream failure as an error naming the
+> path and HTTP status, never as an empty list. Details under Changed.
+
 ### Added
 
 - **`list_threat_detections`: what Threat Management (IDS/IPS) detected or
