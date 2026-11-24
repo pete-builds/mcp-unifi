@@ -26,7 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that partial set. A honeypot hit takes the touching device (`CLIENT`) as
   its source, so a client-IP filter finds it only when `CLIENT` carries an
   IP; when it names the device by MAC alone, filter on the MAC. A honeypot
-  flow and its alert are listed once, labelled `honeypot`. The legacy
+  flow and its alert are listed once, labelled `honeypot`. Following kcorr's
+  rule, a honeypot alert is treated as a duplicate of any honeypot flow from
+  the same source (IP or MAC) within 120 s without comparing the decoy, so an
+  alert-only hit on a second decoy in that window can be folded into the
+  first. The legacy
   `/stat/ips/event` route answered 404 on the maintainer's console and is
   not tried.
 
@@ -71,6 +75,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A 200 whose body is not JSON is reported as an HTTP 200 answer, not as a
   transport failure. `tests/network/test_system_log.py` pins this with 404,
   400, 401, 403, 500, 503, transport, non-JSON and bad-body cases.
+- **`pyproject.toml` asks for the PyYAML the image actually ships.** The
+  package pinned `pyyaml==6.0.3`, but PyYAML was never listed in
+  `requirements.in`, so the lock carried it only as a transitive dependency
+  and the #255 recompile moved it to 6.0.4. The image installs from
+  `requirements.lock` and shipped 6.0.4 while the package metadata asked for
+  6.0.3, and `pip` reported the conflict on every install from the lock. Both
+  now say 6.0.4, and `requirements.in` pins PyYAML like every other direct
+  dependency. `tests/test_dependency_pins.py` fails when any exact pin in
+  `pyproject.toml` is missing from, or differs from, `requirements.in` /
+  `requirements-dev.in` or its lock.
 
 ## [0.29.0] - 2026-11-13
 

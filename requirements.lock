@@ -667,6 +667,7 @@ pyyaml==6.0.4 \
     --hash=sha256:f5c410f9e2ffc9286279a46f2e8c107edaf3b1123510af59c828a9c15b23c9db \
     --hash=sha256:f617e4e5c619fef5284335b24e3af3a77ce08dc5c389ff4b25033bb2749032b7
     # via
+    #   -r requirements.in
     #   fastmcp-slim
     #   jsonschema-path
 referencing==0.37.0 \
