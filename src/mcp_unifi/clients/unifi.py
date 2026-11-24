@@ -39,6 +39,7 @@ from mcp_unifi.clients.system_log import (
     parse_page,
     shape_log_entry,
     system_log_body,
+    ts_ms,
 )
 from mcp_unifi.models import UniFiRecord
 
@@ -121,7 +122,7 @@ class UniFiClient:
             raise error
         if not resp.content:
             return None
-        body = parse_json_body(resp, f"UniFi {method} {path}")
+        body = self._json_or_raise(resp, f"UniFi {method} {path}")
         # Legacy UniFi controller wraps payloads in {"meta": {...}, "data": [...]}.
         if isinstance(body, dict) and "data" in body:
             return body["data"]
@@ -164,7 +165,26 @@ class UniFiClient:
             raise error
         if not resp.content:
             return None
-        return parse_json_body(resp, f"UniFi {method} (v2) {path}")
+        return self._json_or_raise(resp, f"UniFi {method} (v2) {path}")
+
+    @staticmethod
+    def _json_or_raise(resp: httpx.Response, label: str) -> Any:
+        """Parse a 2xx body, keeping the status on the error if it is not JSON.
+
+        The controller did answer, so the error carries ``status`` and a
+        ``detail`` naming the body type, and an outcome built from it reads
+        "answered HTTP 200 with a body that is not JSON", never "failed before
+        any HTTP answer".
+        """
+        try:
+            return parse_json_body(resp, label)
+        except UniFiError as exc:
+            exc.status = resp.status_code
+            content_type = resp.headers.get("content-type", "unknown")
+            exc.detail = (
+                f" with a body that is not JSON ({content_type}, {len(resp.content)} bytes)"
+            )
+            raise
 
     async def _get(self, path: str) -> Any:
         return await self._request("GET", f"{self._site_path}{path}")
@@ -655,15 +675,23 @@ class UniFiClient:
     # ------------------------------------------------------------------
     #
     # HISTORY. ``list_events`` read ``GET /stat/event`` and ``list_alarms``
-    # read ``GET /list/alarm``. Both are gone on UniFi Network 10.x (404 and
-    # 400 ``api.err.InvalidObject``, probed live 2026-08-08 and recorded by
-    # Art-of-WiFi and unpoller), and an earlier version of this client
-    # turned that into ``[]``, so "this controller cannot show events" read
-    # as "nothing happened". The replacement is the v2 system log; see
+    # read ``GET /list/alarm``. On the maintainer's UCG-Fiber, Network
+    # 10.5.67, both are gone (404 and 400 ``api.err.InvalidObject``, the
+    # probe record below). Art-of-WiFi dates the same removals to Network
+    # 11.x and unpoller to 10.x; the 10.5.67 result is this repository's own
+    # probe, not theirs. An earlier version of this client turned the
+    # failure into ``[]``, so "this controller cannot show events" read as
+    # "nothing happened". The replacement is the v2 system log; see
     # :mod:`mcp_unifi.clients.system_log` for the sources. Every failure
     # below raises with the full path and HTTP status, and the success
     # envelope names the route that answered, so one call says which
     # surface was read.
+    #
+    # ORDER. No source states the order the v2 routes return rows in, so
+    # every reader pages through the window (up to the scan cap), sorts by
+    # timestamp newest first, and only then applies ``limit``. When the cap
+    # cuts the window, the envelope says so rather than present the newest
+    # of a partial read as the newest of all.
     #
     # PROBE RECORD (the old docstrings, kept). UCG-Fiber, Network 10.4.57
     # (2026-06-03): ``GET``/``POST /stat/event`` 404, ``/rest/event`` 400,
@@ -728,6 +756,10 @@ class UniFiClient:
                 return rows[:max_rows], total, has_more or len(rows) > max_rows
             if not has_more:
                 return rows, total, False
+            if not page_rows:
+                # An empty page that still claims more: stop, and say the
+                # window was not read to the end.
+                return rows, total, True
         return rows, total, True
 
     async def _system_log(
@@ -738,24 +770,32 @@ class UniFiClient:
     ) -> UniFiRecord:
         start_ms, end_ms = self._window(hours)
         path = f"/system-log/{log_class}"
-        rows, total, more = await self._v2_pages(
+        rows, total, capped = await self._v2_pages(
             path,
             lambda page: system_log_body(log_class, start_ms, end_ms, page),
-            limit,
+            MAX_SCAN_ROWS,
         )
         entries = sorted(
             (shape_log_entry(r) for r in rows),
-            key=lambda e: e.get("timestamp") or 0,
+            key=lambda e: ts_ms(e.get("timestamp")) or 0,
             reverse=True,
         )
-        return {
+        result: dict[str, Any] = {
             "source": self._v2_label("POST", path),
             "window": {"hours": hours, "from": iso_utc(start_ms), "to": iso_utc(end_ms)},
+            "window_fully_read": not capped,
             "total": total,
-            "returned": len(entries),
-            "more_available": more,
-            "entries": entries,
+            "returned": min(limit, len(entries)),
+            "more_available": capped or len(entries) > limit,
+            "entries": entries[:limit],
         }
+        if capped:
+            result["note"] = (
+                f"The window holds more than the {MAX_SCAN_ROWS} entries one call "
+                f"reads, so these are the newest of a partial read, not necessarily "
+                f"the newest in the window; narrow ``hours``."
+            )
+        return result
 
     async def _legacy_list(self, path: str) -> list[UniFiRecord]:
         """GET a legacy log route and insist on a list."""
@@ -765,13 +805,17 @@ class UniFiClient:
                 f"{self._legacy_label('GET', path)} answered 200 with a "
                 f"{type(records).__name__} instead of a list of records"
             )
-        return [r for r in records if isinstance(r, dict)]
+        rows = [r for r in records if isinstance(r, dict)]
+        # Newest first whatever order the controller used (``time`` may be s or ms).
+        rows.sort(key=lambda r: ts_ms(r.get("time")) or 0, reverse=True)
+        return rows
 
     @staticmethod
     def _legacy_envelope(source: str, v2_outcome: str, records: list[UniFiRecord]) -> UniFiRecord:
         return {
             "source": f"{source} (legacy fallback, because {v2_outcome})",
             "window": None,
+            "window_fully_read": None,
             "total": None,
             "returned": len(records),
             "more_available": None,
@@ -781,11 +825,12 @@ class UniFiClient:
     async def list_events(self, limit: int, hours: int) -> UniFiRecord:
         """Return the controller event log for the last ``hours``, newest first.
 
-        Reads ``POST /v2/api/site/<site>/system-log/all`` (Network 9.x and
-        later; the Art-of-WiFi client documents it as the replacement for
-        ``stat/event``). Only when that route is absent (404/405) does it try
-        the legacy ``GET /stat/event`` that Network 10.x removed. Any other
-        failure, or both routes failing, raises with each path and status.
+        Reads ``POST /v2/api/site/<site>/system-log/all``, which Art-of-WiFi
+        documents as the replacement for ``stat/event`` on Network 11.x. Only
+        when that route is absent (404/405) does it try the legacy ``GET
+        /stat/event``, which answered 404 on the maintainer's Network 10.5.67.
+        Any other failure, or both routes failing, raises with each path and
+        status.
         """
         v2_label = self._v2_label("POST", "/system-log/all")
         try:
@@ -817,11 +862,14 @@ class UniFiClient:
 
         Active alarms (``archived=False``) come from ``POST
         /v2/api/site/<site>/system-log/critical``, which Art-of-WiFi
-        documents as the replacement for ``list/alarm`` on Network 10.x and
-        later, with a legacy ``GET /list/alarm?archived=false`` fallback only
-        when the v2 route is absent. The v2 log has no archived state, so
-        ``archived=True`` can only read the legacy route, which Network 10.x
-        answers with 400; that surfaces as an error naming both facts.
+        (``Client.php`` lines 3533-3534 and 3999) documents as the replacement
+        for ``list/alarm`` on Network **11.x**, with a legacy ``GET
+        /list/alarm?archived=false`` fallback only when the v2 route is
+        absent. The v2 log has no archived state, so ``archived=True`` can
+        only read the legacy route. That route answered 400
+        ``api.err.InvalidObject`` on the maintainer's Network 10.5.67 probe
+        (2026-08-08), and a failure there surfaces as an error naming both
+        facts.
         """
         archived_flag = "true" if archived else "false"
         legacy_path = f"/list/alarm?archived={archived_flag}"

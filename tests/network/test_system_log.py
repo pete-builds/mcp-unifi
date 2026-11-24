@@ -3,8 +3,9 @@
 
 THE BUG THESE GUARD
 -------------------
-UniFi Network 10.x removed ``/stat/event`` (404), ``/list/alarm`` (400
-``api.err.InvalidObject``) and ``/stat/ips/event`` (404). An earlier version
+On the maintainer's UniFi Network 10.5.67 console ``/stat/event`` answers
+404 and ``/list/alarm`` 400 ``api.err.InvalidObject``, and ``/stat/ips/event``
+answered 404 on 10.4.57. An earlier version
 of this server turned those answers into ``[]``, so "this controller cannot
 show events" read as "nothing happened". Every test named ``*_is_an_error*``
 below asserts the opposite: an upstream failure comes back as an ``error``
@@ -278,7 +279,7 @@ async def test_list_events_empty_window_is_a_real_empty_result(real_server: Fast
 async def test_list_events_404_is_an_error_not_an_empty_list(real_server: FastMCP) -> None:
     """REGRESSION: both routes absent must be an error naming both, never ``[]``.
 
-    This is the bug: Network 10.x answers 404 on ``/stat/event`` and a
+    This is the bug: Network 10.5.67 answers 404 on ``/stat/event`` and a
     swallowed 404 read as "no events". With the v2 route also absent (a
     controller this server cannot read at all) the caller must get one error
     that names each path and its status.
@@ -348,20 +349,30 @@ async def test_list_events_transport_failure_is_an_error(real_server: FastMCP) -
     assert f"POST {V2_PATH}/system-log/all" in error
 
 
-@respx.mock
-async def test_list_events_pages_until_the_controller_runs_out(real_server: FastMCP) -> None:
-    def entry(i: int) -> dict[str, Any]:
-        return {"id": f"e{i}", "timestamp": NOW_MS - i * 1000, "key": "K", "message_raw": "m"}
+def _log_entry(i: int) -> dict[str, Any]:
+    # Entry i is i seconds newer than entry 0: an index is its age order.
+    return {"id": f"e{i}", "timestamp": NOW_MS + i * 1000, "key": "K", "message_raw": "m"}
 
+
+@respx.mock
+async def test_list_events_is_newest_first_whatever_order_the_controller_uses(
+    real_server: FastMCP,
+) -> None:
+    """No source states the row order, so this controller returns OLDEST first.
+
+    130 entries over two pages, oldest on page 0. Taking the first page and
+    slicing to ``limit`` would return the 50 oldest; the reader must page the
+    whole window, sort, and only then slice, so it returns e129..e80.
+    """
     pages = {
         0: {
-            "data": [entry(i) for i in range(100)],
+            "data": [_log_entry(i) for i in range(100)],
             "page_number": 0,
             "total_element_count": 130,
             "total_page_count": 2,
         },
         1: {
-            "data": [entry(i) for i in range(100, 130)],
+            "data": [_log_entry(i) for i in range(100, 130)],
             "page_number": 1,
             "total_element_count": 130,
             "total_page_count": 2,
@@ -376,11 +387,85 @@ async def test_list_events_pages_until_the_controller_runs_out(real_server: Fast
     assert route.call_count == 2
     assert result["returned"] == 130
     assert result["more_available"] is False
+    assert result["window_fully_read"] is True
 
-    # A limit below what the controller holds says so instead of implying "all".
     result = await _call(real_server, "list_events", {"limit": 50})
+    assert [e["id"] for e in result["events"]] == [f"e{i}" for i in range(129, 79, -1)]
     assert result["returned"] == 50
+    # A limit below what the controller holds says so instead of implying "all".
     assert result["more_available"] is True
+    assert result["window_fully_read"] is True
+    assert "note" not in result
+
+
+@respx.mock
+async def test_list_events_stops_at_the_page_cap_and_says_so(real_server: FastMCP) -> None:
+    """A controller that claims ``has_next`` forever is read to the scan cap
+    (2000 rows, 20 pages of 100) and no further, and the result says the
+    window was cut instead of passing a partial read off as complete."""
+    calls: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        page = json.loads(request.content)["pageNumber"]
+        calls.append(page)
+        rows = [_log_entry(page * 100 + i) for i in range(100)]
+        return httpx.Response(200, json={"data": rows, "has_next": True, "page_number": page})
+
+    respx.post(f"{V2}/system-log/all").mock(side_effect=handler)
+    result = await _call(real_server, "list_events", {"limit": 10})
+    assert calls == list(range(20))
+    assert result["more_available"] is True
+    assert result["window_fully_read"] is False
+    assert "narrow" in result["note"]
+    assert [e["id"] for e in result["events"]][:2] == ["e1999", "e1998"]
+
+
+@respx.mock
+async def test_list_events_empty_page_that_claims_more_is_not_complete(
+    real_server: FastMCP,
+) -> None:
+    pages = {
+        0: {"data": [_log_entry(0)], "has_next": True},
+        1: {"data": [], "has_next": True},
+    }
+    route = respx.post(f"{V2}/system-log/all").mock(
+        side_effect=lambda request: httpx.Response(
+            200, json=pages[json.loads(request.content)["pageNumber"]]
+        )
+    )
+    result = await _call(real_server, "list_events", {"limit": 10})
+    assert route.call_count == 2
+    assert result["returned"] == 1
+    assert result["more_available"] is True
+    assert result["window_fully_read"] is False
+
+
+@respx.mock
+async def test_list_events_non_json_200_names_the_status(real_server: FastMCP) -> None:
+    """A 200 login page is an answer, not a transport failure."""
+    respx.post(f"{V2}/system-log/all").mock(
+        return_value=httpx.Response(
+            200, content=b"<html>login</html>", headers={"content-type": "text/html"}
+        )
+    )
+    result = await _call(real_server, "list_events", {"limit": 5})
+    error = _assert_error_not_empty(result)
+    assert f"POST {V2_PATH}/system-log/all answered HTTP 200 with a body that is not JSON" in error
+    assert "before any HTTP answer" not in error
+
+
+@respx.mock
+async def test_list_events_legacy_200_dict_is_rejected_not_empty(real_server: FastMCP) -> None:
+    """The legacy fallback answering 200 with an object is a failure to read,
+    never ``[]``."""
+    respx.post(f"{V2}/system-log/all").mock(return_value=httpx.Response(404, json=V2_NOT_FOUND))
+    respx.get(path=f"{LEGACY_PATH}/stat/event").mock(
+        return_value=httpx.Response(200, json={"meta": {"rc": "ok"}, "data": {"unexpected": 1}})
+    )
+    result = await _call(real_server, "list_events", {"limit": 5})
+    error = _assert_error_not_empty(result)
+    assert f"GET {LEGACY_PATH}/stat/event" in error
+    assert "instead of a list of records" in error
 
 
 async def test_list_events_rejects_out_of_range_hours(stub_server: FastMCP) -> None:
@@ -417,7 +502,7 @@ async def test_list_alarms_reads_the_v2_critical_log(real_server: FastMCP, shape
 async def test_list_alarms_404_and_400_is_an_error_not_an_empty_list(
     real_server: FastMCP,
 ) -> None:
-    """REGRESSION: ``/list/alarm`` answers 400 on Network 10.x."""
+    """REGRESSION: ``/list/alarm`` answers 400 on Network 10.5.67."""
     respx.post(f"{V2}/system-log/critical").mock(
         return_value=httpx.Response(404, json=V2_NOT_FOUND)
     )
@@ -603,6 +688,86 @@ async def test_list_threat_detections_rejects_a_bad_client_without_calling(
     assert not flows.called
 
 
+@pytest.mark.parametrize("client", ["", "192.0.2.20"])
+@respx.mock
+async def test_list_threat_detections_cut_window_is_not_complete(
+    real_server: FastMCP, client: str
+) -> None:
+    """A source that hits the scan cap leaves detections unread, so the
+    result must not say ``complete: true`` (review finding 1)."""
+
+    def flows(request: httpx.Request) -> httpx.Response:
+        page = json.loads(request.content)["pageNumber"]
+        return httpx.Response(
+            200, json={"data": [FLOW_BLOCKED] * 500, "has_next": True, "page_number": page}
+        )
+
+    flows_route = respx.post(f"{V2}/traffic-flows").mock(side_effect=flows)
+    respx.post(f"{V2}/system-log/threat-alert").mock(
+        return_value=httpx.Response(200, json=THREAT_ALERT_PAGE)
+    )
+    result = await _call(real_server, "list_threat_detections", {"client": client})
+
+    assert flows_route.call_count == 4  # 4 pages of 500 = the 2000-row cap
+    assert next(iter(result)) == "warning"
+    assert result["complete"] is False
+    assert f"POST {V2_PATH}/traffic-flows was cut off" in result["warning"]
+    assert result["sources"][0]["more_available"] is True
+    if client:
+        assert f"client filter {client!r} ran over that partial set" in result["warning"]
+    else:
+        assert "client filter" not in result["warning"]
+
+
+@respx.mock
+async def test_list_threat_detections_honeypot_alert_names_the_client(
+    real_server: FastMCP,
+) -> None:
+    """A honeypot hit names the device that touched the decoy as CLIENT; its
+    IP is the source and the decoy's address the destination (kcorr
+    ``parseThreatAlert``), so filtering on the client's IP finds it."""
+    honeypot = {
+        "id": "6740bb000000000000000009",
+        "timestamp": NOW_MS - 60_000,
+        "category": "SECURITY",
+        "subcategory": "SECURITY_HONEYPOT",
+        "key": "HONEYPOT_HIT_DETECTED_V2",
+        "severity": "HIGH",
+        "title_raw": "Honeypot Triggered",
+        "parameters": {
+            "CLIENT": {"id": "00:00:5e:00:53:50", "ip": "192.0.2.50", "name": "Test Plug"},
+            "DEVICE": {"id": "00:00:5e:00:53:01", "ip": "192.0.2.1", "name": "Gateway"},
+            "HONEYPOT_IP": {"id": "192.0.2.250", "name": "192.0.2.250"},
+        },
+    }
+    _mock_threat_sources(
+        flows=httpx.Response(200, json={"data": [], "has_next": False}),
+        alerts=httpx.Response(200, json={"data": [honeypot], "has_next": False}),
+    )
+    result = await _call(real_server, "list_threat_detections", {"client": "192.0.2.50"})
+    [hit] = result["detections"]
+    assert hit["src_ip"] == "192.0.2.50"
+    assert hit["src_mac"] == "00:00:5e:00:53:50"
+    assert hit["dst_ip"] == "192.0.2.250"
+    assert hit["category"] == "honeypot"
+    assert hit["action"] == "alerted"
+    assert hit["client_name"] == "Test Plug"
+
+
+@respx.mock
+async def test_list_threat_detections_flow_time_in_seconds_still_dedupes(
+    real_server: FastMCP,
+) -> None:
+    """A flow timed in seconds and its alert timed in ms are one detection."""
+    flow_in_seconds = {**FLOW_BLOCKED, "time": (NOW_MS - 300_000) // 1000}
+    _mock_threat_sources(
+        flows=httpx.Response(200, json={"data": [flow_in_seconds], "has_next": False}),
+    )
+    result = await _call(real_server, "list_threat_detections", {})
+    assert result["matched"] == 2  # the flow plus the alert-only detection
+    assert result["detections"][0]["timestamp_ms"] == NOW_MS - 300_000
+
+
 async def test_list_threat_detections_stub(stub_server: FastMCP) -> None:
     result = await _call(stub_server, "list_threat_detections", {"hours": 24})
     assert result["complete"] is True
@@ -661,7 +826,8 @@ def test_parse_page_reads_has_next_and_page_counts() -> None:
     assert parse_page(
         {"data": rows, "page_number": 0, "total_page_count": 2, "total_element_count": 9}, "x"
     ) == (rows, 9, True)
-    assert parse_page({"data": [], "has_next": True}, "x") == ([], None, False)
+    # An empty page that still claims more reports it: the pager decides.
+    assert parse_page({"data": [], "has_next": True}, "x") == ([], None, True)
 
 
 def test_render_message_fills_placeholders_and_keeps_unknown_ones() -> None:

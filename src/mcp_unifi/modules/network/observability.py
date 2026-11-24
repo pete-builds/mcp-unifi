@@ -81,17 +81,20 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
 
         Side effects: None (read-only).
 
-        Reads the v2 system log (``POST .../v2/api/site/<site>/system-log/all``),
-        which replaced the legacy ``/stat/event`` route that UniFi Network 10.x
-        removed. Only when the v2 route is absent (an older controller) does it
-        fall back to ``/stat/event``. If the log cannot be read, the call
+        Reads the v2 system log (``POST .../v2/api/site/<site>/system-log/all``)
+        in place of the legacy ``/stat/event`` route, which answers 404 on
+        Network 10.5.67. Only when the v2 route is absent (an older
+        controller) does it fall back to ``/stat/event``. If the log cannot be
+        read, the call
         returns an error naming the exact path and HTTP status, never an empty
         list, so an empty ``events`` list really means nothing was logged in
         the window.
 
         Returns an envelope: ``source`` (the route that answered), ``window``,
-        ``total`` (entries the controller holds for the window),
-        ``returned``, ``more_available``, and ``events``, newest first. Each
+        ``window_fully_read`` (false, with a ``note``, when the window held more
+        than one call reads), ``total`` (entries the controller holds for the
+        window), ``returned``, ``more_available``, and ``events``, newest
+        first. Each
         event keeps the controller's fields (``timestamp`` in ms, ``category``,
         ``key``, ``severity``, ``parameters``) plus ``time`` (UTC) and a
         rendered ``message``. Stub mode returns sample events with
@@ -129,15 +132,16 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         Side effects: None (read-only).
 
         Active alarms (``archived=False``) come from the v2 critical system log
-        (``POST .../v2/api/site/<site>/system-log/critical``), which replaced
-        the legacy ``/list/alarm`` route on UniFi Network 10.x; the legacy
-        route is tried only when the v2 one is absent. The v2 log has no
+        (``POST .../v2/api/site/<site>/system-log/critical``) in place of the
+        legacy ``/list/alarm`` route, which answers 400 on Network 10.5.67; the
+        legacy route is tried only when the v2 one is absent. The v2 log has no
         archived state, so ``archived=True`` reads the legacy route alone and
-        returns an error on 10.x. Any failure is an error naming the exact
-        path and HTTP status, never an empty list.
+        returns an error where that route is gone. Any failure is an error
+        naming the exact path and HTTP status, never an empty list.
 
-        Returns an envelope: ``source``, ``window``, ``total``, ``returned``,
-        ``more_available``, and ``alarms``, newest first. Stub mode returns
+        Returns an envelope: ``source``, ``window``, ``window_fully_read``,
+        ``total``, ``returned``, ``more_available``, and ``alarms``, newest
+        first. Stub mode returns
         sample alarms with ``source`` saying so.
 
         Example: list_alarms(limit=20, hours=72)
@@ -184,9 +188,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         ``client_name`` when the controller knows it, and ``source``.
 
         If both sources fail the call returns an error naming each path and
-        HTTP status. If one fails the envelope opens with ``warning`` and
-        ``complete: false``, because a partial list is not proof nothing was
-        blocked. ``sources`` reports what each route returned. Use
+        HTTP status. If one fails, or the window holds more rows than one call
+        reads, the envelope opens with ``warning`` and ``complete: false``,
+        because a partial list is not proof nothing was blocked. ``sources`` reports what each route returned. Use
         ``get_threat_management`` for the IPS settings themselves.
 
         Example: list_threat_detections(hours=24, client="192.0.2.20")

@@ -20,9 +20,9 @@ Each detection has ``time``, ``action`` (``blocked``, ``alerted`` or
 ``client_name`` when the controller knows it, and ``source``.
 
 If both sources fail the call returns an error naming each path and
-HTTP status. If one fails the envelope opens with ``warning`` and
-``complete: false``, because a partial list is not proof nothing was
-blocked. ``sources`` reports what each route returned. Use
+HTTP status. If one fails, or the window holds more rows than one call
+reads, the envelope opens with ``warning`` and ``complete: false``,
+because a partial list is not proof nothing was blocked. ``sources`` reports what each route returned. Use
 ``get_threat_management`` for the IPS settings themselves.
 
 ## Example

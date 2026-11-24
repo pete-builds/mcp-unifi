@@ -20,25 +20,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Each detection carries `time`, `action`, `src_ip`, `src_port`, `dst_ip`,
   `dst_port`, `protocol`, `signature`, `category`, `severity`,
   `client_name` and which route it came from. Both routes failing is an
-  error naming each path and HTTP status; one failing returns the other's
-  detections under a leading `warning` and `complete: false`. The legacy
-  `/stat/ips/event` route is gone on Network 10.x and is not tried.
+  error naming each path and HTTP status; one failing, or one cut at the
+  2000-row scan cap, returns what was read under a leading `warning` and
+  `complete: false`, and the warning says when a `client` filter ran over
+  that partial set. Honeypot hits take the touching device's IP as the
+  source, so a client filter finds them. The legacy `/stat/ips/event` route
+  answered 404 on the maintainer's console and is not tried.
 
 ### Changed
 
+- **BREAKING (`list_events` and `list_alarms` result shape).** Both tools
+  now return an object instead of a bare list; callers that indexed the list
+  must read `events` or `alarms` from it. Details in the next entry.
 - **`list_events` and `list_alarms` read the v2 system log, and answer in an
-  envelope.** UniFi Network 10.x removed `/stat/event` (404) and
-  `/list/alarm` (400), so both tools had nothing to read. `list_events` now
-  reads `POST .../v2/api/site/<site>/system-log/all` and `list_alarms` reads
-  `.../system-log/critical`, the replacements the Art-of-WiFi client and
-  unpoller document. Both take a new `hours` look-back (default 24). The
-  legacy route is tried only when the v2 route answers 404 or 405, so a 401
+  envelope.** On the UCG-Fiber this server is tested against (Network
+  10.5.67), `/stat/event` answers 404 and `/list/alarm` answers 400, so both
+  tools had nothing to read. Art-of-WiFi dates the same removals to Network
+  11.x, unpoller to 10.x. `list_events` now reads
+  `POST .../v2/api/site/<site>/system-log/all` and `list_alarms` reads
+  `.../system-log/critical`, the replacements the Art-of-WiFi client
+  documents. Both take a new `hours` look-back (default 24). The legacy route is tried only when the v2 route answers 404 or 405, so a 401
   or 500 on the v2 route is reported as itself rather than hidden behind an
   older 404. The result is now an object, not a bare list: `source` (the
-  route that answered), `window`, `total`, `returned`, `more_available`, and
-  `events` or `alarms`. `list_alarms(archived=True)` still reads only the
-  legacy route, because the v2 log has no archived state, and on 10.x that
-  is an error that says so. Stub mode answers in the same shape.
+  route that answered), `window`, `window_fully_read`, `total`, `returned`,
+  `more_available`, and `events` or `alarms`. No source states the order the
+  controller returns rows in, so the tools read the whole window (up to 2000
+  rows), sort newest first, and only then apply `limit`; a window cut at that
+  cap says so with `window_fully_read: false` and a `note`.
+  `list_alarms(archived=True)` still reads only the legacy route, because the
+  v2 log has no archived state, and on 10.5.67 that is an error that says so. Stub mode answers in the same shape.
 
 ### Fixed
 
@@ -50,8 +60,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   An empty list now only ever means the controller answered and had nothing
   in the window. `UniFiError` carries the HTTP `status` and error `detail`
   so the fallback decision reads the status instead of parsing the message.
-  `tests/network/test_system_log.py` pins this with 404, 400, 401, 403, 500,
-  503, transport and bad-body cases.
+  A 200 whose body is not JSON is reported as an HTTP 200 answer, not as a
+  transport failure. `tests/network/test_system_log.py` pins this with 404,
+  400, 401, 403, 500, 503, transport, non-JSON and bad-body cases.
 
 ## [0.29.0] - 2026-11-13
 

@@ -11,15 +11,16 @@ List controller alarms: the critical system log, or archived legacy alarms.
 Side effects: None (read-only).
 
 Active alarms (``archived=False``) come from the v2 critical system log
-(``POST .../v2/api/site/<site>/system-log/critical``), which replaced
-the legacy ``/list/alarm`` route on UniFi Network 10.x; the legacy
-route is tried only when the v2 one is absent. The v2 log has no
+(``POST .../v2/api/site/<site>/system-log/critical``) in place of the
+legacy ``/list/alarm`` route, which answers 400 on Network 10.5.67; the
+legacy route is tried only when the v2 one is absent. The v2 log has no
 archived state, so ``archived=True`` reads the legacy route alone and
-returns an error on 10.x. Any failure is an error naming the exact
-path and HTTP status, never an empty list.
+returns an error where that route is gone. Any failure is an error
+naming the exact path and HTTP status, never an empty list.
 
-Returns an envelope: ``source``, ``window``, ``total``, ``returned``,
-``more_available``, and ``alarms``, newest first. Stub mode returns
+Returns an envelope: ``source``, ``window``, ``window_fully_read``,
+``total``, ``returned``, ``more_available``, and ``alarms``, newest
+first. Stub mode returns
 sample alarms with ``source`` saying so.
 
 ## Example

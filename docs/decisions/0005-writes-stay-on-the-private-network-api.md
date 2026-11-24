@@ -59,12 +59,14 @@ hostile to users, who do not control when a UniFi console updates itself.
 
 **Defensive degradation, which is what is actually built.** Where a private route
 is known to be absent on current firmware, the client tolerates it rather than
-raising a transport error. `list_events` still GETs `/stat/event`, so a firmware
-that restores the route works without a release, and a missing route is reported
-as unsupported, naming the feature. It first returned an empty list there, which
-was changed: "no events" and "cannot see events" are different answers, and the
-first one was not true. This does not remove the fragility, it contains one known
-instance of it.
+raising a transport error. `list_events` first GETs `/stat/event` and returned
+an empty list when that route was missing, which was changed: "no events" and
+"cannot see events" are different answers, and the first one was not true. It now
+reads the v2 system log (`POST .../system-log/all`) and falls back to
+`GET /stat/event` only when the v2 route answers 404 or 405, so a console that
+still has only the old route keeps working without a release. Any failure is
+reported as an error naming each path and HTTP status, never as an empty list.
+This does not remove the fragility, it contains one known instance of it.
 
 ## Consequences and accepted costs
 

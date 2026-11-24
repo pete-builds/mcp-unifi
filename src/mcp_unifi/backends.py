@@ -483,6 +483,7 @@ class StubBackend:
         return {
             "source": "stub mode (sample data, no controller was called)",
             "window": None,
+            "window_fully_read": True,
             "total": len(records),
             "returned": len(records),
             "more_available": False,

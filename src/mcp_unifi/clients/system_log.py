@@ -2,30 +2,35 @@
 
 WHY THIS EXISTS
 ---------------
-UniFi Network 10.x removed the legacy log readers this server used:
-``/stat/event`` answers 404, ``/list/alarm`` answers 400
-``api.err.InvalidObject`` and ``/stat/ips/event`` answers 404. Their
+The legacy log readers this server used are gone on the UCG-Fiber it is
+tested against. Probed live by the maintainer on UniFi Network 10.5.67
+(2026-08-08; 10.4.57 for the IPS route on 2026-06-12): ``/stat/event``
+answers 404, ``/list/alarm`` answers 400 ``api.err.InvalidObject`` and
+``/stat/ips/event`` answers 404. Those probes are this repository's own
+evidence; the sources below date the change differently, and say so. The
 replacement is the v2 system log, a paged ``POST`` under
 ``/proxy/network/v2/api/site/<site>/system-log/<class>``. Sources, read
 2026-11-24:
 
 * Art-of-WiFi ``UniFi-API-client`` ``src/Client.php`` at commit
   ``e1f7f63b`` (v2.4.0): ``get_system_log()`` (lines 3989-4053) builds the
-  body ``{pageNumber, pageSize, timestampFrom, timestampTo}``, adds
-  ``threatTypes: ["HONEYPOT", "THREAT"]`` for the ``threat-alert`` class, and
-  documents that ``all`` replaces ``list_events()``, ``critical`` replaces
-  ``list_alarms()`` and ``threat-alert`` replaces ``stat_ips_events()``. Its
-  ``list_events()`` (3505-3528), ``list_alarms()`` (3530-3544) and
-  ``stat_ips_events()`` (1193-1214) record the 404 / 400 the legacy routes
-  now answer.
+  body ``{pageNumber, pageSize, timestampFrom, timestampTo}`` and adds
+  ``threatTypes: ["HONEYPOT", "THREAT"]`` for the ``threat-alert`` class.
+  It dates the removals to **Network Application 11.x**, not 10.x: lines
+  1198-1199 (``stat/ips/event`` 404), 3507-3508 (``stat/event`` 404),
+  3533-3534 (``list/alarm`` 400) and 3999 ("on Network Application 11.x
+  'all' replaces list_events(), 'threat-alert' replaces stat_ips_events() and
+  'critical' replaces list_alarms()").
 * unpoller ``unifi`` ``system_log.go`` at commit ``132b9d92``: the entry
   fields (``id``, ``timestamp`` in ms, ``category``, ``subcategory``,
   ``event``, ``key``, ``severity``, ``status``, ``type``, ``title_raw``,
   ``message_raw``, ``parameters``) and the page envelope (``data``,
   ``page_number``, ``total_element_count``, ``total_page_count``).
-  ``endpoints_data/ENDPOINTS.md`` there lists ``stat/event`` and
-  ``stat/ips/event`` as removed on Network 10.x and the system-log routes as
-  their replacement.
+  ``endpoints_data/ENDPOINTS.md`` there (lines 299-311, tested on 10.3.58)
+  lists ``stat/event`` and ``stat/ips/event`` as removed on Network 10.x,
+  points event readers at the system-log POST API, and says plainly that
+  "IDS events have no current replacement". Neither source states the
+  order rows come back in, so every reader here sorts for itself.
 
 IPS detections come from two v2 reads, because neither carries everything:
 
@@ -147,6 +152,11 @@ def ips_flow_body(start_ms: int, end_ms: int, page: int) -> dict[str, Any]:
 def parse_page(body: Any, label: str) -> tuple[list[dict[str, Any]], int | None, bool]:
     """Return ``(rows, total, has_more)`` from one v2 page, or raise.
 
+    ``has_more`` is what the page claims (``has_next``, else ``page_number``
+    against ``total_page_count``), even on an empty page: an empty page that
+    still claims more is a reason to stop paging, not proof the window is
+    exhausted, so the caller reports it as ``more_available``.
+
     Accepts the documented envelope (``{"data": [...], "total_page_count":
     N, ...}``) and a bare list (unpoller's endpoint catalogue describes
     ``system-log/critical`` as an array). Anything else raises
@@ -173,7 +183,7 @@ def parse_page(body: Any, label: str) -> tuple[list[dict[str, Any]], int | None,
             has_more = page_no + 1 < pages
         else:
             has_more = False
-    return rows, total_int, has_more and bool(rows)
+    return rows, total_int, has_more
 
 
 # ---------------------------------------------------------------------------
@@ -244,6 +254,18 @@ def _int(value: object) -> int | None:
     return None
 
 
+def ts_ms(value: object) -> int | None:
+    """An epoch timestamp in milliseconds, whether it arrived in s or ms.
+
+    Same rule as kcorr ``tsMs()``: a positive value below ``1e12`` is seconds.
+    Applied before the flow/alert dedupe, which compares milliseconds.
+    """
+    number = _int(value)
+    if number is None or number <= 0:
+        return None
+    return number * 1000 if number < 1_000_000_000_000 else number
+
+
 def _ip(*values: object) -> str | None:
     for value in values:
         text = _str(value)
@@ -301,7 +323,7 @@ def detection_from_flow(row: dict[str, Any]) -> dict[str, Any] | None:
     ips_policy = next(
         (p for p in policies if str(p.get("type", "")).upper() == "INTRUSION_PREVENTION"), {}
     )
-    ts = _int(row.get("time")) or _int(row.get("flow_start_time"))
+    ts = ts_ms(row.get("time")) or ts_ms(row.get("flow_start_time"))
     src_name = _str(src.get("client_name")) or _str(src.get("device_name"))
     dst_name = _str(dst.get("client_name")) or _str(dst.get("device_name"))
     return {
@@ -333,25 +355,38 @@ def detection_from_alert(row: dict[str, Any]) -> dict[str, Any]:
     the signature so the caller still sees what fired.
     """
     params = _obj(row.get("parameters"))
-    src_client = _obj(params.get("SRC_CLIENT"))
-    dst_client = _obj(params.get("DST_CLIENT"))
-    client = _obj(params.get("CLIENT"))
     key = str(row.get("key") or row.get("event") or "").upper()
+    honeypot = any(
+        "HONEYPOT" in str(v or "").upper()
+        for v in (key, row.get("subcategory"), row.get("title_raw"))
+    )
+    # kcorr parseThreatAlert: a known device appears as SRC_CLIENT / DST_CLIENT.
+    # A honeypot hit names the device that touched the decoy as CLIENT, often
+    # with no address, and any other address it carries (apart from the
+    # gateway's DEVICE) is the decoy's.
+    src_client = _obj(params.get("SRC_CLIENT") or (params.get("CLIENT") if honeypot else None))
+    dst_client = _obj(params.get("DST_CLIENT"))
+    decoy: list[object] = []
+    if honeypot:
+        for name_, value in params.items():
+            if name_ in {"SRC_IP", "SRC_CLIENT", "CLIENT", "DEVICE"}:
+                continue
+            ref = _obj(value)
+            decoy.extend((ref.get("ip"), ref.get("id"), ref.get("name")))
     if "BLOCKED" in key:
         action = "blocked"
-    elif "DETECTED" in key or "HONEYPOT" in key:
+    elif "DETECTED" in key or honeypot:
         action = "alerted"
     else:
         action = "unknown"
     src_ip_param = _obj(params.get("SRC_IP"))
     dst_ip_param = _obj(params.get("DST_IP"))
-    ts = _int(row.get("timestamp"))
+    ts = ts_ms(row.get("timestamp"))
     name = (
         _str(src_client.get("name"))
         or _str(dst_client.get("name"))
-        or _str(client.get("name"))
         or _str(src_client.get("hostname"))
-        or _str(client.get("hostname"))
+        or _str(dst_client.get("hostname"))
     )
     return {
         "time": iso_utc(ts),
@@ -359,15 +394,19 @@ def detection_from_alert(row: dict[str, Any]) -> dict[str, Any]:
         "action": action,
         "src_ip": _ip(src_ip_param.get("id"), src_ip_param.get("name"), src_client.get("ip")),
         "src_port": None,
-        "src_mac": _mac(src_client.get("id"), src_client.get("mac"), client.get("id")),
-        "dst_ip": _ip(dst_ip_param.get("id"), dst_ip_param.get("name"), dst_client.get("ip")),
+        "src_mac": _mac(src_client.get("mac"), src_client.get("id")),
+        "dst_ip": _ip(
+            dst_ip_param.get("id"), dst_ip_param.get("name"), dst_client.get("ip"), *decoy
+        ),
         "dst_port": None,
         "dst_mac": _mac(dst_client.get("id"), dst_client.get("mac")),
         "protocol": None,
         "direction": None,
         "signature": _str(row.get("title_raw")) or _str(row.get("message")),
         "signature_id": None,
-        "category": _str(row.get("subcategory")) or _str(row.get("category")),
+        "category": "honeypot"
+        if honeypot
+        else (_str(row.get("subcategory")) or _str(row.get("category"))),
         "severity": _str(row.get("severity")),
         "client_name": name,
         "source": "system-log/threat-alert",
@@ -424,9 +463,10 @@ def finish_detections(
     """Merge, filter and wrap detections in the ``list_threat_detections`` envelope.
 
     Shared by the real client and stub mode so both answer in one shape.
-    ``window`` is ``(hours, start_ms, end_ms)``. When ``failures`` is not
-    empty the envelope opens with a ``warning`` and says ``complete: false``:
-    a partial list must never read as a full one.
+    ``window`` is ``(hours, start_ms, end_ms)``. When a source failed, or a
+    source reports ``more_available`` (the scan cap cut the window), the
+    envelope opens with a ``warning`` and says ``complete: false``: a partial
+    list must never read as a full one.
     """
     hours, start_ms, end_ms = window
     detections = merge_detections(flows, alerts)
@@ -434,16 +474,30 @@ def finish_detections(
     if matcher is not None:
         detections = [d for d in detections if matches_client(d, matcher)]
     returned = detections[:limit]
-    result: dict[str, Any] = {}
+    cut = [str(s.get("endpoint")) for s in sources if s.get("more_available")]
+    problems: list[str] = []
     if failures:
-        result["warning"] = (
+        problems.append(
             f"Only part of the IPS record was read: {'; '.join(failures)}. Detections "
-            f"from that source are missing, so a short or empty list here is not "
-            f"proof that nothing was blocked."
+            f"from that source are missing"
+        )
+    if cut:
+        problems.append(
+            f"The window holds more rows than one call reads (the cap is "
+            f"{MAX_SCAN_ROWS} per source), so {' and '.join(cut)} was cut off and "
+            f"detections past the cut are missing; narrow ``hours``"
+        )
+    if problems and client:
+        problems.append(f"The client filter {client!r} ran over that partial set only")
+    result: dict[str, Any] = {}
+    if problems:
+        result["warning"] = (
+            ". ".join(problems) + ". A short or empty list here is not proof that "
+            "nothing was blocked."
         )
     result.update(
         {
-            "complete": not failures,
+            "complete": not problems,
             "window": {"hours": hours, "from": iso_utc(start_ms), "to": iso_utc(end_ms)},
             "client_filter": client or None,
             "sources": sources,
@@ -493,4 +547,5 @@ __all__ = [
     "render_message",
     "shape_log_entry",
     "system_log_body",
+    "ts_ms",
 ]
