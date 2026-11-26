@@ -284,6 +284,11 @@ async def test_end_to_end_text_block_carries_the_full_data_by_default(
     carries, and has to carry at least one record.
     """
     async with Client(stdio_server) as client:
+        # The handshake must negotiate a revision that carries structuredContent,
+        # or the structured comparison below proves nothing. Read it with the
+        # era-neutral property: initialize_result is None on a modern
+        # (server/discover) connection under fastmcp 4.x.
+        assert supports_structured_content(client.protocol_version)
         result = await client.call_tool(tool, {})
 
         text = result.content[0].text
@@ -311,6 +316,9 @@ async def test_end_to_end_compact_client_reads_full_data_from_structured_content
 ) -> None:
     """The compact text must never be the only copy of the data."""
     async with Client(compact_stdio_server) as client:
+        # Restored from #169, which dropped it: the negotiated revision must
+        # support structuredContent, or this test never exercised the path.
+        assert supports_structured_content(client.protocol_version)
         result = await client.call_tool("list_wlans", {})
 
         assert "structuredContent" in result.content[0].text
