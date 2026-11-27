@@ -1193,6 +1193,24 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                     + " no longer exist. Nothing was applied; run restore_config again."
                 )
 
+            # The zone-based check above ran at preview time. A site can migrate
+            # to zones before the token is confirmed, and a legacy rule write
+            # there must not run, so look again when the plan holds any.
+            if any(
+                a["type"] == "firewall_rules" and a["action"] in ("create", "delete") for a in plan
+            ):
+                try:
+                    now_zone_based = await site_is_zone_based(backend)
+                except UniFiError as exc:
+                    logger.exception("restore_config: firewall model re-check failed")
+                    return err(str(exc))
+                if now_zone_based:
+                    return err(
+                        "the site changed since the preview: it now uses the Zone-Based "
+                        "Firewall, which has no legacy firewall rules. Nothing was applied; "
+                        "run restore_config again."
+                    )
+
             # Apply. Track creates so rollback can undo them. Track executed
             # deletes for honest reporting (no undo path — no copy was kept).
             created_for_rollback: list[tuple[str, dict[str, Any]]] = []
