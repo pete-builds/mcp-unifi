@@ -54,6 +54,7 @@ async def request_with_retry(
     service: str,
     error_cls: type[Exception],
     json: dict[str, Any] | None = None,
+    timeout: float | httpx.Timeout | None = None,
 ) -> httpx.Response:
     """Issue an HTTP request, retrying only transient, safe-to-repeat failures.
 
@@ -83,6 +84,9 @@ async def request_with_retry(
         service: Human label for log/error messages ("UniFi", "Protect", ...).
         error_cls: Exception type raised on transport failure (e.g. ``UniFiError``).
         json: Optional JSON body for write verbs.
+        timeout: Optional per-request timeout that overrides the client's own.
+            Left as ``None`` the client default applies, so existing callers
+            are unchanged.
 
     Example:
         resp = await request_with_retry(
@@ -92,9 +96,12 @@ async def request_with_retry(
     """
     connect_retried = False
     fivexx_attempt = 0
+    # Only forward a timeout when one was given, so callers that pass none
+    # reach the transport exactly as before.
+    extra: dict[str, Any] = {} if timeout is None else {"timeout": timeout}
     while True:
         try:
-            resp = await client.request(method, url, json=json)
+            resp = await client.request(method, url, json=json, **extra)
         except httpx.ConnectError as exc:
             if tls.is_verification_failure(exc):
                 # The console presented a certificate the client does not

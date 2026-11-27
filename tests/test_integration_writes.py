@@ -338,6 +338,70 @@ async def test_v1_timeout_does_not_fall_back(client: UniFiClient) -> None:
     assert not priv_post.called
 
 
+# UniFi Network before 11.1.58 can stall an Integration API request for up to
+# 40 s. A v1 write must wait that out; a v1 read keeps the client's 15 s.
+STALL_SECONDS = 40.0
+
+
+@respx.mock
+async def test_v1_write_waits_longer_than_the_consoles_40_second_stall(
+    client: UniFiClient,
+) -> None:
+    site_get = _mock_site()
+    v1_post = respx.post(f"{INT}/networks").mock(
+        return_value=httpx.Response(201, json={"id": "new-uuid", "name": "cams"})
+    )
+    respx.get(f"{PRIV}/rest/networkconf").mock(
+        return_value=_priv([{"_id": "p", "external_id": "new-uuid", "name": "cams"}])
+    )
+
+    await IntegrationWrites(client).create_network(dict(VLAN_PAYLOAD))
+
+    assert v1_post.calls.last.request.extensions["timeout"]["read"] > STALL_SECONDS
+    assert v1_post.calls.last.request.extensions["timeout"]["write"] > STALL_SECONDS
+    # Reads keep the client default, and an unreachable console still fails fast.
+    assert site_get.calls.last.request.extensions["timeout"]["read"] == 15.0
+    assert v1_post.calls.last.request.extensions["timeout"]["connect"] == 15.0
+
+
+@respx.mock
+async def test_v1_put_and_delete_also_wait_out_the_stall(client: UniFiClient) -> None:
+    _mock_site()
+    respx.get(f"{PRIV}/rest/networkconf").mock(return_value=_priv([NETWORK_RECORD]))
+    v1_delete = respx.delete(f"{INT}/networks/{NET_V1_ID}").mock(return_value=httpx.Response(200))
+    await IntegrationWrites(client).delete_network(NET_PRIV_ID)
+    assert v1_delete.calls.last.request.extensions["timeout"]["read"] > STALL_SECONDS
+
+
+@respx.mock
+async def test_v1_write_timeout_says_the_outcome_is_unknown_and_does_not_fall_back(
+    client: UniFiClient,
+) -> None:
+    _mock_site()
+    v1_post = respx.post(f"{INT}/networks").mock(side_effect=httpx.ReadTimeout("slow"))
+    priv_post = respx.post(f"{PRIV}/rest/networkconf")
+    priv_any = respx.route(url__startswith=PRIV)
+
+    with pytest.raises(UniFiError) as caught:
+        await IntegrationWrites(client).create_network(dict(VLAN_PAYLOAD))
+
+    message = str(caught.value)
+    assert "outcome is unknown" in message
+    assert "may have applied" in message
+    assert "list or get tool before retrying" in message
+    assert v1_post.call_count == 1  # a timed-out write is never replayed
+    assert not priv_post.called and not priv_any.called
+
+
+@respx.mock
+async def test_v1_read_timeout_keeps_the_plain_transport_error(client: UniFiClient) -> None:
+    """Only writes claim an unknown outcome; a read has nothing to apply."""
+    respx.get(f"{ROOT}/integration/v1/sites").mock(side_effect=httpx.ReadTimeout("slow"))
+    with pytest.raises(UniFiError) as caught:
+        await IntegrationWrites(client)._request("GET", "/sites?limit=200")
+    assert "outcome is unknown" not in str(caught.value)
+
+
 @respx.mock
 async def test_update_network_puts_the_merged_readback(client: UniFiClient) -> None:
     _mock_site()
