@@ -42,11 +42,11 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         Side effects: None (read-only).
 
         Reads the legacy ``/rest/firewallrule`` collection (rulesets such as
-        ``WAN_IN`` and ``LAN_IN``). A site that has migrated to the
-        Zone-Based Firewall (Network 9.x and newer) keeps its policy elsewhere
-        and this returns ``[]`` even though the firewall is configured: use
-        ``list_firewall_policies`` for those sites, or ``audit_open_ports``,
-        which reads both.
+        ``WAN_IN`` and ``LAN_IN``). UniFi Network 11.0.97 and later put every
+        site on the Zone-Based Firewall automatically, and on such a site this
+        returns ``[]`` even though the firewall is configured: use
+        ``list_firewall_policies``, or ``audit_open_ports``, which reads both.
+        Only consoles older than 11.0.97 can still hold legacy rules.
 
         Returns one record per rule with ``_id``, ``name``, ``ruleset``,
         ``rule_index``, ``action``, ``enabled``, ``protocol``, and
@@ -72,12 +72,11 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
 
         Side effects: None (read-only).
 
-        Sites on UniFi Network 9.x and newer that use the Zone-Based Firewall
-        keep their policy here, not in the legacy rulesets that
-        ``list_firewall_rules`` reads. A site still on legacy rulesets returns
-        ``[]`` from this tool and its rules from ``list_firewall_rules``;
-        ``audit_open_ports`` reads both so you do not have to guess which
-        model a site uses.
+        UniFi Network 11.0.97 and later put every site on the Zone-Based
+        Firewall, so the policy lives here, not in the legacy rulesets that
+        ``list_firewall_rules`` reads. A console older than 11.0.97 that has
+        not been moved to zones returns ``[]`` from this tool and its rules
+        from ``list_firewall_rules``; ``audit_open_ports`` reads both.
 
         Returns one record per policy with ``_id``, ``name``, ``action``
         (``ALLOW``/``BLOCK``/``REJECT``), ``enabled``, ``predefined``
@@ -110,8 +109,8 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
 
         Zones are what ``list_firewall_policies`` records point at through
         ``source.zone_id`` and ``destination.zone_id``, so this is the lookup
-        that turns a policy into "WAN to LAN". A site still on legacy
-        rulesets returns ``[]``.
+        that turns a policy into "WAN to LAN". A console older than
+        11.0.97 still on legacy rulesets returns ``[]``.
 
         Returns one record per zone with ``_id``, ``name``, ``zone_key``
         (``"wan"``, ``"lan"``, ...), ``default_zone``, ``attr_no_edit`` and
@@ -153,7 +152,11 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         controller: str = "default",
         dry_run: bool = False,
     ) -> str:
-        """Create a firewall rule on the controller.
+        """Create a legacy-ruleset firewall rule on the controller.
+
+        Not for Network 11. From 11.0.97 every site runs the Zone-Based
+        Firewall and the legacy ruleset is gone; use
+        ``create_firewall_policy`` there.
 
         Side effects:
         - Adds a new rule into the named ``ruleset`` at the given
@@ -172,8 +175,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 ``"WAN_LOCAL"``, ``"GUEST_IN"``, ``"GUEST_OUT"``,
                 ``"GUEST_LOCAL"``.
             action: ``"accept"``, ``"drop"``, or ``"reject"``.
-            rule_index: Evaluation order. Lower = evaluated first. On UniFi
-                Network 9.x (Zone-Based Firewall), user-defined LAN_IN rules
+            rule_index: Evaluation order. Lower = evaluated first. On a
+                Zone-Based Firewall console (every site from Network 11.0.97;
+                also 9.x and 10.x once migrated), user-defined LAN_IN rules
                 live at ``20000`` and above; lower bands are reserved by the
                 controller and will fail with
                 ``api.err.FirewallRuleIndexOutOfRange``. ``20000`` is the safe
@@ -187,7 +191,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             dst_networkconf_id: Destination network ``_id``. Use this OR
                 ``dst_address``.
             src_networkconf_type: Discriminator that pairs with
-                ``src_networkconf_id``. UniFi Network 9.x ZBF requires this
+                ``src_networkconf_id``. The Zone-Based Firewall requires this
                 whenever a rule references a network conf by ``_id`` and
                 returns ``api.err.FirewallRuleNetworkConfTypeRequired``
                 otherwise. Defaults to ``"NETv4"`` (IPv4 network). Only

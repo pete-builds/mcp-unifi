@@ -125,6 +125,15 @@ Full guides for each install path live in the [docs site](https://pete-builds.gi
 - **Multi-channel distribution.** Docker, Helm chart, uvx, and a .dxt bundle for Claude Desktop (Linux x86_64 only today). Listed on the official MCP Registry. Container images are cosign-signed (keyless OIDC) with a CycloneDX SBOM attached to each release.
 - **Network + Protect + Access.** Network on by default; Protect and Access opt-in via `MCP_UNIFI_MODULES_ENABLED=network,protect,access`. Access ships read-only (door unlocks and credential issuance require session-token auth and are deferred). UniFi Drive is not in scope.
 
+## UniFi Network 11
+
+UniFi Network 11.0.97 moved every site to the Zone-Based Firewall automatically, with no opt-out. On such a site the legacy rule list (`list_firewall_rules`) is empty, so the legacy rule tools have nothing to act on. Use `list_firewall_zones`, `list_firewall_policies` and the `*_firewall_policy` tools instead. Consoles older than 11.0.97 can still hold legacy rules, and the legacy tools still work there.
+
+- **Firewall tools (from 0.31.0).** `create_firewall_rule`, `update_firewall_rule` and `delete_firewall_rule` refuse on a Zone-Based Firewall site and point at `create_firewall_policy`, `update_firewall_policy` and `delete_firewall_policy`.
+- **Ids are UUIDs.** Record `_id` values are UUID strings. Networks and WLANs keep the old 24-character ObjectId as `legacy_id`. Some older static DHCP leases still store a network's `legacy_id` in `network_id`.
+- **Integration API timeout (from 0.31.0).** Integration API writes wait up to 60 seconds, because consoles before 11.1.58 can stall such requests for up to 40 seconds.
+- **Event log.** `list_events` reads the v2 system log and works on Network 11.0.99. `list_alarms` reads the v2 critical log too, but it has not been checked on Network 11.
+
 ## Quick start
 
 Fastest cold-start: Docker + Claude Code in stub mode, no hardware required.

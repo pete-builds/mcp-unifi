@@ -740,3 +740,18 @@ async def test_real_get_site_health_handles_500(real_server: FastMCP) -> None:
     respx.get(f"{BASE}/stat/health").mock(return_value=httpx.Response(500))
     result = await _call(real_server, "get_site_health")
     assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# Tool descriptions state current behaviour
+# ---------------------------------------------------------------------------
+
+
+async def test_list_events_description_does_not_claim_10_5_or_10_6_unsupported(
+    stub_server: FastMCP,
+) -> None:
+    """0.30.0 moved events to the v2 log; the text must not say 10.5/10.6 fail."""
+    tool = await stub_server.get_tool("list_events")
+    description = tool.description or ""
+    assert "10.5" not in description
+    assert "10.6" not in description

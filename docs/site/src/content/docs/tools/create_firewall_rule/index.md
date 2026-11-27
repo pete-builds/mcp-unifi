@@ -1,12 +1,16 @@
 ---
 title: create_firewall_rule
-description: "Create a firewall rule on the controller."
+description: "Create a legacy-ruleset firewall rule on the controller."
 draft: false
 ---
 
 # `create_firewall_rule`
 
-Create a firewall rule on the controller.
+Create a legacy-ruleset firewall rule on the controller.
+
+Not for Network 11. From 11.0.97 every site runs the Zone-Based
+Firewall and the legacy ruleset is gone; use
+``create_firewall_policy`` there.
 
 Side effects:
 - Adds a new rule into the named ``ruleset`` at the given
@@ -29,13 +33,13 @@ create_firewall_rule(name="Allow IoT to Plex", ruleset="LAN_IN", action="accept"
 | `name` | `string` | yes | — | Display name for the rule (e.g. ``"Block iot to LAN"``). |
 | `ruleset` | `string` | yes | — | Where the rule is enforced. Common values: ``"LAN_IN"``, ``"LAN_OUT"``, ``"LAN_LOCAL"``, ``"WAN_IN"``, ``"WAN_OUT"``, ``"WAN_LOCAL"``, ``"GUEST_IN"``, ``"GUEST_OUT"``, ``"GUEST_LOCAL"``. |
 | `action` | `string` | yes | — | ``"accept"``, ``"drop"``, or ``"reject"``. |
-| `rule_index` | `integer` | no | 20000 | Evaluation order. Lower = evaluated first. On UniFi Network 9.x (Zone-Based Firewall), user-defined LAN_IN rules live at ``20000`` and above; lower bands are reserved by the controller and will fail with ``api.err.FirewallRuleIndexOutOfRange``. ``20000`` is the safe default. (Older controllers used 2000-3999.) |
+| `rule_index` | `integer` | no | 20000 | Evaluation order. Lower = evaluated first. On a Zone-Based Firewall console (every site from Network 11.0.97; also 9.x and 10.x once migrated), user-defined LAN_IN rules live at ``20000`` and above; lower bands are reserved by the controller and will fail with ``api.err.FirewallRuleIndexOutOfRange``. ``20000`` is the safe default. (Older controllers used 2000-3999.) |
 | `protocol` | `string` | no | "all" | ``"all"``, ``"tcp"``, ``"udp"``, ``"icmp"``, etc. Port matches require ``"tcp"`` or ``"udp"``. |
 | `src_address` | `string` | no | "" | Source CIDR (e.g. ``"10.50.0.0/24"``). Empty = any. |
 | `dst_address` | `string` | no | "" | Destination CIDR. Empty = any. |
 | `src_networkconf_id` | `string` | no | "" | Source network ``_id``. Use this OR ``src_address``. |
 | `dst_networkconf_id` | `string` | no | "" | Destination network ``_id``. Use this OR ``dst_address``. |
-| `src_networkconf_type` | `string` | no | "NETv4" | Discriminator that pairs with ``src_networkconf_id``. UniFi Network 9.x ZBF requires this whenever a rule references a network conf by ``_id`` and returns ``api.err.FirewallRuleNetworkConfTypeRequired`` otherwise. Defaults to ``"NETv4"`` (IPv4 network). Only emitted to the controller when ``src_networkconf_id`` is set. |
+| `src_networkconf_type` | `string` | no | "NETv4" | Discriminator that pairs with ``src_networkconf_id``. The Zone-Based Firewall requires this whenever a rule references a network conf by ``_id`` and returns ``api.err.FirewallRuleNetworkConfTypeRequired`` otherwise. Defaults to ``"NETv4"`` (IPv4 network). Only emitted to the controller when ``src_networkconf_id`` is set. |
 | `dst_networkconf_type` | `string` | no | "NETv4" | Discriminator that pairs with ``dst_networkconf_id``. Same semantics as ``src_networkconf_type``. Defaults to ``"NETv4"``. |
 | `src_port` | `string` | no | "" | Source port match. Single port (``"443"``), CSV (``"80,443"``), or range (``"3000-3100"``). Empty = any. Requires ``protocol`` set to ``"tcp"`` or ``"udp"``. |
 | `dst_port` | `string` | no | "" | Destination port match. Same syntax as ``src_port``. The headline use case: ``dst_port="32400"`` with ``protocol="tcp"`` to allow IoT→Plex without opening the rest of MGMT. |

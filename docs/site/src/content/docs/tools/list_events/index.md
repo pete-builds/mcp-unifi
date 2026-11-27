@@ -11,11 +11,10 @@ List the controller's event log (connections, WAN changes, updates, admin activi
 Side effects: None (read-only).
 
 Reads the v2 system log (``POST .../v2/api/site/<site>/system-log/all``)
-in place of the legacy ``/stat/event`` route, which answers 404 on
-Network 10.5.67. Only when the v2 route is absent (an older
+in place of the legacy ``/stat/event`` route, which newer
+consoles no longer serve. Only when the v2 route is absent (an older
 controller) does it fall back to ``/stat/event``. If the log cannot be
-read, the call
-returns an error naming the exact path and HTTP status, never an empty
+read, the call returns an error naming the exact path and HTTP status, never an empty
 list, so an empty ``events`` list really means nothing was logged in
 the window.
 
