@@ -15,9 +15,9 @@ critical, unknown), ``findings`` (each with ``observed`` facts and
 their source, ``inferred``, ``confidence``, ``limitations``, and
 ``next`` tool calls), ``not_evaluated``, ``checks`` and
 ``thresholds``. A failed read is never read as clean: its rules are
-listed as not evaluated, and if one of them can find a critical
-problem the verdict is unknown, not healthy. Use the granular tools
-named in ``next`` to investigate further.
+listed as not evaluated and the verdict is never healthy (only a
+route this firmware lacks is exempt). Use the granular tools named
+in ``next`` to investigate further.
 
 Side effects: None (read-only, five reads).
 

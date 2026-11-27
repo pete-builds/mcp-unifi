@@ -95,16 +95,17 @@ def clean_text(value: object, limit: int = MAX_TEXT_CHARS) -> str:
 def observed(name: str, value: object, source: str) -> Observed:
     """One fact read from the controller, as ``name=value``.
 
-    ``name`` is a field name chosen by the rule (trusted). ``value`` is
-    whatever the controller returned and is passed through :func:`clean_text`
-    unless it is a number or a boolean.
+    ``name`` is a field name chosen by the rule (trusted, never contains
+    ``=``). ``value`` is whatever the controller returned. It is rendered
+    here and cleaned by :func:`finding`, the one seam every finding passes
+    through, so a rule cannot forget to clean it.
     """
     if isinstance(value, bool):
         rendered = "true" if value else "false"
     elif isinstance(value, int | float):
         rendered = str(value)
     else:
-        rendered = clean_text(value)
+        rendered = "" if value is None else str(value)
     return {"fact": f"{name}={rendered}", "source": source}
 
 
@@ -113,18 +114,39 @@ def next_step(tool: str, **args: Any) -> NextStep:
     return {"tool": tool, "args": dict(sorted(args.items()))}
 
 
-def subject(kind: str, *, mac: str = "", name: object = None, **extra: str) -> dict[str, str]:
-    """What a finding is about. ``name`` is cleaned; empty fields are dropped."""
+def subject(kind: str, *, mac: str = "", name: object = None, **extra: object) -> dict[str, str]:
+    """What a finding is about. Values are cleaned by :func:`finding`; empty ones are dropped."""
     out: dict[str, str] = {"type": kind}
     if mac:
         out["mac"] = mac
-    cleaned = clean_text(name)
-    if cleaned:
-        out["name"] = cleaned
+    if name is not None:
+        out["name"] = str(name)
     for key in sorted(extra):
-        if extra[key]:
-            out[key] = clean_text(extra[key])
+        if extra[key] is not None:
+            out[key] = str(extra[key])
     return out
+
+
+def _clean_subject(subj: dict[str, str]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for key, value in subj.items():
+        cleaned = clean_text(value)
+        if cleaned:
+            out[key] = cleaned
+    return out
+
+
+def _clean_fact(fact: Observed) -> Observed:
+    name, _, value = fact["fact"].partition("=")
+    return {"fact": f"{name}={clean_text(value)}", "source": fact["source"]}
+
+
+def _clean_step(step: NextStep) -> NextStep:
+    args = {
+        key: clean_text(value) if isinstance(value, str) else value
+        for key, value in step["args"].items()
+    }
+    return {"tool": step["tool"], "args": args}
 
 
 def finding(
@@ -138,15 +160,22 @@ def finding(
     limitations: list[str] | None = None,
     next_steps: list[NextStep] | None = None,
 ) -> Finding:
+    """Build a finding. The one seam where controller-derived text is cleaned.
+
+    Every subject value, every observed value and every string argument of
+    a next step goes through :func:`clean_text` here, whichever rule built
+    it. ``inferred`` and ``limitations`` are the rule's own fixed text and
+    are not cleaned: a rule must never put controller text in them.
+    """
     return {
         "id": rule_id,
         "severity": severity,
-        "subject": subj,
-        "observed": facts,
+        "subject": _clean_subject(subj),
+        "observed": [_clean_fact(f) for f in facts],
         "inferred": inferred,
         "confidence": confidence,
         "limitations": sorted(limitations or []),
-        "next": next_steps or [],
+        "next": [_clean_step(step) for step in next_steps or []],
     }
 
 
@@ -178,6 +207,8 @@ def verdict(
     findings: list[Finding],
     gaps: list[NotEvaluated],
     critical_capable: frozenset[str],
+    *,
+    blind: bool = False,
 ) -> Verdict:
     """The site verdict, from findings and evaluation gaps.
 
@@ -185,6 +216,11 @@ def verdict(
     (no critical finding, but a rule able to find one did not run over every
     subject, so a critical problem cannot be ruled out), ``degraded`` (a
     warning exists), ``healthy``. Info findings never move the verdict.
+
+    ``blind`` is set when a read failed for a reason other than "this route
+    does not exist on this firmware", or a rule crashed. A blind diagnosis
+    can still be ``critical`` or ``degraded`` on what it did see, but it is
+    never ``healthy``: it becomes ``unknown``.
     """
     severities = {f["severity"] for f in findings}
     if "critical" in severities:
@@ -193,4 +229,4 @@ def verdict(
         return "unknown"
     if "warning" in severities:
         return "degraded"
-    return "healthy"
+    return "unknown" if blind else "healthy"

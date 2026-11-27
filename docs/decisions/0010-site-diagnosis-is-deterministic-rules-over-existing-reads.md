@@ -44,16 +44,43 @@ One new read-only tool, `diagnose_site`, in
   `next` (registered tool plus arguments) complete it.
 - **Fail honest.** A rule whose read failed, or whose required field is
   missing, goes in `not_evaluated` with a reason. `scope: "rule"` means it did
-  not run, `scope: "partial"` means it ran over only some subjects. The verdict
-  is `critical` if any critical finding exists, otherwise `unknown` if any rule
-  able to emit `critical` (`device.offline`, `wan.down`,
-  `health.subsystem_not_ok`) is in `not_evaluated`, otherwise `degraded` on any
-  warning, otherwise `healthy`. When any read failed the top-level `next` is
-  `get_console_health`, which probes UniFi OS separately.
-- **Untrusted text.** Device names, alarm keys and IPS categories may appear
-  only in `subject.name` and `observed` values, after `clean_text` strips every
-  Unicode `C*` code point, collapses whitespace and caps at 80 characters. MACs
-  are echoed only when they parse as MACs.
+  not run, `scope: "partial"` means it ran over only some subjects. A read that
+  reports itself cut short (the IPS read's `matched` above `returned`, the
+  alarm read's `total` above `returned`, `more_available`, or
+  `window_fully_read: false`) is a `partial` gap with the counts, and its
+  findings say the counts are lower bounds. The verdict is `critical` if any
+  critical finding exists, otherwise `unknown` if any rule able to emit
+  `critical` (`device.offline`, `wan.down`, `health.subsystem_not_ok`) is in
+  `not_evaluated`, otherwise `degraded` on any warning, otherwise `healthy`,
+  with one override: **a diagnosis is "blind" when any read failed for a
+  reason other than `UniFiUnsupportedError`, or any rule raised, and a blind
+  diagnosis that would have been `healthy` is `unknown` instead.**
+  `UniFiUnsupportedError` is what the client raises when a route does not
+  exist on this firmware (`list_alarms` when the v2 critical log and the
+  legacy fallback are both absent, `list_threat_detections` when both IPS
+  routes answer 404/405); its rules are listed as not evaluated, the check
+  carries `unsupported: true`, and it does not block `healthy` on its own.
+  When any read failed the top-level `next` is `get_console_health`, which
+  probes UniFi OS separately.
+- **Contained failures.** Each read catches everything it raises: a
+  `UniFiError` keeps this server's own cleaned message, anything else keeps
+  only its class name (`unexpected TypeError`). Each rule runs inside its own
+  handler: a rule that raises is listed as `rule raised <ClassName>`, never
+  with the message, and makes the diagnosis blind. Numbers from the
+  controller pass through one coercion that rejects NaN and infinity, so a
+  bad value is a missing value, not a crash. When a subsystem appears twice in
+  site health, the worst status wins, independent of the order the records
+  came in.
+- **Untrusted text.** Controller-provided strings (device names, models and
+  types, firmware versions, alarm keys, IPS actions and categories) may appear
+  only in `subject` values and `observed` values. The `finding` builder in
+  `_findings.py` is the one seam: it runs `clean_text` over every subject
+  value, every observed value and every string argument of every next step,
+  whichever rule built the finding, so a new rule cannot forget. `clean_text`
+  strips every Unicode `C*` code point, collapses whitespace and caps at 80
+  characters. MACs are echoed only when they parse as MACs. `summary`,
+  `inferred`, `limitations` and `not_evaluated` reasons are fixed templates
+  and numbers.
 - **Bounded and deterministic.** At most 10 findings per rule, with the rest
   counted under `truncated`. Findings are sorted by severity, rule id, MAC and
   name. Nothing reads the clock: the two windowed reads pass `hours` to the
@@ -84,12 +111,15 @@ One new read-only tool, `diagnose_site`, in
   envelope rules; duplicating them here would mean two classifiers to keep in
   step. When the Network reads fail, the diagnosis says `unknown` and names that
   tool.
-- **Treating a failed alarm or IPS read as "unknown".** Rejected. Those rules
-  can only warn, and the v2 alarm route is not live-verified for this server's
-  key (see `UniFiClient.list_alarms`). Pinning every diagnosis at `unknown` on a
-  firmware where that one route is missing would make the tool useless there.
-  The failed read is still named in `checks`, `not_evaluated`, the summary and
-  the top-level `next`.
+- **Letting a failed alarm, IPS or client read leave the site `healthy`.**
+  The first version did this, on the grounds that those rules can only warn.
+  Review reproduced `healthy` with three of the five reads failing, which is a
+  diagnosis that saw almost nothing calling the site fine. Rejected: any
+  failure makes the diagnosis blind. The exemption is narrow and named,
+  `UniFiUnsupportedError` only, because the v2 alarm route is not
+  live-verified for this server's key (see `UniFiClient.list_alarms`) and
+  pinning every diagnosis at `unknown` on a firmware that simply lacks the
+  route would make the tool useless there.
 - **Including `vpn` in site health.** Rejected: a site with no VPN reports it
   as `warning` (the seeded stub does too), so every such site would read as
   degraded forever.
@@ -99,6 +129,11 @@ One new read-only tool, `diagnose_site`, in
 
 ## Consequences and accepted costs
 
+- An adopted device left unplugged keeps the site `critical` until it is
+  reconnected or forgotten in the controller. That is deliberate: the
+  controller still counts it as part of the site.
+- A transient 5xx on any one of the five reads turns a healthy site
+  `unknown` for that call. Re-running is the remedy; the failed read is named.
 - A site with a missing `www` record, or a device with no numeric `state`,
   reads `unknown`, not `healthy`. That is the point, but on a firmware that
   drops one of those fields the tool will look permanently inconclusive until a

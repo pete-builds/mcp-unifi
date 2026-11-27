@@ -23,12 +23,18 @@ What it is not
 
 Honesty rules
 -------------
-Every read is caught on its own. A read that raises, or returns something
-that is not the documented shape, marks every rule that needs it as not
-evaluated, and the verdict can never be ``healthy`` while a rule able to find
-a critical problem is in that list. An empty list from a read that succeeded
-is evidence; an empty list from one that failed is not, and is never
-produced. Thresholds are module constants, echoed in every response.
+Every read is caught on its own, whatever it raises. A read that fails, or
+returns something that is not the documented shape, marks every rule that
+needs it as not evaluated, and the verdict is never ``healthy`` afterwards:
+it becomes ``unknown``. The one exemption is ``UniFiUnsupportedError`` (the
+route does not exist on this firmware), which leaves the rules listed as not
+evaluated but does not block ``healthy`` on its own. A rule that raises is
+contained the same way. The verdict is also never ``healthy`` while a rule
+able to find a critical problem is in that list. A read that says it is
+partial (more rows than were read) is listed as a partial gap. An empty list
+from a read that succeeded is evidence; an empty list from one that failed
+is not, and is never produced. Thresholds are module constants, echoed in
+every response.
 
 Determinism
 -----------
@@ -40,7 +46,9 @@ no wall-clock timestamp reaches the response.
 
 from __future__ import annotations
 
+import json
 import logging
+import math
 from collections import Counter
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -48,7 +56,7 @@ from typing import TYPE_CHECKING, Any
 
 from mcp_unifi.annotations import READ_ONLY
 from mcp_unifi.clients.mac import is_mac, normalize_mac
-from mcp_unifi.clients.unifi import UniFiError
+from mcp_unifi.clients.unifi import UniFiError, UniFiUnsupportedError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
 from mcp_unifi.modules.network._common import format_json, make_err
@@ -142,6 +150,10 @@ class SourceResult:
     ok: bool
     records: list[dict[str, Any]] = field(default_factory=list)
     error: str = ""
+    #: The read failed with :class:`UniFiUnsupportedError`: the route does not
+    #: exist on this firmware. Its rules are not evaluated, but the site is
+    #: not "blind" because of it (ADR 0010).
+    unsupported: bool = False
     #: Set when the read succeeded but says it is incomplete.
     partial: str = ""
 
@@ -168,10 +180,15 @@ def _shape_alarms(raw: Any) -> SourceResult:
     rows = _dict_rows(raw.get("alarms")) if isinstance(raw, dict) else None
     if rows is None:
         return SourceResult(SRC_ALARMS, ok=False, error="list_alarms envelope has no alarms list")
-    partial = ""
-    if raw.get("window_fully_read") is False or raw.get("more_available") is True:
-        partial = "the alarm log holds more rows than were read"
-    return SourceResult(SRC_ALARMS, ok=True, records=rows, partial=partial)
+    reasons: list[str] = []
+    if raw.get("window_fully_read") is False:
+        reasons.append("the alarm window was not read to the end")
+    total, returned = raw.get("total"), raw.get("returned")
+    if _count(total) is not None and _count(returned) is not None and total > returned:
+        reasons.append(f"the alarm read returned {returned} of {total} entries")
+    elif raw.get("more_available") is True:
+        reasons.append("the alarm log holds more entries than were read")
+    return SourceResult(SRC_ALARMS, ok=True, records=rows, partial="; ".join(reasons))
 
 
 def _shape_threats(raw: Any) -> SourceResult:
@@ -180,21 +197,55 @@ def _shape_threats(raw: Any) -> SourceResult:
         return SourceResult(
             SRC_THREATS, ok=False, error="list_threat_detections envelope has no detections list"
         )
-    partial = ""
+    reasons: list[str] = []
     if raw.get("complete") is False:
-        partial = "the IPS read was incomplete (a source failed or was cut off)"
-    return SourceResult(SRC_THREATS, ok=True, records=rows, partial=partial)
+        reasons.append("the IPS read was incomplete (a source failed or was cut off)")
+    matched, returned = raw.get("matched"), raw.get("returned")
+    if _count(matched) is not None and _count(returned) is not None and matched > returned:
+        reasons.append(f"the IPS read returned {returned} of {matched} detections")
+    return SourceResult(SRC_THREATS, ok=True, records=rows, partial="; ".join(reasons))
+
+
+def _count(value: Any) -> int | None:
+    """``value`` when it is a real non-negative integer count, else ``None``."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def _finite(value: Any) -> float | None:
+    """``value`` as a finite float, or ``None`` (missing, text, bool, NaN, infinity)."""
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
 
 
 async def _read(
     name: str, call: Callable[[], Awaitable[Any]], shape: Callable[[Any], SourceResult]
 ) -> SourceResult:
+    """One read, contained: whatever it raises, the other four still run.
+
+    A :class:`UniFiError` carries this server's own message (path and HTTP
+    status), cleaned and capped. Anything else is a bug or an unexpected
+    shape somewhere below, and only its class name is kept: its message may
+    hold controller text.
+    """
     try:
-        raw = await call()
+        return shape(await call())
+    except UniFiUnsupportedError as exc:
+        logger.warning("diagnose_site: %s unsupported: %s", name, exc)
+        error = clean_text(str(exc), MAX_ERROR_CHARS)
+        return SourceResult(name, ok=False, error=error, unsupported=True)
     except UniFiError as exc:
         logger.warning("diagnose_site: %s failed: %s", name, exc)
         return SourceResult(name, ok=False, error=clean_text(str(exc), MAX_ERROR_CHARS))
-    return shape(raw)
+    except Exception as exc:
+        logger.exception("diagnose_site: %s raised %s", name, type(exc).__name__)
+        return SourceResult(name, ok=False, error=f"unexpected {type(exc).__name__}")
 
 
 async def collect(backend: Backend) -> Snapshot:
@@ -236,7 +287,6 @@ class Rule:
     #: Every tool this rule can name in ``next`` (checked against the registry).
     next_tools: frozenset[str]
     evaluate: Callable[[Snapshot], RuleOutcome]
-    summary: str
 
 
 def _mac(record: dict[str, Any], key: str = "mac") -> str:
@@ -250,7 +300,7 @@ def _device_subject(dev: dict[str, Any]) -> dict[str, str]:
         "device",
         mac=_mac(dev),
         name=dev.get("name") or dev.get("model"),
-        device_type=str(dev.get("type") or ""),
+        device_type=dev.get("type"),
     )
 
 
@@ -343,13 +393,7 @@ def _pct(dev: dict[str, Any], key: str) -> float | None:
         stats = dev.get("sys_stats")
     if not isinstance(stats, dict):
         return None
-    raw = stats.get(key)
-    if isinstance(raw, bool) or raw is None:
-        return None
-    try:
-        return float(raw)
-    except (TypeError, ValueError):
-        return None
+    return _finite(stats.get(key))
 
 
 def _resource_rule(
@@ -442,9 +486,21 @@ def _upgradable(snap: Snapshot) -> RuleOutcome:
     return out, gaps
 
 
+#: Status order when a subsystem appears twice: the worst record wins.
+_STATUS_RANK: dict[str, int] = {"error": 0, "warning": 1, "ok": 3}
+
+
+def _health_order(rec: dict[str, Any]) -> tuple[int, str]:
+    status = _status(rec)
+    rank = 4 if status is None else _STATUS_RANK.get(status, 2)
+    return rank, json.dumps(rec, sort_keys=True, default=str)
+
+
 def _health_by_subsystem(snap: Snapshot) -> dict[str, dict[str, Any]]:
+    """One record per subsystem. Duplicates resolve to the worst status,
+    whatever order the controller sent them in."""
     out: dict[str, dict[str, Any]] = {}
-    for rec in snap[SRC_HEALTH].records:
+    for rec in sorted(snap[SRC_HEALTH].records, key=_health_order):
         name = rec.get("subsystem")
         if isinstance(name, str) and name not in out:
             out[name] = rec
@@ -539,9 +595,9 @@ def _weak_signal(snap: Snapshot) -> RuleOutcome:
     gaps: list[NotEvaluated] = []
     with_signal: list[tuple[str, int]] = []
     for client in wireless:
-        signal = client.get("signal")
+        signal = _finite(client.get("signal"))
         ap_mac = _mac(client, "ap_mac")
-        if not ap_mac or isinstance(signal, bool) or not isinstance(signal, int | float):
+        if not ap_mac or signal is None:
             continue
         with_signal.append((ap_mac, int(signal)))
     missing = len(wireless) - len(with_signal)
@@ -590,8 +646,12 @@ def _weak_signal(snap: Snapshot) -> RuleOutcome:
 def _alarms(snap: Snapshot) -> RuleOutcome:
     rule_id = "alarms.active"
     src = snap[SRC_ALARMS]
+    if src.partial and not src.records:
+        # An empty partial read is not proof that nothing was logged.
+        return [], [not_evaluated(rule_id, src.partial)]
+    gaps = [not_evaluated(rule_id, src.partial, scope="partial")] if src.partial else []
     counts = Counter(clean_text(a.get("key")) or "(no key)" for a in src.records)
-    limitations = [f"{src.partial}; counts are lower bounds"] if src.partial else []
+    limitations = ["the read was partial; counts are lower bounds"] if src.partial else []
     out = [
         finding(
             rule_id,
@@ -607,7 +667,7 @@ def _alarms(snap: Snapshot) -> RuleOutcome:
         )
         for key, count in sorted(counts.items())
     ]
-    return out, []
+    return out, gaps
 
 
 def _threats(snap: Snapshot) -> RuleOutcome:
@@ -620,7 +680,8 @@ def _threats(snap: Snapshot) -> RuleOutcome:
     for det in src.records:
         action = clean_text(det.get("action")).lower() or "unknown"
         groups.setdefault(action, []).append(det)
-    limitations = [f"{src.partial}; counts are lower bounds"] if src.partial else []
+    gaps = [not_evaluated(rule_id, src.partial, scope="partial")] if src.partial else []
+    limitations = ["the read was partial; counts are lower bounds"] if src.partial else []
     out: list[Finding] = []
     for action in sorted(groups):
         rows = groups[action]
@@ -648,7 +709,7 @@ def _threats(snap: Snapshot) -> RuleOutcome:
                 next_steps=[next_step("list_threat_detections", hours=WINDOW_HOURS)],
             )
         )
-    return out, []
+    return out, gaps
 
 
 RULES: tuple[Rule, ...] = (
@@ -658,7 +719,6 @@ RULES: tuple[Rule, ...] = (
         (SRC_DEVICES,),
         frozenset({"get_device_stats", "list_events"}),
         _offline,
-        "An adopted device reports state 0 (disconnected).",
     ),
     Rule(
         "device.not_connected",
@@ -666,7 +726,6 @@ RULES: tuple[Rule, ...] = (
         (SRC_DEVICES,),
         frozenset({"get_device_stats"}),
         _not_connected,
-        "An adopted device reports a state other than connected or disconnected.",
     ),
     Rule(
         "device.high_cpu",
@@ -674,7 +733,6 @@ RULES: tuple[Rule, ...] = (
         (SRC_DEVICES,),
         frozenset({"get_device_stats"}),
         _resource_rule("device.high_cpu", "cpu", DEVICE_CPU_PCT_WARN, "CPU"),
-        "A connected device's system-stats cpu is above device_cpu_pct_warn.",
     ),
     Rule(
         "device.high_memory",
@@ -682,7 +740,6 @@ RULES: tuple[Rule, ...] = (
         (SRC_DEVICES,),
         frozenset({"get_device_stats"}),
         _resource_rule("device.high_memory", "mem", DEVICE_MEM_PCT_WARN, "Memory"),
-        "A connected device's system-stats mem is above device_mem_pct_warn.",
     ),
     Rule(
         "device.upgradable",
@@ -690,7 +747,6 @@ RULES: tuple[Rule, ...] = (
         (SRC_DEVICES,),
         frozenset(),
         _upgradable,
-        "The controller flags a device upgradable.",
     ),
     Rule(
         "wan.down",
@@ -698,7 +754,6 @@ RULES: tuple[Rule, ...] = (
         (SRC_HEALTH,),
         frozenset({"get_wan_status", "list_events"}),
         _wan_down,
-        "Site health reports the wan subsystem with status error.",
     ),
     Rule(
         "health.subsystem_not_ok",
@@ -706,8 +761,6 @@ RULES: tuple[Rule, ...] = (
         (SRC_HEALTH,),
         frozenset({"get_site_health"}),
         _subsystem_not_ok,
-        "A wan, www, lan or wlan subsystem status is not ok (error is critical, warning is "
-        "warning, anything else is info).",
     ),
     Rule(
         "wifi.weak_signal_clients",
@@ -715,7 +768,6 @@ RULES: tuple[Rule, ...] = (
         (SRC_CLIENTS,),
         frozenset({"get_device_radios"}),
         _weak_signal,
-        "An AP has weak_clients_per_ap_warn or more wireless clients below weak_signal_dbm.",
     ),
     Rule(
         "alarms.active",
@@ -723,7 +775,6 @@ RULES: tuple[Rule, ...] = (
         (SRC_ALARMS,),
         frozenset({"list_alarms"}),
         _alarms,
-        "The critical log holds entries in the window, one finding per alarm key.",
     ),
     Rule(
         "threats.detected",
@@ -731,8 +782,6 @@ RULES: tuple[Rule, ...] = (
         (SRC_THREATS,),
         frozenset({"list_threat_detections"}),
         _threats,
-        "Threat Management recorded detections in the window; blocked ones are info, the "
-        "rest warning.",
     ),
 )
 
@@ -756,8 +805,8 @@ def _summary(result: str, findings: list[Finding], gaps: list[NotEvaluated], fai
         head = f"{crit} critical and {warn} warning finding(s)."
     elif result == "unknown":
         head = (
-            f"Health cannot be confirmed: a check able to find a critical problem did not "
-            f"fully run. {warn} warning finding(s) so far."
+            f"Health cannot be confirmed: a read failed or a check able to find a critical "
+            f"problem did not fully run. {warn} warning finding(s) so far."
         )
     elif result == "degraded":
         head = f"{warn} warning finding(s), no critical ones."
@@ -779,12 +828,27 @@ def build_report(snap: Snapshot, *, controller: str, stub_mode: bool) -> dict[st
     gaps: list[NotEvaluated] = []
     truncated: dict[str, int] = {}
     evaluated: list[str] = []
+    crashed = False
     for rule in RULES:
         failed = [s for s in rule.requires if not snap[s].ok]
         if failed:
-            gaps.append(not_evaluated(rule.id, f"required read failed: {', '.join(failed)}"))
+            unsupported = all(snap[s].unsupported for s in failed)
+            reason = (
+                "required read is not supported on this controller: "
+                if unsupported
+                else "required read failed: "
+            )
+            gaps.append(not_evaluated(rule.id, reason + ", ".join(failed)))
             continue
-        found, rule_gaps = rule.evaluate(snap)
+        try:
+            found, rule_gaps = rule.evaluate(snap)
+        except Exception as exc:
+            # One bad value must not fail the whole diagnosis. The reason is
+            # the exception class only: its message may carry controller text.
+            logger.exception("diagnose_site: rule %s raised", rule.id)
+            gaps.append(not_evaluated(rule.id, f"rule raised {type(exc).__name__}"))
+            crashed = True
+            continue
         kept, dropped = cap_findings(rule.id, found, MAX_FINDINGS_PER_RULE)
         findings.extend(kept)
         truncated.update(dropped)
@@ -805,9 +869,14 @@ def build_report(snap: Snapshot, *, controller: str, stub_mode: bool) -> dict[st
                 check["partial"] = res.partial
         else:
             check["error"] = res.error
+            if res.unsupported:
+                check["unsupported"] = True
         checks.append(check)
 
-    result = verdict(findings, gaps, CRITICAL_CAPABLE)
+    # Blind: a read failed for a reason other than "this firmware has no such
+    # route", or a rule crashed. A blind diagnosis is never healthy.
+    blind = crashed or any(not r.unsupported for r in failed_reads)
+    result = verdict(findings, gaps, CRITICAL_CAPABLE, blind=blind)
     return {
         "diagnosis": "site",
         "controller": controller,
@@ -848,9 +917,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         their source, ``inferred``, ``confidence``, ``limitations``, and
         ``next`` tool calls), ``not_evaluated``, ``checks`` and
         ``thresholds``. A failed read is never read as clean: its rules are
-        listed as not evaluated, and if one of them can find a critical
-        problem the verdict is unknown, not healthy. Use the granular tools
-        named in ``next`` to investigate further.
+        listed as not evaluated and the verdict is never healthy (only a
+        route this firmware lacks is exempt). Use the granular tools named
+        in ``next`` to investigate further.
 
         Side effects: None (read-only, five reads).
 
