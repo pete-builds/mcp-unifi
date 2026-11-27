@@ -394,6 +394,33 @@ async def test_v1_write_timeout_says_the_outcome_is_unknown_and_does_not_fall_ba
 
 
 @respx.mock
+@pytest.mark.parametrize("exc", [httpx.ConnectTimeout("no route"), httpx.PoolTimeout("busy")])
+async def test_v1_write_that_never_reached_the_console_is_not_outcome_unknown(
+    client: UniFiClient, exc: httpx.TimeoutException
+) -> None:
+    """Connect and pool timeouts mean nothing was sent, so no "may have applied"."""
+    _mock_site()
+    respx.post(f"{INT}/networks").mock(side_effect=exc)
+    with pytest.raises(UniFiError) as caught:
+        await IntegrationWrites(client).create_network(dict(VLAN_PAYLOAD))
+    assert "outcome is unknown" not in str(caught.value)
+    assert "transport error" in str(caught.value)
+
+
+@respx.mock
+async def test_v1_write_pool_wait_stays_short(client: UniFiClient) -> None:
+    _mock_site()
+    v1_post = respx.post(f"{INT}/networks").mock(
+        return_value=httpx.Response(201, json={"id": "new-uuid", "name": "cams"})
+    )
+    respx.get(f"{PRIV}/rest/networkconf").mock(
+        return_value=_priv([{"_id": "p", "external_id": "new-uuid", "name": "cams"}])
+    )
+    await IntegrationWrites(client).create_network(dict(VLAN_PAYLOAD))
+    assert v1_post.calls.last.request.extensions["timeout"]["pool"] == 15.0
+
+
+@respx.mock
 async def test_v1_read_timeout_keeps_the_plain_transport_error(client: UniFiClient) -> None:
     """Only writes claim an unknown outcome; a read has nothing to apply."""
     respx.get(f"{ROOT}/integration/v1/sites").mock(side_effect=httpx.ReadTimeout("slow"))

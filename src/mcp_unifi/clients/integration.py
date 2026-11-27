@@ -145,19 +145,23 @@ class IntegrationWrites:
                 error_cls=UniFiError,
                 json=json,
                 timeout=(
-                    httpx.Timeout(V1_WRITE_TIMEOUT_SECONDS, connect=_V1_CONNECT_TIMEOUT_SECONDS)
+                    httpx.Timeout(
+                        V1_WRITE_TIMEOUT_SECONDS,
+                        connect=_V1_CONNECT_TIMEOUT_SECONDS,
+                        pool=_V1_CONNECT_TIMEOUT_SECONDS,
+                    )
                     if is_write
                     else None
                 ),
             )
         except UniFiError as exc:
             cause = exc.__cause__
-            # A ConnectTimeout means nothing reached the console, so only a
-            # timeout after the request was sent leaves the outcome unknown.
+            # A ConnectTimeout or PoolTimeout means nothing reached the console,
+            # so only a timeout after the request was sent leaves the outcome unknown.
             if (
                 is_write
                 and isinstance(cause, httpx.TimeoutException)
-                and not isinstance(cause, httpx.ConnectTimeout)
+                and not isinstance(cause, httpx.ConnectTimeout | httpx.PoolTimeout)
             ):
                 raise UniFiError(
                     f"UniFi Integration {method} {path} timed out after "
