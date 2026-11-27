@@ -102,6 +102,81 @@ update_clients(updates=[{"mac": "aa:bb:cc:00:00:02", "name": "Pete's iPhone"}, {
 | `get_speedtest_results` | read | — | Recent speed-test results, newest first. |
 | `list_top_talkers` | read | — | Connected clients ranked by bytes moved since each connected. |
 
+## Diagnose
+
+| Tool | Type | dry_run | Description |
+|---|---|---|---|
+| `diagnose_site` | read | — | One-call site diagnosis: a verdict, rule-based findings with their evidence, what could not be checked, and which tool to call next. |
+
+`diagnose_site` is the first call for "is my network healthy?". It makes five reads (`list_devices`, `get_site_health`, `list_clients`, `list_alarms`, `list_threat_detections`), runs fixed rules over them, and returns findings. There is no AI inside it: the same controller state always gives the same answer, byte for byte, and the agent calling it does the reasoning. The design and its trade-offs are in [ADR 0010](https://github.com/pete-builds/mcp-unifi/blob/main/docs/decisions/0010-site-diagnosis-is-deterministic-rules-over-existing-reads.md).
+
+**How to read the answer.**
+
+- `verdict` is `critical` when any finding is critical; `unknown` when a rule that can find a critical problem (`device.offline`, `wan.down`, `health.subsystem_not_ok`) could not run over everything it needs; `degraded` when there is a warning; otherwise `healthy`. Info findings never change it.
+- Each finding keeps `observed` (values read from the controller, each with the tool it came from) apart from `inferred` (the rule's conclusion). `next` names tools to call with their arguments.
+- `not_evaluated` lists every rule that did not run (`scope: "rule"`) or ran over only some devices or subsystems (`scope: "partial"`), with the reason. `rules_evaluated` lists the rest. A failed read is never read as a clean one: it appears in `checks` with its error, and the top-level `next` points at `get_console_health`.
+- Device names, alarm keys and IPS categories come from the controller and are treated as untrusted: they appear only in `subject.name` and `observed`, with control characters stripped and capped at 80 characters, never in `summary` or `inferred`.
+- At most 10 findings per rule; any more are counted in `truncated`. `thresholds` echoes every threshold used. They are this project's conservative defaults, not Ubiquiti guidance.
+
+**Rules.** The ids are stable and safe to grade against.
+
+| Rule id | Severity | Reads | Fires when |
+|---|---|---|---|
+| `device.offline` | critical | `list_devices` | An adopted device reports `state` 0 (disconnected). |
+| `device.not_connected` | warning | `list_devices` | An adopted device reports any `state` other than 0 or 1 (upgrading, provisioning, heartbeat missed...). |
+| `device.high_cpu` | warning | `list_devices` | A connected device's `system-stats.cpu` is above 90. |
+| `device.high_memory` | warning | `list_devices` | A connected device's `system-stats.mem` is above 90. |
+| `device.upgradable` | info | `list_devices` | The controller flags a device `upgradable`. Not evaluated when no record carries the flag. |
+| `wan.down` | critical | `get_site_health` | The `wan` subsystem status is `error`. |
+| `health.subsystem_not_ok` | critical, warning or info | `get_site_health` | A `wan`, `www`, `lan` or `wlan` status is not `ok`: `error` is critical, `warning` is a warning, anything else is info. `vpn` is not evaluated, because a site with no VPN reports it as `warning`. |
+| `wifi.weak_signal_clients` | warning | `list_clients` | An AP has 3 or more wireless clients below -75 dBm. |
+| `alarms.active` | warning | `list_alarms` | The critical log holds entries from the last 24 hours, one finding per alarm key. |
+| `threats.detected` | warning or info | `list_threat_detections` | Threat Management recorded detections in the last 24 hours. Blocked ones are info; the rest are a warning. |
+
+**Worked example.** The stub site with its access point disconnected (seed alarms and IPS rows cleared), `thresholds` omitted:
+
+```json
+{
+  "diagnosis": "site",
+  "controller": "default",
+  "stub_mode": true,
+  "verdict": "critical",
+  "summary": "1 critical and 0 warning finding(s). 3 rule(s) not fully evaluated.",
+  "findings": [
+    {
+      "id": "device.offline",
+      "severity": "critical",
+      "subject": { "type": "device", "mac": "f4:e2:c6:00:00:02", "name": "U7 Pro - Living Room", "device_type": "uap" },
+      "observed": [{ "fact": "state=0", "source": "list_devices" }],
+      "inferred": "The controller reports this adopted device as disconnected.",
+      "confidence": "high",
+      "limitations": [],
+      "next": [
+        { "tool": "get_device_stats", "args": { "mac": "f4:e2:c6:00:00:02" } },
+        { "tool": "list_events", "args": { "hours": 24 } }
+      ]
+    }
+  ],
+  "truncated": {},
+  "not_evaluated": [
+    { "rule": "device.high_cpu", "scope": "partial", "reason": "1 of 2 connected devices report no system-stats cpu" },
+    { "rule": "device.high_memory", "scope": "partial", "reason": "1 of 2 connected devices report no system-stats mem" },
+    { "rule": "device.upgradable", "scope": "rule", "reason": "no device record carries an upgradable flag" }
+  ],
+  "rules_evaluated": ["alarms.active", "device.high_cpu", "device.high_memory", "device.not_connected", "device.offline", "health.subsystem_not_ok", "threats.detected", "wan.down", "wifi.weak_signal_clients"],
+  "checks": [
+    { "source": "list_devices", "ok": true, "records": 3 },
+    { "source": "get_site_health", "ok": true, "records": 5 },
+    { "source": "list_clients", "ok": true, "records": 4 },
+    { "source": "list_alarms", "ok": true, "records": 0 },
+    { "source": "list_threat_detections", "ok": true, "records": 0 }
+  ],
+  "next": []
+}
+```
+
+Read it as: one access point is down, which is why the verdict is `critical`; the agent's next calls are `get_device_stats` for that MAC and `list_events` for when it dropped. The switch reports no CPU or memory figures and no device carries an upgrade flag, so those checks say so instead of passing silently.
+
 ## Composites (with rollback)
 
 These tools chain primitive operations into one call and roll back on partial failure. The response includes `partial` and `rolled_back` keys describing exactly what was undone.

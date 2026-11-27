@@ -24,6 +24,7 @@ from mcp_unifi.modules.network import (
     content_filtering,
     devices,
     dhcp,
+    diagnose,
     drift,
     dynamic_dns,
     firewall,
@@ -62,6 +63,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     # broken" tool, and it is the only one that still answers when the UniFi
     # Network application itself is down.
     console.register(mcp, settings, registry)
+    # The one-call site diagnosis sits beside it: the first tool to reach for
+    # when the question is "is my network healthy?".
+    diagnose.register(mcp, settings, registry)
     vlans.register(mcp, settings, registry)
     ipv6.register(mcp, settings, registry)
     wlans.register(mcp, settings, registry)
