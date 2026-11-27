@@ -397,15 +397,23 @@ async def test_missing_network_or_zone_on_the_target_blocks_that_policy_only(
 
     dry = await _dry(target_server, envelope)
     blocked = {a["name"]: a["reason"] for a in _policy_actions(dry["would_apply"], "blocked")}
-    assert set(blocked) == {"Block IoT to TRUSTED", "Allow MGMT DNS"}
+    # Without IoT, Internal also holds fewer networks than in the backup, so
+    # the two policies matching all of Internal are held back as well.
+    assert set(blocked) == {
+        "Block IoT to TRUSTED",
+        "Allow MGMT DNS",
+        "Block Guest to Internal",
+        "Allow Vpn to Internal",
+    }
     assert "'IoT'" in blocked["Block IoT to TRUSTED"]
     assert "custom zone" in blocked["Allow MGMT DNS"]
+    assert "only in the backup: IoT" in blocked["Block Guest to Internal"]
     assert any("blocked" in w for w in dry["warnings"])
 
     await _apply(target_server, envelope)
     sent = {args[0]["name"] for method, args in spy.calls if method == "create_policy"}
-    assert sent == set(USER_NAMES) - {"Block IoT to TRUSTED", "Allow MGMT DNS"}
-    assert len(_user_v1(target_state)) == 8
+    assert sent == set(USER_NAMES) - set(blocked)
+    assert len(_user_v1(target_state)) == 6
 
 
 async def test_a_policy_the_v1_body_cannot_express_is_blocked_not_approximated(
@@ -882,3 +890,170 @@ async def test_a_policy_edited_after_the_preview_is_refused_at_confirm(
     assert "changed since the preview" in mine[0]["reason"]
     assert spy.calls == []
     assert _target_policy(target_state, "Block IoT to TRUSTED") == edited
+    assert "1 refused" in result["summary"]
+    assert any("Block IoT to TRUSTED" in w and "refused" in w for w in result["warnings"]), result[
+        "warnings"
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Review round 2 (#265): zone membership, the post-update readback, the
+# refused count, and schedule spellings
+# ---------------------------------------------------------------------------
+
+
+def _add_target_lan(state: StubState, name: str) -> None:
+    state.networks.append(
+        {
+            "_id": f"{name}-private",
+            "external_id": f"{name}-v1",
+            "name": name,
+            "purpose": "corporate",
+            "ip_subnet": "10.9.9.1/24",
+            "enabled": True,
+        }
+    )
+
+
+async def test_a_zone_wide_policy_is_held_back_when_the_zone_holds_an_extra_network(
+    source_server: FastMCP, target_server: FastMCP, target_state: StubState
+) -> None:
+    """A zone-wide side covers whatever the zone holds. With an extra LAN in
+    Internal on the target, "Hotspot to Internal" would cover it too."""
+    _add_target_lan(target_state, "Lab")
+    envelope = await _backup(source_server)
+    spy = WriteSpy(target_state)
+
+    dry = await _dry(target_server, envelope)
+    blocked = {a["name"]: a["reason"] for a in _policy_actions(dry["would_apply"], "blocked")}
+    assert set(blocked) == {"Block Guest to Internal", "Allow Vpn to Internal"}
+    for reason in blocked.values():
+        assert "'Internal'" in reason and "Lab" in reason
+
+    await _apply(target_server, envelope)
+    sent = {args[0]["name"] for method, args in spy.calls if method == "create_policy"}
+    assert sent == set(USER_NAMES) - set(blocked)
+
+
+async def test_a_zone_wide_policy_is_held_back_when_the_zone_lacks_a_network(
+    source_server: FastMCP, target_server: FastMCP, target_state: StubState
+) -> None:
+    target_state.networks = [n for n in target_state.networks if n.get("name") != "Default"]
+    envelope = await _backup(source_server)
+    dry = await _dry(target_server, envelope)
+    blocked = {a["name"]: a["reason"] for a in _policy_actions(dry["would_apply"], "blocked")}
+    assert {"Block Guest to Internal", "Allow Vpn to Internal"} <= set(blocked)
+    assert "Default" in blocked["Block Guest to Internal"]
+
+
+async def test_a_network_scoped_side_is_held_back_when_its_network_sits_in_another_zone(
+    source_server: FastMCP, target_server: FastMCP, target_state: StubState
+) -> None:
+    """On the target TRUSTED is a guest LAN, so it sits in Hotspot, not Internal."""
+    trusted = next(n for n in target_state.networks if n.get("name") == "TRUSTED")
+    trusted["purpose"] = "guest"
+    envelope = await _backup(source_server)
+    spy = WriteSpy(target_state)
+
+    dry = await _dry(target_server, envelope)
+    blocked = {a["name"]: a["reason"] for a in _policy_actions(dry["would_apply"], "blocked")}
+    for name in ("Allow TRUSTED to MGMT", "Block IoT to TRUSTED"):
+        assert "'TRUSTED'" in blocked[name] and "not in" in blocked[name]
+    # MGMT is still in Internal: a policy naming only MGMT there restores.
+    assert "Allow MGMT DNS" not in blocked
+
+    await _apply(target_server, envelope)
+    sent = {args[0]["name"] for method, args in spy.calls if method == "create_policy"}
+    assert "Allow MGMT DNS" in sent
+    assert not sent & {"Allow TRUSTED to MGMT", "Block IoT to TRUSTED"}
+
+
+async def test_identical_zone_membership_holds_nothing_back(
+    source_server: FastMCP, target_server: FastMCP, target_state: StubState
+) -> None:
+    envelope = await _backup(source_server)
+    dry = await _dry(target_server, envelope)
+    assert not _policy_actions(dry["would_apply"], "blocked")
+    assert len(_policy_actions(dry["would_apply"], "create")) == 10
+
+
+async def test_a_console_that_keeps_an_omitted_filter_rolls_the_whole_restore_back(
+    source_server: FastMCP, target_server: FastMCP, target_state: StubState
+) -> None:
+    """The reset-by-omission assumption is checked by re-reading the policy.
+    A console that merges a PUT instead of replacing it keeps the filter, and
+    the restore must fail and undo both the earlier create and the update."""
+    envelope = await _restored_target(source_server, target_server)
+    fw = target_state.zone_firewall
+    hotspot = fw.zone_ids["Hotspot"]
+    gone = next(
+        p
+        for p in _user_v1(target_state)
+        if p["name"] == ECOWITT and p["destination"]["zoneId"] == hotspot
+    )
+    fw.policies = [p for p in fw.policies if p["id"] != gone["id"]]
+    victim = _target_policy(target_state, "Block IoT to TRUSTED")
+    victim["connectionStateFilter"] = ["NEW"]
+    before = copy.deepcopy(victim)
+
+    def _merging_put(policy_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        for i, policy in enumerate(fw.policies):
+            if policy.get("id") == policy_id:
+                fw.policies[i] = {**policy, **body}
+                return fw.policies[i]
+        raise AssertionError(policy_id)
+
+    fw.update_policy = _merging_put  # type: ignore[method-assign]
+    dry = await _dry(target_server, envelope)
+    kinds = [(a["action"], a["name"]) for a in _policy_actions(dry["would_apply"])]
+    assert kinds.index(("create", ECOWITT)) < kinds.index(("update", "Block IoT to TRUSTED"))
+
+    result = await _apply(target_server, envelope)
+    assert "connectionStateFilter" in result["error"]
+    rolled = [r for r in result["rolled_back"] if r["type"] == "firewall_policies"]
+    assert {"type": "firewall_policies", "id": victim["id"], "reverted": True} in rolled
+    assert any(r.get("deleted") is True for r in rolled)
+    assert not [
+        p
+        for p in _user_v1(target_state)
+        if p["name"] == ECOWITT and p["destination"]["zoneId"] == hotspot
+    ]
+    assert _target_policy(target_state, "Block IoT to TRUSTED") == before
+
+
+@pytest.mark.parametrize("schedule", ["ALWAYS", "always", {"mode": "always"}])
+async def test_an_always_schedule_in_any_spelling_does_not_hold_back(
+    source_server: FastMCP, target_server: FastMCP, target_state: StubState, schedule: Any
+) -> None:
+    envelope = await _restored_target(source_server, target_server)
+    victim = _target_policy(target_state, "Block IoT to TRUSTED")
+    victim["schedule"] = schedule
+    victim["enabled"] = False
+
+    dry = await _dry(target_server, envelope)
+    mine = [a for a in _policy_actions(dry["would_apply"]) if a["name"] == "Block IoT to TRUSTED"]
+    assert [(a["action"], a.get("changes")) for a in mine] == [("update", ["enabled"])]
+
+
+@pytest.mark.parametrize(
+    ("schedule", "quoted"),
+    [
+        ({"type": "ALWAYS"}, "{'type': 'ALWAYS'}"),
+        ({"mode": None}, "{'mode': None}"),
+        ("WEEKDAYS", "'WEEKDAYS'"),
+    ],
+)
+async def test_an_unrecognised_schedule_holds_back_quoting_what_the_site_returned(
+    source_server: FastMCP,
+    target_server: FastMCP,
+    target_state: StubState,
+    schedule: Any,
+    quoted: str,
+) -> None:
+    envelope = await _restored_target(source_server, target_server)
+    _target_policy(target_state, "Block IoT to TRUSTED")["schedule"] = schedule
+    dry = await _dry(target_server, envelope)
+    mine = [a for a in _policy_actions(dry["would_apply"]) if a["name"] == "Block IoT to TRUSTED"]
+    assert [a["action"] for a in mine] == ["blocked"]
+    assert quoted in mine[0]["reason"]
+    assert "mode None" not in mine[0]["reason"]

@@ -878,7 +878,10 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
           this site lacks, one the Integration API body cannot express
           exactly (a schedule, an IPsec or group match), one whose site copy
           runs on a schedule, and any name plus zone pair the backup holds
-          more than once is a ``blocked`` action and is not written. A
+          more than once is a ``blocked`` action and is not written. So is
+          one whose zone would cover different networks here: a side that
+          matches a whole zone needs that zone to hold the same networks as
+          in the backup, and a side naming networks needs each in its zone. A
           backup with no ``firewall_policies`` section leaves every policy
           as it is.
         - Not covered: routes, traffic rules, content filters, dynamic DNS,
@@ -899,7 +902,8 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
           token; nothing is written until ``confirm_destructive_action``
           runs it.
         - At confirm, a zone policy the plan updates is re-read first; one
-          that changed since the preview is refused (reported, not written).
+          that changed since the preview is refused (not written, counted
+          in the summary and named in a warning).
         - Zone policy order: restore does not reorder. The plan warns when
           it creates or updates in a zone pair that holds other user
           policies, and when matched policies sit in a different order than
@@ -1339,10 +1343,19 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                     }
                 )
 
+            # A policy refused at confirm changed nothing; say so where the
+            # caller looks first, not only in the per-action list.
+            refused = [a for a in applied if a.get("result") == "refused"]
+            final_warnings = list(warnings) + [
+                f"Zone policy {a.get('name')!r} ({a.get('source_zone')} -> "
+                f"{a.get('destination_zone')}) was refused: it changed since the preview, "
+                "and nothing was written to it. Run restore_config again."
+                for a in refused
+            ]
             return format_json(
                 {
                     "controller": controller,
-                    "warnings": warnings,
+                    "warnings": final_warnings,
                     "applied": applied,
                     "summary": (
                         f"applied {len(applied)} action(s) "
@@ -1351,7 +1364,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                         f"{sum(1 for a in applied if a.get('result') == 'updated')} "
                         "updated, "
                         f"{sum(1 for a in applied if a.get('result') == 'deleted')} "
-                        "deleted)"
+                        f"deleted, {len(refused)} refused)"
                     ),
                 }
             )

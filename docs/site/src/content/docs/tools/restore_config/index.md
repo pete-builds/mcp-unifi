@@ -35,7 +35,10 @@ Side effects:
   this site lacks, one the Integration API body cannot express
   exactly (a schedule, an IPsec or group match), one whose site copy
   runs on a schedule, and any name plus zone pair the backup holds
-  more than once is a ``blocked`` action and is not written. A
+  more than once is a ``blocked`` action and is not written. So is
+  one whose zone would cover different networks here: a side that
+  matches a whole zone needs that zone to hold the same networks as
+  in the backup, and a side naming networks needs each in its zone. A
   backup with no ``firewall_policies`` section leaves every policy
   as it is.
 - Not covered: routes, traffic rules, content filters, dynamic DNS,
@@ -56,7 +59,8 @@ Side effects:
   token; nothing is written until ``confirm_destructive_action``
   runs it.
 - At confirm, a zone policy the plan updates is re-read first; one
-  that changed since the preview is refused (reported, not written).
+  that changed since the preview is refused (not written, counted
+  in the summary and named in a warning).
 - Zone policy order: restore does not reorder. The plan warns when
   it creates or updates in a zone pair that holds other user
   policies, and when matched policies sit in a different order than
