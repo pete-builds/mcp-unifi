@@ -380,7 +380,7 @@
       "name": "create_firewall_policy"
     },
     {
-      "description": "Create a firewall rule on the controller.\n\nSide effects:\n- Adds a new rule into the named ``ruleset`` at the given\n  ``rule_index``. Rules with lower indexes evaluate first.\n- Takes effect immediately on the next packet hitting the affected\n  datapath.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: create_firewall_rule(name=\"Allow IoT to Plex\", ruleset=\"LAN_IN\", action=\"accept\", protocol=\"tcp\", src_networkconf_id=\"65f...\", dst_networkconf_id=\"65a...\", dst_port=\"32400\")",
+      "description": "Create a firewall rule on the controller.\n\nOn Zone-Based Firewall sites (every site on UniFi Network 11) this tool\nrefuses; use create_firewall_policy.\n\nSide effects:\n- Adds a new rule into the named ``ruleset`` at the given\n  ``rule_index``. Rules with lower indexes evaluate first.\n- Takes effect immediately on the next packet hitting the affected\n  datapath.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nExample: create_firewall_rule(name=\"Allow IoT to Plex\", ruleset=\"LAN_IN\", action=\"accept\", protocol=\"tcp\", src_networkconf_id=\"65f...\", dst_networkconf_id=\"65a...\", dst_port=\"32400\")",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -1157,7 +1157,7 @@
       "name": "delete_firewall_policy"
     },
     {
-      "description": "Preview deletion of a firewall rule.\n\nv0.7.0: this tool no longer deletes on its own. It returns a preview\nenvelope with a ``token``; call ``confirm_destructive_action(token)``\nto commit the delete. Tokens expire after 5 minutes.\n\nSide effects:\n- None until ``confirm_destructive_action`` runs against the token.\n- On confirm: removes the rule. Traffic that previously matched it\n  falls through to the next rule (or the implicit default).\n- ``dry_run=True`` returns the legacy ``would_delete`` envelope with\n  no token \u2014 purely informational, no commit step possible.\n\nExample: delete_firewall_rule(rule_id=\"65f...\")",
+      "description": "Preview deletion of a firewall rule.\n\nOn Zone-Based Firewall sites (every site on UniFi Network 11) this tool\nrefuses; use delete_firewall_policy.\n\nv0.7.0: this tool no longer deletes on its own. It returns a preview\nenvelope with a ``token``; call ``confirm_destructive_action(token)``\nto commit the delete. Tokens expire after 5 minutes.\n\nSide effects:\n- None until ``confirm_destructive_action`` runs against the token.\n- On confirm: removes the rule. Traffic that previously matched it\n  falls through to the next rule (or the implicit default).\n- ``dry_run=True`` returns the legacy ``would_delete`` envelope with\n  no token \u2014 purely informational, no commit step possible.\n\nExample: delete_firewall_rule(rule_id=\"65f...\")",
       "input_schema": {
         "additionalProperties": false,
         "properties": {
@@ -3998,7 +3998,7 @@
       "name": "update_firewall_policy"
     },
     {
-      "description": "Patch fields on an existing firewall rule.\n\nSide effects:\n- Modifies the named rule in place. Only fields supplied in\n  ``updates`` change; everything else is preserved.\n- Takes effect immediately on the next packet hitting the affected\n  datapath.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nVerified write: after applying, the rule is re-read from the\ncontroller and the response carries the rule's fields plus a\n``verification`` block (``verified``, ``mutation_applied``,\n``persisted_fields``, ``unchanged_fields``, ``dropped_fields``,\n``coerced_fields``, ``unverifiable_fields``), the same block the other\n``update_*`` tools return. The rule's own fields stay at the top level\nso existing callers keep working.\n\nExample: update_firewall_rule(rule_id=\"65f...\", updates={\"enabled\": False})",
+      "description": "Patch fields on an existing firewall rule.\n\nOn Zone-Based Firewall sites (every site on UniFi Network 11) this tool\nrefuses; use update_firewall_policy.\n\nSide effects:\n- Modifies the named rule in place. Only fields supplied in\n  ``updates`` change; everything else is preserved.\n- Takes effect immediately on the next packet hitting the affected\n  datapath.\n- Mutates controller state. Use dry_run=True to preview the change\n  without applying.\n\nVerified write: after applying, the rule is re-read from the\ncontroller and the response carries the rule's fields plus a\n``verification`` block (``verified``, ``mutation_applied``,\n``persisted_fields``, ``unchanged_fields``, ``dropped_fields``,\n``coerced_fields``, ``unverifiable_fields``), the same block the other\n``update_*`` tools return. The rule's own fields stay at the top level\nso existing callers keep working.\n\nExample: update_firewall_rule(rule_id=\"65f...\", updates={\"enabled\": False})",
       "input_schema": {
         "additionalProperties": false,
         "properties": {

@@ -8,6 +8,9 @@ draft: false
 
 Create a firewall rule on the controller.
 
+On Zone-Based Firewall sites (every site on UniFi Network 11) this tool
+refuses; use create_firewall_policy.
+
 Side effects:
 - Adds a new rule into the named ``ruleset`` at the given
   ``rule_index``. Rules with lower indexes evaluate first.
