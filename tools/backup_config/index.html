@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en" dir="ltr" data-theme="dark" data-has-toc data-has-sidebar data-astro-cid-g5ptsecz><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>backup_config | mcp-unifi</title><link rel="canonical" href="https://pete-builds.github.io/mcp-unifi/tools/backup_config/"/><link rel="sitemap" href="/mcp-unifi/sitemap-index.xml"/><link rel="shortcut icon" href="/mcp-unifi/favicon.svg" type="image/svg+xml"/><meta name="generator" content="Astro v7.4.12"/><meta name="generator" content="Starlight v0.43.1"/><meta property="og:title" content="backup_config"/><meta property="og:type" content="article"/><meta property="og:url" content="https://pete-builds.github.io/mcp-unifi/tools/backup_config/"/><meta property="og:locale" content="en"/><meta property="og:description" content="Snapshot every persistent resource on the controller into one envelope."/><meta property="og:site_name" content="mcp-unifi"/><meta name="twitter:card" content="summary_large_image"/><meta name="description" content="Snapshot every persistent resource on the controller into one envelope."/><script>
+<!DOCTYPE html><html lang="en" dir="ltr" data-theme="dark" data-has-toc data-has-sidebar data-astro-cid-g5ptsecz><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>backup_config | mcp-unifi</title><link rel="canonical" href="https://pete-builds.github.io/mcp-unifi/tools/backup_config/"/><link rel="sitemap" href="/mcp-unifi/sitemap-index.xml"/><link rel="shortcut icon" href="/mcp-unifi/favicon.svg" type="image/svg+xml"/><meta name="generator" content="Astro v7.4.13"/><meta name="generator" content="Starlight v0.43.1"/><meta property="og:title" content="backup_config"/><meta property="og:type" content="article"/><meta property="og:url" content="https://pete-builds.github.io/mcp-unifi/tools/backup_config/"/><meta property="og:locale" content="en"/><meta property="og:description" content="Snapshot every persistent resource on the controller into one envelope."/><meta property="og:site_name" content="mcp-unifi"/><meta name="twitter:card" content="summary_large_image"/><meta name="description" content="Snapshot every persistent resource on the controller into one envelope."/><script>
 	(() => {
 		const storedTheme =
 			typeof localStorage !== 'undefined' && localStorage.getItem('starlight-theme');
@@ -60,13 +60,21 @@
 <p>Snapshot every persistent resource on the controller into one envelope.</p>
 <p>Side effects: None (read-only).</p>
 <p>Captures networks/VLANs, firewall groups, WLANs, legacy firewall
-rules, port profiles, static DHCP reservations, and port forwards
-into one versioned JSON envelope. It does NOT capture Zone-Based
-Firewall policies or zones, static routes, traffic rules and
-routes, content filters, dynamic DNS, AP groups, or site settings;
-the envelope’s <code dir="auto">not_included</code> field lists each, so a backup is
-never mistaken for a whole-site snapshot. Transient state (clients,
-devices, observability) is excluded by design.</p>
+rules, port profiles, static DHCP reservations, port forwards, and
+the Zone-Based Firewall into one versioned JSON envelope.
+<code dir="auto">firewall_policies</code> holds every policy an operator created
+(controller-managed ones, including port-forward mirrors, are left
+out), with zones and networks named rather than referenced by id and
+runtime counters such as <code dir="auto">hits</code> dropped; <code dir="auto">firewall_zones</code> holds
+the zones those policies use, by name, with the networks in each
+(and a count of members it could not name). A zone-wide policy is
+backed up but <code dir="auto">restore_config</code> will not restore it. A site on
+legacy rulesets gets two empty sections. It does NOT capture
+static routes, traffic rules and routes, content filters, dynamic
+DNS, AP groups, or site settings; the envelope’s <code dir="auto">not_included</code>
+field lists each, so a backup is never mistaken for a whole-site
+snapshot. Transient state (clients, devices, observability) is
+excluded by design.</p>
 <p>Secret handling: every sensitive field on a WLAN or network record
 is replaced with the sentinel <code dir="auto">&lt;redacted-on-backup&gt;</code> — WLAN
 <code dir="auto">x_passphrase</code> and the network VPN keys
