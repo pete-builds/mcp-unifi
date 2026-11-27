@@ -95,7 +95,12 @@ Apply plan order avoids the controller's referential constraints:
   their source ``_id`` in the envelope for exactly this. A reference the plan
   cannot resolve (the target is not in the backup, has no name, or shares
   its name) turns that record's create into a ``blocked`` action in the
-  preview, so it is never written with a dangling id.
+  preview, so it is never written with a dangling id. On UniFi Network 11 a
+  network's ``_id`` is a UUID and its old ObjectId is kept as ``legacy_id``,
+  and a lease written before the migration stores that legacy id as its
+  ``network_id``; a reference in either form resolves to the same network
+  and is rewritten to the target's ``_id``. ``legacy_id`` and
+  ``external_id`` are controller-assigned and never sent in a create.
 * **Updates** are deliberately not generated in this version. A field that
   drifted on the controller remains; we surface it in dry-run output as
   ``would_apply`` *create* / *delete* / both, never as patch. (The composite
@@ -127,7 +132,12 @@ from mcp_unifi.modules._audit import audited
 from mcp_unifi.modules._params import (
     BoundedJson,
 )
-from mcp_unifi.modules.network._common import format_json, make_err, upsert_dhcp_lease
+from mcp_unifi.modules.network._common import (
+    format_json,
+    make_err,
+    network_refs,
+    upsert_dhcp_lease,
+)
 from mcp_unifi.modules.network._pending import format_preview_envelope, get_pending_actions
 from mcp_unifi.modules.network._zone_policy import site_is_zone_based
 from mcp_unifi.redaction import REDACTED, REDACTED_OUTPUT, is_sensitive
@@ -271,6 +281,27 @@ def _reference_target(rtype: str, key: str) -> str | None:
     if key.endswith(("firewallgroup_id", "firewallgroup_ids")):
         return "firewall_groups"
     return None
+
+
+def _source_refs(rtype: str, record: dict[str, Any]) -> tuple[str, ...]:
+    """Every id other records may point at ``record`` by, in a backup.
+
+    A network answers to its ``_id`` and its ``legacy_id`` (see
+    :func:`~mcp_unifi.modules.network._common.network_refs`): on Network 11 a
+    static lease written before the migration stores the legacy id as its
+    ``network_id``. A firewall group answers to its ``_id`` only.
+    """
+    if rtype == "networks":
+        return network_refs(record)
+    rid = record.get("_id")
+    return (rid,) if isinstance(rid, str) and rid else ()
+
+
+#: Fields a controller assigns to a record it creates, never taken from a
+#: payload. A restore that sent them back would ask the controller to reuse
+#: another record's ids (Network 11 keeps a network's and a WLAN's old
+#: ObjectId as ``legacy_id`` and its v1 id as ``external_id``).
+_CONTROLLER_ASSIGNED: tuple[str, ...] = ("legacy_id", "external_id")
 
 
 def _reference_values(value: Any) -> list[Any]:
@@ -454,33 +485,37 @@ def _plan(
     # restore. ``None`` means "the record this plan creates"; a source id
     # missing from ``targets`` cannot be resolved, for the reason in
     # ``problems`` (or because no record in the backup carries it at all).
+    #
+    # A network is registered under every id it answers to (``_id`` and, on
+    # Network 11, ``legacy_id``; see :func:`_source_refs`), because a lease
+    # written before the migration points at its network by the legacy id.
+    # An id carried by two backed-up records is a problem whichever field
+    # carries it, so a reference that could name either is never resolved.
     targets: dict[str, dict[str, str | None]] = {t: {} for t in _REFERENCED_TYPES}
     problems: dict[str, dict[str, str]] = {t: {} for t in _REFERENCED_TYPES}
     for rtype in _REFERENCED_TYPES:
         for spec in backup_resources.get(rtype, []):
-            old_id = spec.get("_id")
-            if not isinstance(old_id, str) or not old_id:
-                continue
             ident = _identity(rtype, spec)
-            reason: str | None = None
-            target: str | None = None
-            if old_id in targets[rtype] or old_id in problems[rtype]:
-                reason = "more than one record in the backup carries this _id"
-            elif not ident:
-                reason = "the record it points at has no name in the backup"
-            elif ident in ambiguous[rtype]:
-                reason = f"the record it points at shares the name {ident!r} with another"
-            elif ident in live_groups[rtype]:
-                live_id = live_groups[rtype][ident][0].get("_id")
-                if isinstance(live_id, str) and live_id:
-                    target = live_id
+            for old_id in _source_refs(rtype, spec):
+                reason: str | None = None
+                target: str | None = None
+                if old_id in targets[rtype] or old_id in problems[rtype]:
+                    reason = "more than one record in the backup carries this _id"
+                elif not ident:
+                    reason = "the record it points at has no name in the backup"
+                elif ident in ambiguous[rtype]:
+                    reason = f"the record it points at shares the name {ident!r} with another"
+                elif ident in live_groups[rtype]:
+                    live_id = live_groups[rtype][ident][0].get("_id")
+                    if isinstance(live_id, str) and live_id:
+                        target = live_id
+                    else:
+                        reason = f"the site's record named {ident!r} has no _id"
+                if reason is not None:
+                    targets[rtype].pop(old_id, None)
+                    problems[rtype][old_id] = reason
                 else:
-                    reason = f"the site's record named {ident!r} has no _id"
-            if reason is not None:
-                targets[rtype].pop(old_id, None)
-                problems[rtype][old_id] = reason
-            else:
-                targets[rtype][old_id] = target
+                    targets[rtype][old_id] = target
 
     def _unresolved(rtype: str, spec: dict[str, Any]) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
@@ -806,7 +841,11 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
           Extra firewall groups are never deleted.
         - References: a recreated network or group gets a new id, and every
           restored record pointing at one (WLAN, lease, port profile,
-          firewall rule) is remapped to it. A record whose reference cannot
+          firewall rule) is remapped to it. A lease pointing at its network
+          by ``legacy_id`` (UniFi Network 11) is remapped the same way, to
+          the network's ``_id``; a recreated network or WLAN gets new
+          ``legacy_id`` and ``external_id`` values from the controller,
+          which restore never sends. A record whose reference cannot
           be resolved, and any name both sides hold with a duplicate on
           either, appears as a ``blocked`` action and is not written.
         - Not covered: Zone-Based Firewall policies and zones, routes,
@@ -1119,9 +1158,13 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                         # envelope so references to them can be remapped. Drop
                         # it before sending the payload so we don't try to
                         # dictate the new id; keep it to record the mapping.
-                        source_id: Any = None
+                        # A network is also pointed at by its legacy_id (a
+                        # lease written before Network 11), so every id the
+                        # source record answered to maps to the new _id.
+                        source_refs: tuple[str, ...] = ()
                         if rtype in _REFERENCED_TYPES:
-                            source_id = payload.pop("_id", None)
+                            source_refs = _source_refs(rtype, payload)
+                            payload.pop("_id", None)
                         else:
                             # Every network or group reference is rewritten to
                             # the id its target has now. This used to cover a
@@ -1131,14 +1174,20 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                             # nothing and a profile pointing at no VLAN.
                             payload = _remap_references(rtype, payload, id_maps)
 
+                        # The controller assigns these to the record it
+                        # creates; the source's values belong to the source.
+                        for key in _CONTROLLER_ASSIGNED:
+                            payload.pop(key, None)
+
                         if rtype in ("wlans", "networks"):
                             payload = _force_disable_if_redacted(payload)
 
                         record = await _create_by_type(backend, rtype, payload)
                         created_for_rollback.append((rtype, record))
                         new_id = record.get("_id")
-                        if isinstance(source_id, str) and isinstance(new_id, str):
-                            id_maps.setdefault(rtype, {})[source_id] = new_id
+                        if isinstance(new_id, str):
+                            for source_ref in source_refs:
+                                id_maps.setdefault(rtype, {})[source_ref] = new_id
                         applied.append({**action, "result": "created", "id": record.get("_id")})
                         continue
 

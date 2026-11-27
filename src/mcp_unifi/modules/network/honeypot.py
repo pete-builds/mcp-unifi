@@ -27,7 +27,13 @@ from mcp_unifi.annotations import CREATE, DESTRUCTIVE, READ_ONLY
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
-from mcp_unifi.modules.network._common import format_json, make_err
+from mcp_unifi.modules.network._common import (
+    NetworkRefError,
+    find_network,
+    format_json,
+    make_err,
+    same_network,
+)
 from mcp_unifi.modules.network._pending import format_preview_envelope, get_pending_actions
 
 if TYPE_CHECKING:
@@ -49,22 +55,24 @@ def _honeypot_id(entry: dict[str, Any]) -> str:
     return f"{entry.get('network_id', '')}:{entry.get('ip_address', '')}"
 
 
-async def _network_lookup(backend: Any) -> dict[str, dict[str, Any]]:
-    """Return ``{network_id: {name, ip_subnet, ...}}`` for friendly output."""
-    networks = await backend.list_networks()
-    out: dict[str, dict[str, Any]] = {}
-    for n in networks:
-        if isinstance(n, dict):
-            nid = n.get("_id")
-            if isinstance(nid, str):
-                out[nid] = n
-    return out
+async def _network_lookup(backend: Any) -> list[dict[str, Any]]:
+    """Every network record, for resolving an entry's ``network_id``."""
+    return [n for n in await backend.list_networks() if isinstance(n, dict)]
 
 
-def _enrich(entry: dict[str, Any], networks: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    """Attach human-readable network_name to a honeypot entry."""
+def _enrich(entry: dict[str, Any], networks: list[dict[str, Any]]) -> dict[str, Any]:
+    """Attach human-readable network_name to a honeypot entry.
+
+    The entry's ``network_id`` is resolved by ``_id`` or ``legacy_id``: which
+    form a Network 11 controller stores in the ``ips`` setting has not been
+    seen live, and a lease from before the migration stores the legacy id.
+    A reference naming no network, or more than one, gets no name.
+    """
     nid = str(entry.get("network_id", ""))
-    net = networks.get(nid, {})
+    try:
+        net = find_network(networks, nid) or {}
+    except NetworkRefError:
+        net = {}
     return {
         "id": _honeypot_id(entry),
         "network_id": nid,
@@ -173,8 +181,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         Example: create_honeypot(network_id="65f...", ip="10.0.50.2")
 
         Args:
-            network_id: The ``_id`` from ``list_networks`` for the VLAN the
-                honeypot should live on.
+            network_id: The ``_id`` (or ``legacy_id``) from
+                ``list_networks`` for the VLAN the honeypot should live on.
+                Written into the entry as given.
             ip: Unallocated IPv4 address inside the target network.
             controller: Name of the UniFi controller to target. Defaults to
                 ``"default"``.
@@ -191,9 +200,13 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             logger.exception("create_honeypot lookup failed")
             return err(str(exc))
 
-        if network_id not in networks:
+        try:
+            network = find_network(networks, network_id)
+        except NetworkRefError as exc:
+            return err(str(exc))
+        if network is None:
             return err(f"network {network_id} not found")
-        subnet_err = _validate_in_subnet(ip, networks[network_id])
+        subnet_err = _validate_in_subnet(ip, network)
         if subnet_err is not None:
             return err(subnet_err)
 
@@ -207,7 +220,10 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         for entry in existing:
             if not isinstance(entry, dict):
                 continue
-            if entry.get("network_id") == network_id and entry.get("ip_address") == ip:
+            # The same network named by its other id is the same honeypot.
+            if entry.get("ip_address") == ip and same_network(
+                networks, entry.get("network_id"), network_id
+            ):
                 return err(f"honeypot already exists at {ip} on {network_id}")
 
         new_entry = {"network_id": network_id, "ip_address": ip, "version": "v4"}
@@ -220,9 +236,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                     "dry_run": True,
                     "controller": controller,
                     "would_patch": {"setting_key": "ips", "patch": patch},
-                    "summary": (
-                        f"Would add honeypot {ip} on {networks[network_id].get('name', network_id)}"
-                    ),
+                    "summary": (f"Would add honeypot {ip} on {network.get('name', network_id)}"),
                 }
             )
 

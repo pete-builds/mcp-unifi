@@ -184,7 +184,7 @@ def _seed_lookup_targets(state: StubState) -> None:
             {
                 "mac": "aa:bb:cc:11:22:33",
                 "ip": "10.0.1.50",
-                "network_id": "net-x",
+                "network_id": "88a83e2a-5611-4d56-9a4e-4dc5d6cd2f43",  # seeded Default network _id
             },
             "would_create",
         ),
@@ -365,7 +365,7 @@ async def test_provision_homelab_service_dry_run_full_change_set(
             "name": "homepage",
             "mac": "aa:bb:cc:dd:ee:ff",
             "ip": "10.0.10.10",
-            "network_id": "net-x",
+            "network_id": stub_state.networks[0]["_id"],
             "ports": [80, 443],
             "wan_expose": True,
             "dry_run": True,
@@ -381,7 +381,7 @@ async def test_provision_homelab_service_dry_run_full_change_set(
 
 
 async def test_provision_homelab_service_dry_run_no_ports_lease_only(
-    stub_server: FastMCP,
+    stub_server: FastMCP, stub_state: StubState
 ) -> None:
     payload = await _call(
         stub_server,
@@ -390,7 +390,7 @@ async def test_provision_homelab_service_dry_run_no_ports_lease_only(
             "name": "headless",
             "mac": "aa:bb:cc:dd:ee:00",
             "ip": "10.0.10.20",
-            "network_id": "net-x",
+            "network_id": stub_state.networks[0]["_id"],
             "ports": [],
             "dry_run": True,
         },
