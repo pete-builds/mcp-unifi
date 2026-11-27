@@ -184,7 +184,9 @@ async def test_restore_refuses_legacy_rules_when_the_site_migrated_after_the_pre
 ) -> None:
     backup_json = json.dumps(await _call(stub_server, "backup_config", {}))
     stub_state.firewall_rules = []  # the plan will now recreate the backed-up rules
-    preview = await _call(stub_server, "restore_config", {"backup_json": backup_json})
+    preview = await _call(
+        stub_server, "restore_config", {"backup_json": backup_json, "dry_run": False}
+    )
     assert preview["preview"] is True
 
     stub_state.zone_firewall.migrate()
