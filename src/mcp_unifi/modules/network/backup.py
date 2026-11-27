@@ -25,15 +25,24 @@ Envelope shape (``schema = "1"``):
         "firewall_rules": [...],
         "port_profiles": [...],
         "dhcp_leases": [...],
-        "port_forwards": [...]
+        "port_forwards": [...],
+        "firewall_policies": [...],
+        "firewall_zones": [...]
       }
     }
 
 ``not_included`` names every kind of persistent configuration the envelope
-does NOT carry (see :data:`NOT_INCLUDED`), Zone-Based Firewall policies
-first among them. ``restore_config`` repeats the same list as
-``not_restored`` in its plan, so a backup is never mistaken for a whole-site
-snapshot.
+does NOT carry (see :data:`NOT_INCLUDED`). ``restore_config`` repeats the
+same list as ``not_restored`` in its plan, so a backup is never mistaken for
+a whole-site snapshot.
+
+``firewall_policies`` and ``firewall_zones`` carry the Zone-Based Firewall:
+operator-created policies only, with zones and networks by name. Both are
+built and restored by :mod:`._backup_zbf`, which documents the field handling.
+Restore creates and updates operator policies through the Integration API and
+never writes a controller-managed policy or a zone, and never deletes a
+policy. Adding the two sections did not change ``schema``: an envelope
+without them restores exactly as before, and an older server ignores them.
 
 Secret handling
 ---------------
@@ -105,7 +114,9 @@ Apply plan order avoids the controller's referential constraints:
   drifted on the controller remains; we surface it in dry-run output as
   ``would_apply`` *create* / *delete* / both, never as patch. (The composite
   reapply-by-recreate path keeps the restore idempotent and avoids an
-  N-field-deep partial-update rollback story.)
+  N-field-deep partial-update rollback story.) Zone policies are the
+  exception: they are never deleted, so a changed one is updated in place
+  (only the fields that differ), and rollback PUTs back the body it had.
 
 Rollback semantics
 ------------------
@@ -126,12 +137,14 @@ from typing import TYPE_CHECKING, Any
 
 from mcp_unifi.annotations import DESTRUCTIVE, READ_ONLY
 from mcp_unifi.backends import Backend
+from mcp_unifi.clients import zone_policy as zp
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
 from mcp_unifi.modules._params import (
     BoundedJson,
 )
+from mcp_unifi.modules.network import _backup_zbf as zbf
 from mcp_unifi.modules.network._common import (
     format_json,
     make_err,
@@ -187,11 +200,6 @@ _NEVER_DELETED: frozenset[str] = frozenset({"firewall_groups"})
 #: what that means for a restore. Written into every envelope as
 #: ``not_included`` and repeated by ``restore_config`` as ``not_restored``.
 NOT_INCLUDED: dict[str, str] = {
-    "firewall_policies": (
-        "Zone-Based Firewall policies. Not backed up and not restored; "
-        "recreate them with create_firewall_policy."
-    ),
-    "firewall_zones": "Zone-Based Firewall zones and which networks sit in each.",
     "static_routes": "Static routes.",
     "traffic_rules": "Traffic rules.",
     "traffic_routes": "Traffic routes (policy-based routing).",
@@ -215,11 +223,9 @@ _DROP_FIELDS: frozenset[str] = frozenset({"_id", "site_id"})
 # ---------------------------------------------------------------------------
 
 
-def _norm(value: object) -> str:
-    """Trim + lowercase a value for case-insensitive matching."""
-    if value is None:
-        return ""
-    return str(value).strip().lower()
+#: Trim + lowercase a value for case-insensitive matching. Shared with the
+#: zone policy half so both halves of a restore match names the same way.
+_norm = zbf.norm
 
 
 def _identity(resource_type: str, record: dict[str, Any]) -> str:
@@ -345,8 +351,13 @@ def _redact_secrets(records: list[dict[str, Any]]) -> tuple[list[dict[str, Any]]
     return out, seen_secret
 
 
-async def _snapshot(backend: Backend) -> dict[str, list[dict[str, Any]]]:
-    """Pull every persistent resource list off the backend."""
+async def _snapshot(backend: Backend) -> tuple[dict[str, list[dict[str, Any]]], str | None]:
+    """Pull every persistent resource list off the backend.
+
+    Returns ``(resources, zone_read_error)``. The second item is ``None``
+    unless the Zone-Based Firewall lists could not be read, in which case
+    ``resources`` has no ``firewall_policies`` / ``firewall_zones`` section.
+    """
     networks_raw = list(await backend.list_networks())
     wlans_raw = list(await backend.list_wlans())
     fw_raw = list(await backend.list_firewall_rules())
@@ -354,7 +365,7 @@ async def _snapshot(backend: Backend) -> dict[str, list[dict[str, Any]]]:
     leases_raw = list(await backend.list_dhcp_leases())
     forwards_raw = list(await backend.list_port_forwards())
     groups_raw = list(await backend.list_firewall_groups())
-    return {
+    out: dict[str, list[dict[str, Any]]] = {
         "networks": [_strip_for_backup("networks", r) for r in networks_raw],
         "firewall_groups": [_strip_for_backup("firewall_groups", r) for r in groups_raw],
         "wlans": [_strip(r) for r in wlans_raw],
@@ -363,6 +374,36 @@ async def _snapshot(backend: Backend) -> dict[str, list[dict[str, Any]]]:
         "dhcp_leases": [_strip(r) for r in leases_raw],
         "port_forwards": [_strip(r) for r in forwards_raw],
     }
+    # Zone-Based Firewall. The v2 lists answer [] on a legacy site, so a
+    # legacy backup carries two empty sections. A console without the route
+    # at all must not lose its whole backup over it: the sections are left
+    # out and the envelope's not_included says why.
+    try:
+        policies_raw = list(await backend.list_firewall_policies())
+        zones_raw = list(await backend.list_firewall_zones())
+    except UniFiError as exc:
+        logger.warning("backup_config: zone-based firewall read failed: %s", exc)
+        return out, str(exc)
+    out.update(
+        zbf.backup_sections(
+            policies=policies_raw, zones=zones_raw, networks=networks_raw, groups=groups_raw
+        )
+    )
+    return out, None
+
+
+def _not_included(zone_read_error: str | None) -> dict[str, str]:
+    """What this envelope does not carry: :data:`NOT_INCLUDED`, plus the zone
+    sections when the controller would not give them up."""
+    out = dict(NOT_INCLUDED)
+    if zone_read_error is not None:
+        reason = (
+            f"could not be read from this controller ({zone_read_error}); not backed up, "
+            "and a restore of this envelope leaves the site's zone policies as they are."
+        )
+        out[zbf.POLICIES] = f"Zone-Based Firewall policies: {reason}"
+        out[zbf.ZONES] = f"Zone-Based Firewall zones: {reason}"
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -656,6 +697,9 @@ async def _delete_by_type(backend: Backend, rtype: str, resource_id: str) -> boo
     if rtype == "firewall_groups":
         # Reached only by rollback of a group this restore created.
         return await backend.delete_firewall_group(resource_id)
+    if rtype == zbf.POLICIES:
+        # Reached only by rollback of a zone policy this restore created.
+        return await backend.delete_v1_firewall_policy(resource_id)
     raise ValueError(f"unknown resource type for delete: {rtype}")
 
 
@@ -678,6 +722,11 @@ async def _create_by_type(backend: Backend, rtype: str, payload: dict[str, Any])
         return await backend.create_port_forward(payload)
     if rtype == "firewall_groups":
         return await backend.create_firewall_group(payload)
+    if rtype == zbf.POLICIES:
+        # Integration API (ADR 0009). Its records carry ``id``, not ``_id``;
+        # hand back ``_id`` too so rollback and reporting read one key.
+        record = await backend.create_v1_firewall_policy(payload)
+        return {**record, "_id": record.get("id")}
     raise ValueError(f"unknown resource type for create: {rtype}")
 
 
@@ -750,13 +799,21 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         Side effects: None (read-only).
 
         Captures networks/VLANs, firewall groups, WLANs, legacy firewall
-        rules, port profiles, static DHCP reservations, and port forwards
-        into one versioned JSON envelope. It does NOT capture Zone-Based
-        Firewall policies or zones, static routes, traffic rules and
-        routes, content filters, dynamic DNS, AP groups, or site settings;
-        the envelope's ``not_included`` field lists each, so a backup is
-        never mistaken for a whole-site snapshot. Transient state (clients,
-        devices, observability) is excluded by design.
+        rules, port profiles, static DHCP reservations, port forwards, and
+        the Zone-Based Firewall into one versioned JSON envelope.
+        ``firewall_policies`` holds every policy an operator created
+        (controller-managed ones, including port-forward mirrors, are left
+        out), with zones and networks named rather than referenced by id and
+        runtime counters such as ``hits`` dropped; ``firewall_zones`` holds
+        the zones those policies use, by name, with the networks in each
+        (and a count of members it could not name). A zone-wide policy is
+        backed up but ``restore_config`` will not restore it. A site on
+        legacy rulesets gets two empty sections. It does NOT capture
+        static routes, traffic rules and routes, content filters, dynamic
+        DNS, AP groups, or site settings; the envelope's ``not_included``
+        field lists each, so a backup is never mistaken for a whole-site
+        snapshot. Transient state (clients, devices, observability) is
+        excluded by design.
 
         Secret handling: every sensitive field on a WLAN or network record
         is replaced with the sentinel ``<redacted-on-backup>`` — WLAN
@@ -782,7 +839,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             return err(str(exc))
 
         try:
-            resources = await _snapshot(backend)
+            resources, zone_read_error = await _snapshot(backend)
         except UniFiError as exc:
             logger.exception("backup_config: snapshot failed")
             return err(str(exc))
@@ -801,7 +858,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             "controller": controller,
             "ts": datetime.now(tz=UTC).isoformat(),
             "secrets_stripped": secrets_stripped,
-            "not_included": dict(NOT_INCLUDED),
+            "not_included": _not_included(zone_read_error),
             "resources": resources,
         }
         # Audit emits the wrapped result, which is the envelope. To avoid
@@ -827,7 +884,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     async def restore_config(
         backup_json: BoundedJson,
         controller: str = "default",
-        dry_run: bool = False,
+        dry_run: bool = True,
     ) -> str:
         """Restore controller state from a ``backup_config`` envelope.
 
@@ -836,9 +893,10 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
           an ordered create/delete plan. Deletes run first (firewall_rules,
           port_forwards, wlans, dhcp_leases, port_profiles, networks);
           creates run second in the reverse order, with firewall groups
-          after networks. No update path in this version: drifted fields
-          show up as a delete + create pair (or stay put when names match).
-          Extra firewall groups are never deleted.
+          after networks, and zone policies last. Only zone policies are
+          ever updated in place; for everything else drifted fields show up
+          as a delete + create pair (or stay put when names match). Extra
+          firewall groups are never deleted.
         - References: a recreated network or group gets a new id, and every
           restored record pointing at one (WLAN, lease, port profile,
           firewall rule) is remapped to it. A lease pointing at its network
@@ -853,10 +911,31 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
           legacy id it had. A record whose reference cannot
           be resolved, and any name both sides hold with a duplicate on
           either, appears as a ``blocked`` action and is not written.
-        - Not covered: Zone-Based Firewall policies and zones, routes,
-          traffic rules, content filters, dynamic DNS, AP groups and site
-          settings are not in a backup and are left as they are; the plan
-          lists them under ``not_restored``.
+        - Zone-Based Firewall policies: matched by name plus source and
+          destination zone (names repeat across zone pairs). A missing
+          policy is created and a changed one updated, through the
+          Integration API, with zones and networks mapped by name to this
+          site's ids. An update puts every field back to the backup's
+          value, clearing a description, connection-state filter or IPsec
+          filter the backup's policy does not have. A controller-managed
+          policy is never created, changed or deleted, zones are never
+          written, and a policy on the site but not in the backup is
+          reported, never deleted. A policy pointing at a zone or network
+          this site lacks, one the Integration API body cannot express
+          exactly (a schedule, an IPsec or group match), one whose site copy
+          runs on a schedule, and any name plus zone pair the backup holds
+          more than once is a ``blocked`` action and is not written. So is
+          a policy naming a network that is not in that zone here.
+        - Zone-wide policies are backed up but never restored: a side that
+          matches every network in a zone (no network or address list)
+          covers whatever that zone holds, and restore cannot prove a zone
+          matched by name holds the same networks here. Each is ``blocked``
+          with a pointer to ``create_firewall_policy``. A
+          backup with no ``firewall_policies`` section leaves every policy
+          as it is.
+        - Not covered: routes, traffic rules, content filters, dynamic DNS,
+          AP groups and site settings are not in a backup and are left as
+          they are; the plan lists them under ``not_restored``.
         - Cross-controller restore: if the envelope's ``controller``
           differs from the target, the restore proceeds and the response
           includes a warning.
@@ -866,13 +945,24 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
           known-string SSID is never broadcast and a VPN tunnel is never
           stood up on a public pre-shared key. The operator must reset each
           secret and re-enable manually.
-        - Mutates controller state. Use dry_run=True to preview the change
-          without applying.
+        - Defaults to a dry run: a call with ``dry_run`` left at its default
+          returns the plan (``would_apply``) and writes nothing and mints no
+          token. Pass ``dry_run=False`` to get a preview with a one-time
+          token; nothing is written until ``confirm_destructive_action``
+          runs it.
+        - At confirm, a zone policy the plan updates is re-read first; one
+          that changed since the preview is refused (not written, counted
+          in the summary and named in a warning).
+        - Zone policy order: restore does not reorder. The plan warns when
+          it creates or updates in a zone pair that holds other user
+          policies, and when matched policies sit in a different order than
+          in the backup, since the first match wins.
         - Rollback: if any sub-step fails, all prior creates are reverted
-          in reverse order and the response includes ``partial`` and
-          ``rolled_back`` keys. Deletes that already ran are NOT undone
-          (no copy was kept); the response reports them so the operator
-          can re-run with ``dry_run`` to inspect the residual gap.
+          in reverse order, updated zone policies are put back, and the
+          response includes ``partial`` and ``rolled_back`` keys. Deletes
+          that already ran are NOT undone (no copy was kept); the response
+          reports them so the operator can re-run with ``dry_run`` to
+          inspect the residual gap.
 
         Zone-based sites: legacy ``firewall_rules`` in the backup are not
         replayed onto a site running the Zone-Based Firewall. They appear in
@@ -887,8 +977,8 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             backup_json: The envelope JSON string from ``backup_config``.
             controller: Name of the UniFi controller to target. Defaults to
                 ``"default"``.
-            dry_run: Preview the change without applying it. Returns the
-                predicted change set.
+            dry_run: ``True`` (default) returns the plan and writes nothing.
+                ``False`` returns a preview with a confirm token.
         """
         # Parse envelope
         try:
@@ -932,6 +1022,19 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 cleaned.append(item)
             backup_resources[rtype] = cleaned
 
+        # Zone-Based Firewall sections. Absent means a backup taken before
+        # policies were carried (or on a console whose zone lists could not
+        # be read): restore then writes no policy at all.
+        zbf_sections: dict[str, list[dict[str, Any]]] = {}
+        for section_name in (zbf.POLICIES, zbf.ZONES):
+            if section_name not in backup_resources_raw:
+                continue
+            section = backup_resources_raw[section_name]
+            if not isinstance(section, list) or not all(isinstance(i, dict) for i in section):
+                return err(f"backup resources.{section_name} must be a list of objects")
+            zbf_sections[section_name] = list(section)
+        policy_specs = zbf_sections.get(zbf.POLICIES)
+
         warnings: list[str] = []
         envelope_controller = envelope.get("controller")
         if envelope_controller and envelope_controller != controller:
@@ -960,10 +1063,16 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             )
 
         warnings.append(
-            "A backup does not contain Zone-Based Firewall policies or zones, "
-            "routes, traffic rules, content filters, dynamic DNS, AP groups or "
-            "site settings; restore leaves those as they are (see not_restored)."
+            "A backup does not contain routes, traffic rules, content filters, "
+            "dynamic DNS, AP groups or site settings; restore leaves those as "
+            "they are (see not_restored)."
         )
+        if policy_specs is None:
+            warnings.append(
+                "This backup has no firewall_policies section (taken before zone "
+                "policies were backed up, or the controller's zone lists could not be "
+                "read). Zone-Based Firewall policies on the site are left as they are."
+            )
         if "firewall_groups" not in backup_resources_raw:
             warnings.append(
                 "This backup has no firewall_groups section (taken before groups "
@@ -1033,6 +1142,31 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                     "still need with create_firewall_policy."
                 )
 
+        # Zone-Based Firewall policies, after everything else: they point at
+        # networks by name, and are resolved against the site as it is now.
+        if policy_specs is not None:
+            try:
+                policy_plan, policy_warnings = await zbf.plan_policies(
+                    backend,
+                    policy_specs,
+                    zbf_sections.get(zbf.ZONES, []),
+                    networks_created={
+                        _norm(a.get("name"))
+                        for a in plan
+                        if a["type"] == "networks" and a["action"] == "create"
+                    },
+                    networks_deleted={
+                        _norm(a.get("name"))
+                        for a in plan
+                        if a["type"] == "networks" and a["action"] == "delete"
+                    },
+                )
+            except UniFiError as exc:
+                logger.exception("restore_config: zone policy planning failed")
+                return err(str(exc))
+            plan.extend(policy_plan)
+            warnings.extend(policy_warnings)
+
         blocked = [a for a in plan if a["action"] == "blocked"]
         if blocked:
             listed = "; ".join(f"{a['type']} {a['name']!r}: {a['reason']}" for a in blocked)
@@ -1052,6 +1186,8 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                     "summary": (
                         f"{sum(1 for a in plan if a['action'] == 'create')} "
                         "create(s), "
+                        f"{sum(1 for a in plan if a['action'] == 'update')} "
+                        "update(s), "
                         f"{sum(1 for a in plan if a['action'] == 'delete')} "
                         f"delete(s), {len(blocked)} blocked"
                     ),
@@ -1101,13 +1237,45 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                     + " no longer exist. Nothing was applied; run restore_config again."
                 )
 
+            # The zone-based check above ran at preview time. A site can migrate
+            # to zones before the token is confirmed, and a legacy rule write
+            # there must not run, so look again when the plan holds any.
+            if any(
+                a["type"] == "firewall_rules" and a["action"] in ("create", "delete") for a in plan
+            ):
+                try:
+                    now_zone_based = await site_is_zone_based(backend)
+                except UniFiError as exc:
+                    logger.exception("restore_config: firewall model re-check failed")
+                    return err(str(exc))
+                if now_zone_based:
+                    return err(
+                        "the site changed since the preview: it now uses the Zone-Based "
+                        "Firewall, which has no legacy firewall rules. Nothing was applied; "
+                        "run restore_config again."
+                    )
+
             # Apply. Track creates so rollback can undo them. Track executed
             # deletes for honest reporting (no undo path — no copy was kept).
             created_for_rollback: list[tuple[str, dict[str, Any]]] = []
+            # Zone policies this restore updated, with the body they had, so
+            # rollback can put each back.
+            updated_for_rollback: list[tuple[str, dict[str, Any]]] = []
             applied: list[dict[str, Any]] = []
 
             async def _rollback() -> list[dict[str, Any]]:
                 actions: list[dict[str, Any]] = []
+                for policy_id, before in reversed(updated_for_rollback):
+                    try:
+                        await backend.update_v1_firewall_policy(policy_id, before)
+                    except UniFiError as exc:
+                        logger.error(
+                            "restore rollback of a zone policy update failed",
+                            extra={"id": policy_id, "error": str(exc)},
+                        )
+                        actions.append({"type": zbf.POLICIES, "id": policy_id, "reverted": False})
+                        continue
+                    actions.append({"type": zbf.POLICIES, "id": policy_id, "reverted": True})
                 for rtype, record in reversed(created_for_rollback):
                     resource_id = record.get("_id")
                     if not resource_id:
@@ -1155,6 +1323,41 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                         applied.append({**action, "result": "deleted" if ok else "missing"})
                         continue
 
+                    if action["action"] == "update" and action["type"] == zbf.POLICIES:
+                        # A user-defined zone policy already on the site: the
+                        # plan carries the whole PUT body and the body before.
+                        # The body was built from the policy as the preview
+                        # read it, and the PUT replaces the whole policy. An
+                        # edit made since would be overwritten unseen, so a
+                        # policy that changed is refused, not written.
+                        policy_id = str(action["id"])
+                        now = await backend.get_v1_firewall_policy(policy_id)
+                        if now is None or zp.put_body(now, {}) != action["before"]:
+                            applied.append(
+                                {
+                                    **action,
+                                    "result": "refused",
+                                    "reason": (
+                                        "the policy changed since the preview (or is gone); "
+                                        "nothing was written to it. Run restore_config again."
+                                    ),
+                                }
+                            )
+                            continue
+                        await backend.update_v1_firewall_policy(policy_id, action["payload"])
+                        updated_for_rollback.append((policy_id, action["before"]))
+                        kept = zbf.reset_kept(
+                            await backend.get_v1_firewall_policy(policy_id), action
+                        )
+                        if kept:
+                            raise UniFiError(
+                                f"restore_config: zone policy {action['name']!r} still holds "
+                                f"{', '.join(kept)} after a full PUT that left it out; the "
+                                "console did not reset it"
+                            )
+                        applied.append({**action, "result": "updated"})
+                        continue
+
                     if action["action"] == "create":
                         rtype = action["type"]
                         payload = dict(action["payload"])
@@ -1170,6 +1373,10 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                         if rtype in _REFERENCED_TYPES:
                             source_refs = _source_refs(rtype, payload)
                             payload.pop("_id", None)
+                        elif rtype == zbf.POLICIES:
+                            # Resolved by name against the site at plan time;
+                            # the body is already in v1 shape with v1 ids.
+                            pass
                         else:
                             # Every network or group reference is rewritten to
                             # the id its target has now. This used to cover a
@@ -1181,8 +1388,11 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
 
                         # The controller assigns these to the record it
                         # creates; the source's values belong to the source.
-                        for key in _CONTROLLER_ASSIGNED:
-                            payload.pop(key, None)
+                        # A zone policy body is already in v1 shape and is
+                        # sent as the plan built it.
+                        if rtype != zbf.POLICIES:
+                            for key in _CONTROLLER_ASSIGNED:
+                                payload.pop(key, None)
 
                         if rtype in ("wlans", "networks"):
                             payload = _force_disable_if_redacted(payload)
@@ -1213,17 +1423,28 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                     }
                 )
 
+            # A policy refused at confirm changed nothing; say so where the
+            # caller looks first, not only in the per-action list.
+            refused = [a for a in applied if a.get("result") == "refused"]
+            final_warnings = list(warnings) + [
+                f"Zone policy {a.get('name')!r} ({a.get('source_zone')} -> "
+                f"{a.get('destination_zone')}) was refused: it changed since the preview, "
+                "and nothing was written to it. Run restore_config again."
+                for a in refused
+            ]
             return format_json(
                 {
                     "controller": controller,
-                    "warnings": warnings,
+                    "warnings": final_warnings,
                     "applied": applied,
                     "summary": (
                         f"applied {len(applied)} action(s) "
                         f"({sum(1 for a in applied if a.get('result') == 'created')} "
                         "created, "
+                        f"{sum(1 for a in applied if a.get('result') == 'updated')} "
+                        "updated, "
                         f"{sum(1 for a in applied if a.get('result') == 'deleted')} "
-                        "deleted)"
+                        f"deleted, {len(refused)} refused)"
                     ),
                 }
             )
@@ -1233,6 +1454,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             controller=controller,
             resource={
                 "creates": sum(1 for a in plan if a["action"] == "create"),
+                "updates": sum(1 for a in plan if a["action"] == "update"),
                 "deletes": sum(1 for a in plan if a["action"] == "delete"),
                 "blocked": len(blocked),
                 "warnings": warnings,

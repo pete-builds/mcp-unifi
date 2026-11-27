@@ -8,6 +8,9 @@ draft: false
 
 Preview deletion of a firewall rule.
 
+On Zone-Based Firewall sites (every site on UniFi Network 11) this tool
+refuses; use delete_firewall_policy.
+
 v0.7.0: this tool no longer deletes on its own. It returns a preview
 envelope with a ``token``; call ``confirm_destructive_action(token)``
 to commit the delete. Tokens expire after 5 minutes.

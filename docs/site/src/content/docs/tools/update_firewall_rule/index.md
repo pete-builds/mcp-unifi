@@ -8,6 +8,9 @@ draft: false
 
 Patch fields on an existing firewall rule.
 
+On Zone-Based Firewall sites (every site on UniFi Network 11) this tool
+refuses; use update_firewall_policy.
+
 Side effects:
 - Modifies the named rule in place. Only fields supplied in
   ``updates`` change; everything else is preserved.

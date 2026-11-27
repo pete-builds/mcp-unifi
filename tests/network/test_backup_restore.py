@@ -49,7 +49,7 @@ async def _restore_applying(server, backup_json: str):
     real two-step flow here also means these tests exercise the gate rather than
     bypassing it.
     """
-    preview = await _call(server, "restore_config", {"backup_json": backup_json})
+    preview = await _call(server, "restore_config", {"backup_json": backup_json, "dry_run": False})
     assert preview.get("preview") is True, f"expected a preview envelope, got {preview}"
     return await _call(server, "confirm_destructive_action", {"token": preview["token"]})
 
@@ -146,11 +146,17 @@ async def test_backup_envelope_shape(stub_server: FastMCP) -> None:
         "port_profiles",
         "dhcp_leases",
         "port_forwards",
+        "firewall_policies",
+        "firewall_zones",
     }
     # Seed state always carries at least one of each. (DHCP leases seed has
-    # one entry; port_forwards seed has one entry.)
+    # one entry; port_forwards seed has one entry.) The seed site is on legacy
+    # rulesets, so it has no operator zone policies and no zones they use.
     for rtype, items in resources.items():
         assert isinstance(items, list), f"{rtype} must be a list"
+        if rtype in ("firewall_policies", "firewall_zones"):
+            assert items == []
+            continue
         assert len(items) >= 1, f"{rtype} unexpectedly empty in seed"
 
 
@@ -1040,7 +1046,9 @@ async def test_restore_config_requires_confirmation(
     )
     before = {n["name"] for n in fresh_state.list_networks()}
 
-    preview = await _call(fresh_server, "restore_config", {"backup_json": backup_json})
+    preview = await _call(
+        fresh_server, "restore_config", {"backup_json": backup_json, "dry_run": False}
+    )
     assert preview["preview"] is True
     assert preview["confirm_with"] == "confirm_destructive_action"
     assert len(preview["token"]) == 36
@@ -1058,7 +1066,9 @@ async def test_restore_config_token_is_single_use(
     fresh_state: StubState, fresh_server: FastMCP
 ) -> None:
     envelope = await _call(fresh_server, "backup_config", {})
-    preview = await _call(fresh_server, "restore_config", {"backup_json": json.dumps(envelope)})
+    preview = await _call(
+        fresh_server, "restore_config", {"backup_json": json.dumps(envelope), "dry_run": False}
+    )
     await _call(fresh_server, "confirm_destructive_action", {"token": preview["token"]})
     second = await _call(fresh_server, "confirm_destructive_action", {"token": preview["token"]})
     assert "error" in second
@@ -1269,7 +1279,9 @@ async def test_restore_refuses_when_a_matched_network_is_gone_at_confirm(
     backup_json = json.dumps(await _call(fresh_server, "backup_config", {}))
     fresh_state.port_profiles = [p for p in fresh_state.port_profiles if p["name"] != "IoT-Access"]
 
-    preview = await _call(fresh_server, "restore_config", {"backup_json": backup_json})
+    preview = await _call(
+        fresh_server, "restore_config", {"backup_json": backup_json, "dry_run": False}
+    )
     assert preview["preview"] is True
 
     # Someone deletes and recreates IoT between the preview and the confirm.
@@ -1375,8 +1387,29 @@ async def test_restore_deletes_every_extra_sharing_a_name_the_backup_lacks(
 async def test_backup_states_what_it_does_not_contain(stub_server: FastMCP) -> None:
     envelope = await _call(stub_server, "backup_config", {})
     assert envelope["not_included"] == NOT_INCLUDED
-    assert "firewall_policies" in envelope["not_included"]
-    assert "firewall_zones" in envelope["not_included"]
+    # Zone-Based Firewall policies and zones are carried since Network 11
+    # moved every site onto them.
+    assert "firewall_policies" not in envelope["not_included"]
+    assert "firewall_zones" not in envelope["not_included"]
+    assert "static_routes" in envelope["not_included"]
+
+
+async def test_backup_names_the_zone_sections_when_they_cannot_be_read(
+    fresh_state: StubState, fresh_server: FastMCP
+) -> None:
+    """A console without the v2 zone routes keeps the rest of its backup."""
+
+    def _boom() -> list[dict[str, Any]]:
+        raise UniFiError("UniFi returned 404")
+
+    fresh_state.list_firewall_policies = _boom  # type: ignore[method-assign]
+    envelope = await _call(fresh_server, "backup_config", {})
+    assert "error" not in envelope
+    assert "firewall_policies" not in envelope["resources"]
+    assert "firewall_zones" not in envelope["resources"]
+    assert "404" in envelope["not_included"]["firewall_policies"]
+    assert "404" in envelope["not_included"]["firewall_zones"]
+    assert envelope["resources"]["networks"]
 
 
 async def test_restore_plan_repeats_what_it_does_not_restore(
@@ -1385,9 +1418,11 @@ async def test_restore_plan_repeats_what_it_does_not_restore(
     backup_json = json.dumps(await _call(fresh_server, "backup_config", {}))
     dry = await _call(fresh_server, "restore_config", {"backup_json": backup_json, "dry_run": True})
     assert dry["not_restored"] == NOT_INCLUDED
-    assert any("Zone-Based Firewall policies" in w for w in dry["warnings"])
+    assert any("routes, traffic rules" in w for w in dry["warnings"])
 
-    preview = await _call(fresh_server, "restore_config", {"backup_json": backup_json})
+    preview = await _call(
+        fresh_server, "restore_config", {"backup_json": backup_json, "dry_run": False}
+    )
     assert preview["resource"]["not_restored"] == NOT_INCLUDED
     assert preview["resource"]["blocked"] == 0
 
@@ -1508,8 +1543,10 @@ async def test_restore_leaves_alone_every_type_the_backup_has_no_section_for(
     assert not [a for a in dry["would_apply"] if a["type"] != kept], dry["would_apply"]
     warning = next(w for w in dry["warnings"] if "no section for" in w)
     for rtype in dropped:
-        if rtype != "firewall_groups":
+        # Groups and zone policies have warnings of their own.
+        if rtype not in ("firewall_groups", "firewall_policies", "firewall_zones"):
             assert rtype in warning
+    assert any("no firewall_policies section" in w for w in dry["warnings"])
 
     result = await _restore_applying(fresh_server, json.dumps(envelope))
     assert "error" not in result, result

@@ -402,7 +402,9 @@ async def test_restore_remaps_a_legacy_bound_lease_onto_a_target_with_other_ids(
     )
     assert not [a for a in dry["would_apply"] if a["action"] == "blocked"], dry["would_apply"]
 
-    preview = await _call(server, "restore_config", {"backup_json": json.dumps(envelope)})
+    preview = await _call(
+        server, "restore_config", {"backup_json": json.dumps(envelope), "dry_run": False}
+    )
     result = await _call(server, "confirm_destructive_action", {"token": preview["token"]})
     assert "error" not in result, result
 
@@ -433,7 +435,9 @@ async def test_restore_never_sends_legacy_or_external_id_in_a_create(
         return original(payload)
 
     state.create_network = _spy  # type: ignore[method-assign]
-    preview = await _call(server, "restore_config", {"backup_json": json.dumps(envelope)})
+    preview = await _call(
+        server, "restore_config", {"backup_json": json.dumps(envelope), "dry_run": False}
+    )
     result = await _call(server, "confirm_destructive_action", {"token": preview["token"]})
     assert "error" not in result, result
 
