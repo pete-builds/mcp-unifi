@@ -38,6 +38,7 @@ _NET_WAN_ID = "c1a2b3d4-0e1f-4a2b-9c3d-4e5f6a7b8c9d"
 _NET_WAN_LEGACY_ID = "6a0525dd18ec98252c8a08cd"
 _WLAN_HOME_ID = "4f1e2d3c-5b6a-4978-8a9b-0c1d2e3f4a5b"
 _WLAN_HOME_LEGACY_ID = "6a0525dd18ec98252c8a08ce"
+_AP_GROUP_DEFAULT_ID = "e214de6d-20bc-4237-866b-5a65d5901460"
 _ZONE_LAN_ID = "9add6b63-aca0-4331-be66-83f6c01e126e"
 _ZONE_WAN_ID = "d7e8f9a0-1b2c-4d3e-8f4a-5b6c7d8e9f0a"
 _SETTING_GUEST_ACCESS_ID = "e2f3a4b5-6c7d-4e8f-9a0b-1c2d3e4f5a6b"
@@ -437,9 +438,7 @@ def _seed_ap_groups() -> list[UniFiRecord]:
     """
     return [
         {
-            "_id": _NET_DEFAULT_ID,
-            "legacy_id": _NET_DEFAULT_LEGACY_ID,
-            "firewall_zone_id": _ZONE_LAN_ID,
+            "_id": _AP_GROUP_DEFAULT_ID,
             "name": "Default",
             "attr_hidden_id": "default",
             "device_macs": ["f4:e2:c6:00:00:02"],

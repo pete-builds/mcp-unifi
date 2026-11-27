@@ -116,3 +116,19 @@ def test_zones_and_networks_reference_each_other_by_uuid(stub_state: StubState) 
             assert net["firewall_zone_id"] in zone_ids
             zone = next(z for z in stub_state.firewall_zones if z["_id"] == net["firewall_zone_id"])
             assert net["_id"] in zone["network_ids"]
+
+
+def test_seed_ids_are_unique_across_every_collection(stub_state: StubState) -> None:
+    """Each record is its own row on a real console; two seeds sharing an id is a stub bug."""
+    seen: dict[str, str] = {}
+    for name, rec in _all_records(stub_state):
+        rid = str(rec["_id"])
+        assert rid not in seen, f"{name} reuses the _id of {seen[rid]}: {rid}"
+        seen[rid] = name
+
+
+def test_ap_group_is_its_own_record(stub_state: StubState) -> None:
+    group = stub_state.list_ap_groups()[0]
+    assert "legacy_id" not in group
+    assert "firewall_zone_id" not in group
+    assert group["_id"] not in {n["_id"] for n in stub_state.networks}
