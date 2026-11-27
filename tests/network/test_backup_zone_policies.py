@@ -1136,6 +1136,8 @@ async def test_an_always_schedule_in_any_spelling_does_not_hold_back(
         ({"type": "ALWAYS"}, "{'type': 'ALWAYS'}"),
         ({"mode": None}, "{'mode': None}"),
         ("WEEKDAYS", "'WEEKDAYS'"),
+        # An empty object is not known to mean always: live records carry a mode.
+        ({}, "{}"),
     ],
 )
 async def test_an_unrecognised_schedule_holds_back_quoting_what_the_site_returned(
@@ -1268,3 +1270,98 @@ async def test_a_side_that_builds_to_no_filter_is_held_back(
     await _apply(target_server, envelope)
     sent = {args[0]["name"] for method, args in spy.calls if method == "create_policy"}
     assert sent == {"Allow TRUSTED to MGMT", "Block IoT to TRUSTED"}
+
+
+# ---------------------------------------------------------------------------
+# Review round 5 (#265): backup-side schedule and network-name fidelity
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "schedule",
+    [{"type": "WEEKLY"}, {}, {"mode": None}, "WEEKDAYS"],
+    ids=["no-mode", "empty", "null-mode", "other-string"],
+)
+async def test_a_backed_up_schedule_not_known_to_mean_always_is_held_back(
+    source_server: FastMCP,
+    source_state: StubState,
+    target_server: FastMCP,
+    target_state: StubState,
+    schedule: Any,
+) -> None:
+    """A schedule object without a mode used to read as always-on, so the
+    policy came back without its schedule."""
+    policy = next(p for p in source_state.firewall_policies if p["name"] == "Block IoT to TRUSTED")
+    policy["schedule"] = schedule
+    envelope = await _backup(source_server)
+    spy = WriteSpy(target_state)
+
+    dry = await _dry(target_server, envelope)
+    mine = [a for a in _policy_actions(dry["would_apply"]) if a["name"] == "Block IoT to TRUSTED"]
+    assert [a["action"] for a in mine] == ["blocked"]
+    assert repr(schedule) in mine[0]["reason"]
+
+    await _apply(target_server, envelope)
+    sent = {args[0]["name"] for method, args in spy.calls if method == "create_policy"}
+    assert "Block IoT to TRUSTED" not in sent
+
+
+@pytest.mark.parametrize(
+    "schedule",
+    [None, "ALWAYS", "always", {"mode": "always"}, {"mode": "ALWAYS", "repeat_on_days": []}],
+)
+async def test_a_backed_up_always_schedule_in_any_spelling_restores(
+    source_server: FastMCP,
+    source_state: StubState,
+    target_server: FastMCP,
+    schedule: Any,
+) -> None:
+    policy = next(p for p in source_state.firewall_policies if p["name"] == "Block IoT to TRUSTED")
+    policy["schedule"] = schedule
+    envelope = await _backup(source_server)
+    dry = await _dry(target_server, envelope)
+    mine = [a for a in _policy_actions(dry["would_apply"]) if a["name"] == "Block IoT to TRUSTED"]
+    assert [a["action"] for a in mine] == ["create"]
+
+
+def test_the_backup_and_site_schedule_readers_are_one_function() -> None:
+    from mcp_unifi.modules.network import _backup_zbf as zbf
+
+    for value in (None, "ALWAYS", {"mode": "Always"}):
+        assert zbf.schedule_is_always(value)
+    for value in ({}, {"type": "WEEKLY"}, {"mode": None}, "WEEKDAYS", 0):
+        assert not zbf.schedule_is_always(value)
+
+
+async def test_a_network_name_shared_on_the_source_site_holds_its_policies_back(
+    source_server: FastMCP,
+    source_state: StubState,
+    target_server: FastMCP,
+    target_state: StubState,
+) -> None:
+    """The backup stores networks by name. With two networks called MGMT on
+    the source, a restore onto a site with one would write to whichever
+    network has the name there, which may be the wrong one."""
+    source_state.networks.append(
+        {
+            "_id": "second-mgmt",
+            "name": "mgmt ",
+            "purpose": "corporate",
+            "ip_subnet": "10.0.2.1/24",
+            "enabled": True,
+        }
+    )
+    envelope = await _backup(source_server)
+    backed = {p["name"]: p for p in envelope["resources"]["firewall_policies"]}
+    assert any("shares its name" in u for u in backed["Allow MGMT DNS"]["unresolved"])
+    spy = WriteSpy(target_state)
+
+    dry = await _dry(target_server, envelope)
+    blocked = {a["name"]: a["reason"] for a in _policy_actions(dry["would_apply"], "blocked")}
+    assert set(blocked) == {"Allow TRUSTED to MGMT", "Allow MGMT DNS"}
+    for reason in blocked.values():
+        assert "'MGMT'" in reason and "shares its name" in reason
+
+    await _apply(target_server, envelope)
+    sent = {args[0]["name"] for method, args in spy.calls if method == "create_policy"}
+    assert sent == set(USER_NAMES) - set(blocked)

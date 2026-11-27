@@ -155,12 +155,16 @@ RESET_BY_OMISSION: tuple[str, ...] = ("connectionStateFilter", "ipsecFilter")
 
 
 def schedule_is_always(value: Any) -> bool:
-    """True when a v1 ``schedule`` readback means "always".
+    """True when a policy ``schedule`` is known to mean "always".
 
-    Absent, the plain string ``"ALWAYS"`` or an object whose ``mode`` is
-    ``"ALWAYS"``, in any case. Anything else is not known to mean always.
+    The one reader for both sides of a restore: the v2 schedule a backup
+    carries and the v1 schedule a site returns. Always means absent
+    (``None``), the plain string ``"ALWAYS"``, or an object whose ``mode`` is
+    ``"ALWAYS"``, in any case. Anything else is not known to mean always,
+    including an empty object or one without a ``mode``: live records carry
+    a mode, so a missing one is not read as always-on.
     """
-    if value in (None, {}):
+    if value is None:
         return True
     if isinstance(value, str):
         return value.strip().upper() == "ALWAYS"
@@ -241,6 +245,20 @@ def norm(value: object) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _shared_names(records: list[dict[str, Any]]) -> set[str]:
+    """Normalised names held by more than one record.
+
+    Restore matches networks by name, so a reference to a network whose name
+    another network on the same site also has cannot be carried by name.
+    """
+    seen: dict[str, int] = {}
+    for rec in records:
+        name = rec.get("name") if isinstance(rec, dict) else None
+        if isinstance(name, str) and norm(name):
+            seen[norm(name)] = seen.get(norm(name), 0) + 1
+    return {name for name, count in seen.items() if count > 1}
+
+
 def _names_by_id(records: list[dict[str, Any]]) -> dict[str, str]:
     """Map every id a record is known by (``_id``, ``legacy_id``) to its name."""
     out: dict[str, str] = {}
@@ -261,10 +279,15 @@ def _portable_endpoint(
     *,
     zone_names: dict[str, str],
     network_names: dict[str, str],
+    shared_networks: set[str],
     group_names: dict[str, str],
     problems: list[str],
 ) -> dict[str, Any]:
-    """One ``source``/``destination`` with every id swapped for a name."""
+    """One ``source``/``destination`` with every id swapped for a name.
+
+    A network whose name is shared with another network on the site is
+    still named, and listed as a problem so restore holds the policy back.
+    """
     out: dict[str, Any] = {}
     for key, value in endpoint.items():
         if key == "zone_id":
@@ -278,8 +301,14 @@ def _portable_endpoint(
                 found = network_names.get(nid) if isinstance(nid, str) else None
                 if found is None:
                     problems.append(f"{side} network {nid!r} is not a named network on the site")
-                else:
-                    names.append(found)
+                    continue
+                if norm(found) in shared_networks:
+                    problems.append(
+                        f"{side} network {found!r} shares its name with another network on "
+                        "the backed-up site; restore matches networks by name and could "
+                        "write to the wrong one"
+                    )
+                names.append(found)
             out["network_names"] = names
         elif key.endswith(("_group_id", "_group_ids")):
             plural = key.endswith("_ids")
@@ -322,6 +351,7 @@ def backup_sections(
     }
     zone_names = {zid: str(z.get("name")) for zid, z in zone_by_id.items() if z.get("name")}
     network_names = _names_by_id(networks)
+    shared_networks = _shared_names(networks)
     group_names = _names_by_id(groups)
 
     kept: list[dict[str, Any]] = []
@@ -343,6 +373,7 @@ def backup_sections(
                     value,
                     zone_names=zone_names,
                     network_names=network_names,
+                    shared_networks=shared_networks,
                     group_names=group_names,
                     problems=problems,
                 )
@@ -512,11 +543,11 @@ def translate(spec: dict[str, Any]) -> _Intent:
     if _is_set(spec.get("match_ip_sec")):
         raise Untranslatable("sets match_ip_sec (an IPsec match)")
     schedule = spec.get("schedule")
-    if schedule is not None and (
-        not isinstance(schedule, dict) or schedule.get("mode", "ALWAYS") != "ALWAYS"
-    ):
-        mode = schedule.get("mode") if isinstance(schedule, dict) else schedule
-        raise Untranslatable(f"schedule mode is {mode!r}; only ALWAYS can be written")
+    if not schedule_is_always(schedule):
+        raise Untranslatable(
+            f"schedule {schedule!r} is not known to mean always; only an always-on "
+            "policy can be written"
+        )
 
     state_type = spec.get("connection_state_type") or "ALL"
     raw_states = spec.get("connection_states") or []
