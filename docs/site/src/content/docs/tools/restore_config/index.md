@@ -13,18 +13,29 @@ Side effects:
   an ordered create/delete plan. Deletes run first (firewall_rules,
   port_forwards, wlans, dhcp_leases, port_profiles, networks);
   creates run second in the reverse order, with firewall groups
-  after networks. No update path in this version: drifted fields
-  show up as a delete + create pair (or stay put when names match).
-  Extra firewall groups are never deleted.
+  after networks, and zone policies last. Only zone policies are
+  ever updated in place; for everything else drifted fields show up
+  as a delete + create pair (or stay put when names match). Extra
+  firewall groups are never deleted.
 - References: a recreated network or group gets a new id, and every
   restored record pointing at one (WLAN, lease, port profile,
   firewall rule) is remapped to it. A record whose reference cannot
   be resolved, and any name both sides hold with a duplicate on
   either, appears as a ``blocked`` action and is not written.
-- Not covered: Zone-Based Firewall policies and zones, routes,
-  traffic rules, content filters, dynamic DNS, AP groups and site
-  settings are not in a backup and are left as they are; the plan
-  lists them under ``not_restored``.
+- Zone-Based Firewall policies: matched by name plus source and
+  destination zone (names repeat across zone pairs). A missing
+  policy is created and a changed one updated, through the
+  Integration API, with zones and networks mapped by name to this
+  site's ids. A controller-managed policy is never created, changed
+  or deleted, zones are never written, and a policy on the site but
+  not in the backup is reported, never deleted. A policy pointing at
+  a zone or network this site lacks, or one the Integration API body
+  cannot express exactly (a schedule, an IPsec or group match), is a
+  ``blocked`` action and is not written. A backup with no
+  ``firewall_policies`` section leaves every policy as it is.
+- Not covered: routes, traffic rules, content filters, dynamic DNS,
+  AP groups and site settings are not in a backup and are left as
+  they are; the plan lists them under ``not_restored``.
 - Cross-controller restore: if the envelope's ``controller``
   differs from the target, the restore proceeds and the response
   includes a warning.
@@ -37,8 +48,8 @@ Side effects:
 - Mutates controller state. Use dry_run=True to preview the change
   without applying.
 - Rollback: if any sub-step fails, all prior creates are reverted
-  in reverse order and the response includes ``partial`` and
-  ``rolled_back`` keys. Deletes that already ran are NOT undone
+  in reverse order, updated zone policies are put back, and the
+  response includes ``partial`` and ``rolled_back`` keys. Deletes that already ran are NOT undone
   (no copy was kept); the response reports them so the operator
   can re-run with ``dry_run`` to inspect the residual gap.
 
