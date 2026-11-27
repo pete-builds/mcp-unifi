@@ -1020,6 +1020,10 @@ async def test_restore_config_token_is_single_use(
     assert "error" in second
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Network 11: lease network_id is the network's legacy_id; fixed in the legacy_id PR",
+)
 async def test_restore_recreates_a_lease_whose_user_record_survived(
     stub_server: FastMCP, stub_state: StubState
 ) -> None:
