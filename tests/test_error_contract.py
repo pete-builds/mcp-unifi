@@ -122,6 +122,17 @@ def _assert_envelope(result: Any, *, where: str) -> dict[str, Any]:
     return dict(payload)
 
 
+MANIFEST_PATH = Path(__file__).resolve().parent.parent / "docs/site/src/data/tool-manifest.json"
+
+
+def _manifest_tool_names() -> set[str]:
+    """Tool names from the committed manifest (every module, generated from the server)."""
+    data = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    names = {str(tool["name"]) for tool in data["tools"]}
+    assert len(names) == data["tool_count"]
+    return names
+
+
 @pytest.fixture
 def all_modules(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MCP_UNIFI_MODULES_ENABLED", ALL_MODULES)
@@ -192,7 +203,16 @@ async def test_every_tool_reports_a_domain_error_with_the_envelope_and_is_error(
 
     assert failures == [], f"{len(failures)} tool(s) broke the error contract: {failures}"
     # Coverage asserts itself: nothing registered was skipped.
-    assert exercised == set(registered), sorted(set(registered) - exercised)
+    # Coverage is checked against a list the sweep did not produce: the
+    # committed tool manifest, which tests/test_tool_manifest.py keeps in step
+    # with the server. A tool that registered without reaching list_tools, or
+    # a sweep that silently dropped one, fails here.
+    manifest = _manifest_tool_names()
+    assert len(manifest) > 100
+    assert exercised == manifest, (
+        f"not exercised: {sorted(manifest - exercised)}; "
+        f"not in the manifest: {sorted(exercised - manifest)}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -274,6 +294,33 @@ async def test_scope_denial_is_the_same_envelope_with_a_vague_message(
     assert all(r["success"] is False for r in records)
     # The operator's record keeps the detail the caller does not get.
     assert all("MCP_UNIFI_AUTH_TOKENS" in r["error"] for r in records)
+
+
+async def test_scope_denial_reports_real_mode_honestly(
+    real_settings: Settings, audit_path: Path
+) -> None:
+    """A real-mode server's denial says stub_mode false, and nothing is sent."""
+    server = build_server(
+        real_settings.model_copy(
+            update={
+                "mcp_transport": "streamable-http",
+                "auth_required": True,
+                "auth_tokens": "admin:tok-a,ro:tok-r:protect",
+            }
+        )
+    )
+    with (
+        respx.mock(assert_all_called=False, assert_all_mocked=True) as router,
+        patch("mcp_unifi.scoping._current_client_id", return_value="ro"),
+    ):
+        result = await server.call_tool("list_networks", {})
+    env = _assert_envelope(result, where="scope denial (real mode)")
+    assert env == {
+        "error": "Tool 'list_networks' is not available to this client.",
+        "stub_mode": False,
+    }
+    assert router.calls.call_count == 0
+    assert [r["denied_by"] for r in _records(audit_path)] == [DENIED_BY_SCOPE]
 
 
 async def test_scope_permitted_call_is_untouched(scoped_server: FastMCP) -> None:
@@ -454,3 +501,48 @@ async def test_middleware_leaves_a_success_unflagged() -> None:
     for revision in (None, "2025-11-25"):
         result = await AdaptiveResponseMiddleware().on_call_tool(_Ctx(revision), call_next)
         assert result.is_error is False
+
+
+# ---------------------------------------------------------------------------
+# A composite's own failure envelope, not the unknown-controller path
+# ---------------------------------------------------------------------------
+
+GUEST_SECRET = "guest-passphrase-must-not-leak"
+
+
+async def test_composite_rollback_failure_is_an_error_with_secrets_redacted(
+    stub_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """create_guest_network fails after the WLAN step; the rollback envelope is an error.
+
+    The sweep only drives the unknown-controller path, which every tool shares.
+    This is the other kind of producer: a composite's ``_fail`` envelope, with
+    ``partial`` and ``rolled_back`` beside ``error``. The WLAN it created holds
+    the passphrase, so the envelope also has to stay redacted on both channels.
+    """
+
+    async def refuse(_self: Any, _payload: Any) -> Any:
+        raise UniFiError("controller refused the isolation rule")
+
+    # Whichever firewall model the stub site uses, the step after the WLAN fails.
+    monkeypatch.setattr(StubBackend, "create_firewall_rule", refuse)
+    monkeypatch.setattr(StubBackend, "create_v1_firewall_policy", refuse)
+    server = build_server(stub_settings.model_copy(update={"mcp_transport": "stdio"}))
+    args = {"name": "Guests", "ssid": "Guests", "passphrase": GUEST_SECRET, "vlan_id": 77}
+
+    old = await server.call_tool("create_guest_network", args)
+    async with Client(server) as client:
+        new = await client.call_tool("create_guest_network", args, raise_on_error=False)
+
+    for result, era in ((old, "text-only era"), (new, "structured era")):
+        env = _assert_envelope(result, where=f"create_guest_network rollback ({era})")
+        assert env["error"].startswith("create_guest_network failed at firewall_"), env["error"]
+        assert env["stub_mode"] is True
+        # The full envelope is the text, not a summary: the WLAN that was
+        # created and the rollback record are both there for the caller.
+        assert "wlan" in env["partial"], env["partial"]
+        assert env["rolled_back"], "the rollback actions were not reported"
+        assert env["partial"]["wlan"].get("x_passphrase") == "[REDACTED]"
+        assert GUEST_SECRET not in result.content[0].text
+    assert new.structured_content == json.loads(new.content[0].text)
+    assert GUEST_SECRET not in json.dumps(new.structured_content)

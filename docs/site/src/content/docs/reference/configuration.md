@@ -151,9 +151,12 @@ settings above say:
    a boolean `stub_mode`, for example
    `{"error": "Unknown controller 'nope'. Available: default.", "stub_mode": true}`.
    Some failures add keys beside them (`partial` and `rolled_back` when a
-   composite tool undoes its own steps). A client on `2025-06-18` or later gets
-   the same object as `structuredContent`. Compact mode never summarises an
-   error: the text block is the envelope.
+   composite tool undoes its own steps). A client on `2025-06-18` or later
+   also gets the same object as `structuredContent`, except under
+   `MCP_UNIFI_FORCE_FULL_TEXT_RESPONSES=true`, where `structuredContent` is the
+   framework's `{"result": "<the envelope as JSON text>"}` wrapper and the text
+   block is the one to read. Compact mode never summarises an error: the text
+   block is the envelope.
 2. **`isError` is `true`.** A client or agent that checks `isError` sees every
    failed call as failed. Before this was guaranteed, tool failures and
    read-only refusals came back with `isError: false`.
@@ -168,7 +171,9 @@ settings above say:
 A successful result is never flagged because some field inside it is called
 `error`: per-item errors in `update_clients`, `firewall_policies_error` in
 `audit_open_ports`, and probe errors in `get_console_health` are partial
-results, not failures. Only the top-level envelope above is an error.
+results, not failures. Only the top-level envelope above is an error, and only
+when `error` holds some text: an empty or whitespace-only `error` string is not
+treated as an error envelope. No tool in this server produces one.
 
 Two kinds of failure come from the MCP framework rather than this server and
 keep its shape, plain text with `isError: true`: an argument that fails the
