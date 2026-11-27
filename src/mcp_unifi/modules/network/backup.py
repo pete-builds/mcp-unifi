@@ -770,8 +770,10 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         (controller-managed ones, including port-forward mirrors, are left
         out), with zones and networks named rather than referenced by id and
         runtime counters such as ``hits`` dropped; ``firewall_zones`` holds
-        the zones those policies use, by name, with the networks in each. A
-        site on legacy rulesets gets two empty sections. It does NOT capture
+        the zones those policies use, by name, with the networks in each
+        (and a count of members it could not name). A zone-wide policy is
+        backed up but ``restore_config`` will not restore it. A site on
+        legacy rulesets gets two empty sections. It does NOT capture
         static routes, traffic rules and routes, content filters, dynamic
         DNS, AP groups, or site settings; the envelope's ``not_included``
         field lists each, so a backup is never mistaken for a whole-site
@@ -879,9 +881,12 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
           exactly (a schedule, an IPsec or group match), one whose site copy
           runs on a schedule, and any name plus zone pair the backup holds
           more than once is a ``blocked`` action and is not written. So is
-          one whose zone would cover different networks here: a side that
-          matches a whole zone needs that zone to hold the same networks as
-          in the backup, and a side naming networks needs each in its zone. A
+          a policy naming a network that is not in that zone here.
+        - Zone-wide policies are backed up but never restored: a side that
+          matches every network in a zone (no network or address list)
+          covers whatever that zone holds, and restore cannot prove a zone
+          matched by name holds the same networks here. Each is ``blocked``
+          with a pointer to ``create_firewall_policy``. A
           backup with no ``firewall_policies`` section leaves every policy
           as it is.
         - Not covered: routes, traffic rules, content filters, dynamic DNS,

@@ -17,8 +17,10 @@ the Zone-Based Firewall into one versioned JSON envelope.
 (controller-managed ones, including port-forward mirrors, are left
 out), with zones and networks named rather than referenced by id and
 runtime counters such as ``hits`` dropped; ``firewall_zones`` holds
-the zones those policies use, by name, with the networks in each. A
-site on legacy rulesets gets two empty sections. It does NOT capture
+the zones those policies use, by name, with the networks in each
+(and a count of members it could not name). A zone-wide policy is
+backed up but ``restore_config`` will not restore it. A site on
+legacy rulesets gets two empty sections. It does NOT capture
 static routes, traffic rules and routes, content filters, dynamic
 DNS, AP groups, or site settings; the envelope's ``not_included``
 field lists each, so a backup is never mistaken for a whole-site

@@ -263,7 +263,9 @@ def seed_live_zone_site(state: Any, *, user_policies: bool = True) -> None:
     ``legacy_id``, six built-in zones whose ``external_id`` is the v1 zone
     id, and v2 policies carrying every key the live list showed. Policy
     names repeat across zone pairs, as :data:`ECOWITT` does live, and so does
-    ``index``.
+    ``index``. Every operator policy here names networks or addresses on
+    both sides, as the ten live ones were reported to; zone-wide policies,
+    which restore holds back, are added by the tests that need one.
 
     ``user_policies=False`` leaves out the operator-created policies, which
     is a restore target that has the zones and the controller's own policies
@@ -392,22 +394,22 @@ def seed_live_zone_site(state: Any, *, user_policies: bool = True) -> None:
             _v2_policy(
                 "Block Guest to Internal",
                 "BLOCK",
-                _v2_endpoint(z["Hotspot"], side="source"),
-                _v2_endpoint(z["Internal"], side="destination"),
+                _v2_endpoint(z["Hotspot"], side="source", networks=[nets["Guest"]]),
+                _v2_endpoint(z["Internal"], side="destination", ips=["10.0.10.0/24"]),
                 index=10000,
             ),
             _v2_policy(
                 "Allow Vpn to Internal",
                 "ALLOW",
-                _v2_endpoint(z["Vpn"], side="source"),
-                _v2_endpoint(z["Internal"], side="destination"),
+                _v2_endpoint(z["Vpn"], side="source", ips=["10.8.0.0/24"]),
+                _v2_endpoint(z["Internal"], side="destination", networks=[nets["TRUSTED"]]),
                 index=10000,
                 create_allow_respond=True,
             ),
             _v2_policy(
                 "Allow Dewfront web",
                 "ALLOW",
-                _v2_endpoint(z["External"], side="source"),
+                _v2_endpoint(z["External"], side="source", ips=["203.0.113.0/24"]),
                 _v2_endpoint(
                     z["Internal"], side="destination", ips=["192.168.86.20/32"], port="80,443"
                 ),

@@ -37,10 +37,14 @@ and never deletes an operator policy the backup lacks: those are reported. A
 policy whose v2 shape the v1 body cannot express exactly (a schedule, an IPsec
 match, a group or region match, a negated match, an ICMP type) is blocked
 with the reason rather than written as an approximation, and so is one whose
-copy on the site runs on a schedule. Zones are matched by name, so a policy is
-also held back when its zone would cover different networks on the target: a
-zone-wide side needs the same members the backup recorded, and a side naming
-networks needs each of them in that zone.
+copy on the site runs on a schedule.
+
+Zone-wide policies are backed up but never restored. A side that matches every
+network in a zone (no network list, no address list) covers whatever that zone
+holds, and restore cannot prove a zone matched by name holds the same networks
+on the target, so such a policy is held back with a pointer to
+``create_firewall_policy``. A side naming networks is held back when any of
+them is not a member of that zone on the target, which can only hold back.
 """
 
 from __future__ import annotations
@@ -353,18 +357,22 @@ def backup_sections(
         if zid not in used_zones:
             continue
         zone_key = zone.get("zone_key")
-        member_ids = zone.get("network_ids")
+        raw_members = zone.get("network_ids")
+        member_ids: list[Any] = raw_members if isinstance(raw_members, list) else []
+        named = [
+            network_names[nid]
+            for nid in member_ids
+            if isinstance(nid, str) and nid in network_names
+        ]
         zone_records.append(
             {
                 "name": zone.get("name"),
                 "zone_key": zone_key,
                 "built_in": zone.get("default_zone") is True
                 or (isinstance(zone_key, str) and zone_key.lower() in BUILT_IN_ZONE_KEYS),
-                "network_names": [
-                    network_names[nid]
-                    for nid in (member_ids if isinstance(member_ids, list) else [])
-                    if isinstance(nid, str) and nid in network_names
-                ],
+                # Informational: restore does not compare zone membership.
+                "network_names": named,
+                "unnamed_members": len(member_ids) - len(named),
             }
         )
     return {POLICIES: kept, ZONES: zone_records}
@@ -607,8 +615,9 @@ async def plan_policies(
         if norm(net.get("name")):
             nets_by_name.setdefault(norm(net.get("name")), []).append(net)
 
-    # Which networks each target zone holds, by name. A v1 network id the
-    # site cannot name stays in as a marker, so it can only ever differ.
+    # The names of the networks each target zone holds, for the networks the
+    # site can name. A member it cannot name is left out: it can never make a
+    # named network count as present, and never stops a provable match.
     name_by_v1: dict[str, str] = {}
     for net in networks:
         private_id = net.get("_id")
@@ -618,59 +627,25 @@ async def plan_policies(
         if v1_id:
             name_by_v1[v1_id] = str(net.get("name"))
 
-    def _members(zone_v1_id: str) -> dict[str, str]:
-        """``{normalised name: display name}`` of the networks in a target zone."""
+    def _named_members(zone_v1_id: str) -> set[str]:
         zone = next((z for z in zones_v1 if str(z.get("id")) == zone_v1_id), {})
         raw_ids = zone.get("networkIds")
         ids: list[Any] = raw_ids if isinstance(raw_ids, list) else []
-        out: dict[str, str] = {}
-        for nid in ids:
-            name = name_by_v1.get(str(nid), f"<unnamed network {nid}>")
-            out[norm(name)] = name
-        return out
+        return {norm(name_by_v1[str(i)]) for i in ids if str(i) in name_by_v1}
 
-    def _check_membership(side: _Side, zone_v1_id: str, label: str) -> None:
-        """Hold back a side whose zone would cover different networks here.
+    def _check_named_networks(side: _Side, zone_v1_id: str, label: str) -> None:
+        """Hold back a side naming a network that is not in its zone here.
 
-        A zone-wide side (no networks, no addresses) needs the target zone to
-        hold exactly the networks the backup's zone held, with none of them
-        deleted by this restore. A side naming networks needs each to sit in
-        the target zone. An address side is not affected.
+        This can only hold a policy back, never widen one: a network the
+        site's zone list does not show (or cannot name) as a member counts
+        as not in the zone.
         """
-        members = _members(zone_v1_id)
-        if side.network_names:
-            outside = [n for n in side.network_names if norm(n) not in members]
-            if outside:
-                raise Blocked(
-                    f"{label} network(s) {', '.join(repr(n) for n in outside)} are not in "
-                    f"zone {side.zone!r} on this site, so the policy would not apply to them"
-                )
-            return
-        if side.addresses:
-            return
-        held = backup_zones.get(norm(side.zone))
-        recorded = held.get("network_names") if isinstance(held, dict) else None
-        if not isinstance(recorded, list):
+        members = _named_members(zone_v1_id)
+        outside = [n for n in side.network_names if norm(n) not in members]
+        if outside:
             raise Blocked(
-                f"{label} matches all of zone {side.zone!r}, and the backup does not record "
-                "which networks sat in it, so restore cannot tell what it would cover here"
-            )
-        wanted = {norm(n): str(n) for n in recorded}
-        only_backup = sorted(wanted[k] for k in wanted.keys() - members.keys())
-        only_site = sorted(members[k] for k in members.keys() - wanted.keys())
-        deleted = sorted(members[k] for k in members.keys() & networks_deleted)
-        if only_backup or only_site or deleted:
-            parts = []
-            if only_backup:
-                parts.append(f"only in the backup: {', '.join(only_backup)}")
-            if only_site:
-                parts.append(f"only on this site: {', '.join(only_site)}")
-            if deleted:
-                parts.append(f"deleted by this restore: {', '.join(deleted)}")
-            raise Blocked(
-                f"{label} matches all of zone {side.zone!r}, which holds different networks "
-                f"here than in the backup ({'; '.join(parts)}), so the policy would cover "
-                "different networks"
+                f"{label} network(s) {', '.join(repr(n) for n in outside)} are not in "
+                f"zone {side.zone!r} on this site, so the policy would not apply to them"
             )
 
     def _zone(name: str, label: str) -> str:
@@ -708,12 +683,19 @@ async def plan_policies(
             raise Blocked(str(exc)) from exc
 
     async def _body(intent: _Intent) -> dict[str, Any]:
+        for side, label in ((intent.source, "source"), (intent.destination, "destination")):
+            if not side.network_names and not side.addresses:
+                raise Blocked(
+                    f"{label} matches every network in zone {side.zone!r}; restore cannot "
+                    "prove that zone covers the same networks on this site, so it never "
+                    "writes zone-wide policies. Recreate it with create_firewall_policy."
+                )
         source_zone = _zone(intent.source.zone, "source zone")
         destination_zone = _zone(intent.destination.zone, "destination zone")
         source_networks = await _networks(intent.source.network_names, "source")
         destination_networks = await _networks(intent.destination.network_names, "destination")
-        _check_membership(intent.source, source_zone, "source")
-        _check_membership(intent.destination, destination_zone, "destination")
+        _check_named_networks(intent.source, source_zone, "source")
+        _check_named_networks(intent.destination, destination_zone, "destination")
         try:
             return zp.create_body(
                 name=intent.name,

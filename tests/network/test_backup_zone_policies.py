@@ -397,23 +397,15 @@ async def test_missing_network_or_zone_on_the_target_blocks_that_policy_only(
 
     dry = await _dry(target_server, envelope)
     blocked = {a["name"]: a["reason"] for a in _policy_actions(dry["would_apply"], "blocked")}
-    # Without IoT, Internal also holds fewer networks than in the backup, so
-    # the two policies matching all of Internal are held back as well.
-    assert set(blocked) == {
-        "Block IoT to TRUSTED",
-        "Allow MGMT DNS",
-        "Block Guest to Internal",
-        "Allow Vpn to Internal",
-    }
+    assert set(blocked) == {"Block IoT to TRUSTED", "Allow MGMT DNS"}
     assert "'IoT'" in blocked["Block IoT to TRUSTED"]
     assert "custom zone" in blocked["Allow MGMT DNS"]
-    assert "only in the backup: IoT" in blocked["Block Guest to Internal"]
     assert any("blocked" in w for w in dry["warnings"])
 
     await _apply(target_server, envelope)
     sent = {args[0]["name"] for method, args in spy.calls if method == "create_policy"}
     assert sent == set(USER_NAMES) - set(blocked)
-    assert len(_user_v1(target_state)) == 6
+    assert len(_user_v1(target_state)) == 8
 
 
 async def test_a_policy_the_v1_body_cannot_express_is_blocked_not_approximated(
@@ -915,35 +907,138 @@ def _add_target_lan(state: StubState, name: str) -> None:
     )
 
 
-async def test_a_zone_wide_policy_is_held_back_when_the_zone_holds_an_extra_network(
-    source_server: FastMCP, target_server: FastMCP, target_state: StubState
+ZONE_WIDE = ("Block Hotspot to Internal", "Allow web from anywhere")
+
+
+def _add_zone_wide_policies(state: StubState) -> None:
+    """Two v2 operator policies with a side matching a whole zone: one fully
+    zone-wide, one whose source is all of External with a port-only filter."""
+    from mcp_unifi.clients.zone_firewall_stubs import _v2_endpoint, _v2_policy
+
+    zone = {z["name"]: z["_id"] for z in state.firewall_zones}
+    state.firewall_policies.extend(
+        [
+            _v2_policy(
+                ZONE_WIDE[0],
+                "BLOCK",
+                _v2_endpoint(zone["Hotspot"], side="source"),
+                _v2_endpoint(zone["Internal"], side="destination"),
+                index=10010,
+            ),
+            _v2_policy(
+                ZONE_WIDE[1],
+                "ALLOW",
+                _v2_endpoint(zone["External"], side="source", port="443"),
+                _v2_endpoint(zone["Internal"], side="destination", ips=["192.168.86.20"]),
+                index=10011,
+                protocol="tcp",
+            ),
+        ]
+    )
+
+
+@pytest.mark.parametrize("extra_lan", [False, True], ids=["same-members", "extra-member"])
+async def test_a_zone_wide_policy_is_backed_up_but_never_restored(
+    source_server: FastMCP,
+    source_state: StubState,
+    target_server: FastMCP,
+    target_state: StubState,
+    extra_lan: bool,
 ) -> None:
-    """A zone-wide side covers whatever the zone holds. With an extra LAN in
-    Internal on the target, "Hotspot to Internal" would cover it too."""
-    _add_target_lan(target_state, "Lab")
+    """Whatever the target zone holds, identical or not: restore cannot prove
+    a zone matched by name covers the same networks, so it never writes one."""
+    _add_zone_wide_policies(source_state)
+    if extra_lan:
+        _add_target_lan(target_state, "Lab")
     envelope = await _backup(source_server)
+    backed = {p["name"]: p for p in envelope["resources"]["firewall_policies"]}
+    assert backed[ZONE_WIDE[0]]["source"]["matching_target"] == "ANY"
+    assert backed[ZONE_WIDE[1]]["source"]["port"] == "443"
     spy = WriteSpy(target_state)
 
     dry = await _dry(target_server, envelope)
     blocked = {a["name"]: a["reason"] for a in _policy_actions(dry["would_apply"], "blocked")}
-    assert set(blocked) == {"Block Guest to Internal", "Allow Vpn to Internal"}
+    assert set(blocked) == set(ZONE_WIDE)
+    assert "every network in zone 'Hotspot'" in blocked[ZONE_WIDE[0]]
+    assert "every network in zone 'External'" in blocked[ZONE_WIDE[1]]
     for reason in blocked.values():
-        assert "'Internal'" in reason and "Lab" in reason
+        assert "create_firewall_policy" in reason
 
     await _apply(target_server, envelope)
     sent = {args[0]["name"] for method, args in spy.calls if method == "create_policy"}
-    assert sent == set(USER_NAMES) - set(blocked)
+    assert sent == set(USER_NAMES)
 
 
-async def test_a_zone_wide_policy_is_held_back_when_the_zone_lacks_a_network(
+async def test_backup_counts_zone_members_it_cannot_name(
+    source_server: FastMCP, source_state: StubState
+) -> None:
+    internal = next(z for z in source_state.firewall_zones if z["name"] == "Internal")
+    internal["network_ids"] = [*internal["network_ids"], "ghost-network-id"]
+    envelope = await _backup(source_server)
+    zones = {z["name"]: z for z in envelope["resources"]["firewall_zones"]}
+    assert zones["Internal"]["unnamed_members"] == 1
+    assert zones["Hotspot"]["unnamed_members"] == 0
+    assert "ghost-network-id" not in json.dumps(zones)
+
+
+async def test_two_target_networks_with_one_name_hold_back_a_policy_naming_it(
     source_server: FastMCP, target_server: FastMCP, target_state: StubState
 ) -> None:
-    target_state.networks = [n for n in target_state.networks if n.get("name") != "Default"]
+    _add_target_lan(target_state, "MGMT")
     envelope = await _backup(source_server)
     dry = await _dry(target_server, envelope)
     blocked = {a["name"]: a["reason"] for a in _policy_actions(dry["would_apply"], "blocked")}
-    assert {"Block Guest to Internal", "Allow Vpn to Internal"} <= set(blocked)
-    assert "Default" in blocked["Block Guest to Internal"]
+    assert set(blocked) == {"Allow TRUSTED to MGMT", "Allow MGMT DNS"}
+    for reason in blocked.values():
+        assert "2 networks on the site are named 'MGMT'" in reason
+
+
+async def test_unreadable_zone_membership_holds_back_only_network_scoped_sides(
+    source_server: FastMCP, target_server: FastMCP, target_state: StubState
+) -> None:
+    """With Internal's member list missing, nothing proves a named network
+    sits in it; address-only policies are unaffected."""
+    fw = target_state.zone_firewall
+    original = fw.zones
+
+    def _no_members(networks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        out = original(networks)
+        for zone in out:
+            if zone["name"] == "Internal":
+                del zone["networkIds"]
+        return out
+
+    fw.zones = _no_members  # type: ignore[method-assign]
+    envelope = await _backup(source_server)
+    dry = await _dry(target_server, envelope)
+    blocked = {a["name"]: a["reason"] for a in _policy_actions(dry["would_apply"], "blocked")}
+    assert set(blocked) == {
+        "Allow TRUSTED to MGMT",
+        "Block IoT to TRUSTED",
+        "Allow MGMT DNS",
+        "Allow Vpn to Internal",
+    }
+    created = {a["name"] for a in _policy_actions(dry["would_apply"], "create")}
+    assert ECOWITT in created and "Allow Dewfront web" in created
+
+
+async def test_zone_members_the_site_cannot_name_never_block_a_provable_match(
+    source_server: FastMCP, target_server: FastMCP, target_state: StubState
+) -> None:
+    fw = target_state.zone_firewall
+    original = fw.zones
+
+    def _with_ghost(networks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        out = original(networks)
+        for zone in out:
+            zone["networkIds"] = [*zone["networkIds"], "ghost-v1-id"]
+        return out
+
+    fw.zones = _with_ghost  # type: ignore[method-assign]
+    envelope = await _backup(source_server)
+    dry = await _dry(target_server, envelope)
+    assert not _policy_actions(dry["would_apply"], "blocked")
+    assert len(_policy_actions(dry["would_apply"], "create")) == 10
 
 
 async def test_a_network_scoped_side_is_held_back_when_its_network_sits_in_another_zone(
@@ -957,7 +1052,7 @@ async def test_a_network_scoped_side_is_held_back_when_its_network_sits_in_anoth
 
     dry = await _dry(target_server, envelope)
     blocked = {a["name"]: a["reason"] for a in _policy_actions(dry["would_apply"], "blocked")}
-    for name in ("Allow TRUSTED to MGMT", "Block IoT to TRUSTED"):
+    for name in ("Allow TRUSTED to MGMT", "Block IoT to TRUSTED", "Allow Vpn to Internal"):
         assert "'TRUSTED'" in blocked[name] and "not in" in blocked[name]
     # MGMT is still in Internal: a policy naming only MGMT there restores.
     assert "Allow MGMT DNS" not in blocked
@@ -965,7 +1060,7 @@ async def test_a_network_scoped_side_is_held_back_when_its_network_sits_in_anoth
     await _apply(target_server, envelope)
     sent = {args[0]["name"] for method, args in spy.calls if method == "create_policy"}
     assert "Allow MGMT DNS" in sent
-    assert not sent & {"Allow TRUSTED to MGMT", "Block IoT to TRUSTED"}
+    assert not sent & {"Allow TRUSTED to MGMT", "Block IoT to TRUSTED", "Allow Vpn to Internal"}
 
 
 async def test_identical_zone_membership_holds_nothing_back(
