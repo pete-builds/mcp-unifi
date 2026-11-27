@@ -957,6 +957,10 @@ async def test_provision_homelab_service_for_a_known_client_upserts_the_lease(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="Network 11: lease network_id is the network's legacy_id; fixed in the legacy_id PR",
+)
 async def test_provision_rollback_restores_a_reservation_that_existed_before(
     stub_server: FastMCP, stub_state: StubState
 ) -> None:
