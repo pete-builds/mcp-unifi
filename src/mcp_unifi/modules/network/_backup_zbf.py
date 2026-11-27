@@ -273,55 +273,69 @@ def _names_by_id(records: list[dict[str, Any]]) -> dict[str, str]:
     return out
 
 
+@dataclass(frozen=True)
+class _NameIndex:
+    """How a backup turns one kind of id into a name.
+
+    ``names`` maps every id a record is known by to its name; ``shared``
+    holds the normalised names more than one record on the site carries.
+    Restore resolves every reference by name, so a reference to a record
+    whose name is shared cannot be carried: it is a problem, not a name.
+    """
+
+    what: str
+    names: dict[str, str]
+    shared: frozenset[str]
+
+    @classmethod
+    def of(cls, what: str, records: list[dict[str, Any]]) -> _NameIndex:
+        return cls(what, _names_by_id(records), frozenset(_shared_names(records)))
+
+    def name(self, ref: Any, label: str, problems: list[str]) -> str | None:
+        """The name for ``ref``, recording a problem when it has none or shares it."""
+        found = self.names.get(ref) if isinstance(ref, str) else None
+        if found is None:
+            problems.append(f"{label} {self.what} {ref!r} is not a named {self.what} on the site")
+            return None
+        if norm(found) in self.shared:
+            problems.append(
+                f"{label} {self.what} {found!r} shares its name with another {self.what} on "
+                f"the backed-up site; restore matches {self.what}s by name and could write "
+                "to the wrong one"
+            )
+        return found
+
+
 def _portable_endpoint(
     side: str,
     endpoint: dict[str, Any],
     *,
-    zone_names: dict[str, str],
-    network_names: dict[str, str],
-    shared_networks: set[str],
-    group_names: dict[str, str],
+    zones: _NameIndex,
+    networks: _NameIndex,
+    groups: _NameIndex,
     problems: list[str],
 ) -> dict[str, Any]:
     """One ``source``/``destination`` with every id swapped for a name.
 
-    A network whose name is shared with another network on the site is
-    still named, and listed as a problem so restore holds the policy back.
+    Every by-name reference goes through :meth:`_NameIndex.name`, so a
+    reference with no name, or one whose name another record of its kind
+    shares on the site, is listed as a problem and restore holds it back.
     """
     out: dict[str, Any] = {}
     for key, value in endpoint.items():
         if key == "zone_id":
-            name = zone_names.get(value) if isinstance(value, str) else None
-            if name is None:
-                problems.append(f"{side} zone {value!r} is not in the site's zone list")
-            out["zone_name"] = name
+            out["zone_name"] = zones.name(value, side, problems)
         elif key == "network_ids":
-            names: list[str] = []
-            for nid in value if isinstance(value, list) else [value]:
-                found = network_names.get(nid) if isinstance(nid, str) else None
-                if found is None:
-                    problems.append(f"{side} network {nid!r} is not a named network on the site")
-                    continue
-                if norm(found) in shared_networks:
-                    problems.append(
-                        f"{side} network {found!r} shares its name with another network on "
-                        "the backed-up site; restore matches networks by name and could "
-                        "write to the wrong one"
-                    )
-                names.append(found)
-            out["network_names"] = names
+            refs = value if isinstance(value, list) else [value]
+            named = [networks.name(nid, side, problems) for nid in refs]
+            out["network_names"] = [n for n in named if n is not None]
         elif key.endswith(("_group_id", "_group_ids")):
             plural = key.endswith("_ids")
             stem = key[: -len("_ids")] if plural else key[: -len("_id")]
             refs = value if isinstance(value, list) else [value]
-            group_refs: list[str | None] = []
-            for gid in refs:
-                if gid in ("", None):
-                    continue
-                found = group_names.get(gid) if isinstance(gid, str) else None
-                if found is None:
-                    problems.append(f"{side} {key} {gid!r} is not a named firewall group")
-                group_refs.append(found)
+            group_refs = [
+                groups.name(gid, f"{side} {key}", problems) for gid in refs if gid not in ("", None)
+            ]
             out[f"{stem}_names" if plural else f"{stem}_name"] = (
                 group_refs if plural else (group_refs[0] if group_refs else None)
             )
@@ -349,10 +363,10 @@ def backup_sections(
     zone_by_id = {
         str(z["_id"]): z for z in zones if isinstance(z, dict) and isinstance(z.get("_id"), str)
     }
-    zone_names = {zid: str(z.get("name")) for zid, z in zone_by_id.items() if z.get("name")}
-    network_names = _names_by_id(networks)
-    shared_networks = _shared_names(networks)
-    group_names = _names_by_id(groups)
+    zone_index = _NameIndex.of("zone", list(zone_by_id.values()))
+    network_index = _NameIndex.of("network", networks)
+    group_index = _NameIndex.of("firewall group", groups)
+    network_names = network_index.names
 
     kept: list[dict[str, Any]] = []
     used_zones: set[str] = set()
@@ -371,10 +385,9 @@ def backup_sections(
                 record[key] = _portable_endpoint(
                     key,
                     value,
-                    zone_names=zone_names,
-                    network_names=network_names,
-                    shared_networks=shared_networks,
-                    group_names=group_names,
+                    zones=zone_index,
+                    networks=network_index,
+                    groups=group_index,
                     problems=problems,
                 )
             else:
@@ -704,6 +717,12 @@ async def plan_policies(
             )
 
     def _zone(name: str, label: str) -> str:
+        held_here = zp.find_by_id_or_name(zones_v1, name)
+        if len(held_here) > 1:
+            raise Blocked(
+                f"{label}: {len(held_here)} zones on this site are named {name!r}; restore "
+                "cannot tell which one the backup meant"
+            )
         try:
             return pick_zone(zones_v1, name, label)
         except PolicyLookupError as exc:

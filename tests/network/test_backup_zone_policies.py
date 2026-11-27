@@ -1365,3 +1365,114 @@ async def test_a_network_name_shared_on_the_source_site_holds_its_policies_back(
     await _apply(target_server, envelope)
     sent = {args[0]["name"] for method, args in spy.calls if method == "create_policy"}
     assert sent == set(USER_NAMES) - set(blocked)
+
+
+# ---------------------------------------------------------------------------
+# Review round 6 (#265): every by-name reference refuses a shared name
+# ---------------------------------------------------------------------------
+
+
+async def test_a_zone_name_shared_on_the_source_site_holds_its_policies_back(
+    source_server: FastMCP,
+    source_state: StubState,
+    target_server: FastMCP,
+    target_state: StubState,
+) -> None:
+    source_state.firewall_zones.append(
+        {
+            "_id": "second-internal",
+            "attr_no_edit": False,
+            "default_zone": False,
+            "name": "internal",
+            "network_ids": [],
+            "zone_key": None,
+        }
+    )
+    envelope = await _backup(source_server)
+    backed = {p["name"]: p for p in envelope["resources"]["firewall_policies"]}
+    assert any(
+        "zone 'Internal' shares its name" in u for u in backed["Allow MGMT DNS"]["unresolved"]
+    )
+    spy = WriteSpy(target_state)
+
+    dry = await _dry(target_server, envelope)
+    blocked = {a["name"] for a in _policy_actions(dry["would_apply"], "blocked")}
+    # Every policy touches Internal on one side or the other.
+    assert blocked == set(USER_NAMES)
+    await _apply(target_server, envelope)
+    assert not [m for m, _ in spy.calls if m == "create_policy"]
+
+
+async def test_a_group_name_shared_on_the_source_site_is_recorded_as_a_problem(
+    source_server: FastMCP, source_state: StubState
+) -> None:
+    group = source_state.firewall_groups[0]
+    source_state.firewall_groups.append({**group, "_id": "second-group"})
+    policy = next(p for p in source_state.firewall_policies if p["name"] == "Block IoT to TRUSTED")
+    policy["destination"] = {
+        **policy["destination"],
+        "matching_target": "IP",
+        "matching_target_type": "OBJECT",
+        "ip_group_id": group["_id"],
+        "network_ids": [],
+    }
+    envelope = await _backup(source_server)
+    backed = next(
+        p for p in envelope["resources"]["firewall_policies"] if p["name"] == "Block IoT to TRUSTED"
+    )
+    assert backed["destination"]["ip_group_name"] == group["name"]
+    assert any(
+        f"firewall group {group['name']!r} shares its name" in u for u in backed["unresolved"]
+    )
+
+
+async def test_two_target_zones_with_one_name_hold_back_policies_in_it(
+    source_server: FastMCP, target_server: FastMCP, target_state: StubState
+) -> None:
+    fw = target_state.zone_firewall
+    original = fw.zones
+
+    def _two_internals(networks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        out = original(networks)
+        out.append({"id": "second-internal", "name": "Internal", "networkIds": []})
+        return out
+
+    fw.zones = _two_internals  # type: ignore[method-assign]
+    envelope = await _backup(source_server)
+    spy = WriteSpy(target_state)
+    dry = await _dry(target_server, envelope)
+    blocked = {a["name"]: a["reason"] for a in _policy_actions(dry["would_apply"], "blocked")}
+    assert set(blocked) == set(USER_NAMES)
+    for reason in blocked.values():
+        assert "2 zones on this site are named 'Internal'" in reason
+    await _apply(target_server, envelope)
+    assert spy.calls == []
+
+
+async def test_a_group_reference_is_held_back_even_with_two_target_groups_of_its_name(
+    source_server: FastMCP,
+    source_state: StubState,
+    target_server: FastMCP,
+    target_state: StubState,
+) -> None:
+    """Group references are never resolved on the target (the v1 body has no
+    group filter), so a shared group name there cannot let one through."""
+    group = source_state.firewall_groups[0]
+    policy = next(p for p in source_state.firewall_policies if p["name"] == "Block IoT to TRUSTED")
+    policy["destination"] = {
+        **policy["destination"],
+        "matching_target": "IP",
+        "matching_target_type": "OBJECT",
+        "ip_group_id": group["_id"],
+        "network_ids": [],
+    }
+    twin = next(g for g in target_state.firewall_groups if g["name"] == group["name"])
+    target_state.firewall_groups.append({**twin, "_id": "second-group"})
+    envelope = await _backup(source_server)
+    spy = WriteSpy(target_state)
+    dry = await _dry(target_server, envelope)
+    mine = [a for a in _policy_actions(dry["would_apply"]) if a["name"] == "Block IoT to TRUSTED"]
+    assert [a["action"] for a in mine] == ["blocked"]
+    await _apply(target_server, envelope)
+    sent = {args[0]["name"] for method, args in spy.calls if method == "create_policy"}
+    assert "Block IoT to TRUSTED" not in sent
