@@ -263,6 +263,70 @@ async def test_provision_dry_run_omits_an_unchanged_binding(
     assert "network_id" not in dry["would_create"]["lease"]
 
 
+@pytest.mark.parametrize("ref_key", ["_id", "legacy_id"])
+async def test_provision_of_a_new_mac_sends_the_network_id(
+    stub_server: FastMCP, stub_state: StubState, ref_key: str
+) -> None:
+    """A MAC the controller has never seen has no binding to keep, so the
+    lease is written, and it carries the network's ``_id`` whichever form the
+    caller named the network by."""
+    default = stub_state.networks[0]
+    sent: list[dict[str, Any]] = []
+    original = stub_state.create_dhcp_lease
+
+    def _spy(payload: dict[str, Any]) -> dict[str, Any]:
+        sent.append(dict(payload))
+        return original(payload)
+
+    stub_state.create_dhcp_lease = _spy  # type: ignore[method-assign]
+
+    result = await _call(
+        stub_server,
+        "provision_homelab_service",
+        {
+            "name": "newbox",
+            "mac": "11:22:33:44:55:90",
+            "ip": "192.168.1.70",
+            "network_id": default[ref_key],
+        },
+    )
+
+    assert "error" not in result, result
+    assert [p["network_id"] for p in sent] == [default["_id"]]
+    assert result["lease"]["network_id"] == default["_id"]
+
+
+async def test_provision_by_legacy_id_puts_the_policy_in_the_networks_zone(
+    stub_server: FastMCP, stub_state: StubState
+) -> None:
+    """On a zone-based site the ALLOW policy's destination zone comes from
+    the service's network. Named by its legacy id, the network must still be
+    found, or the policy silently lands in the fallback Internal zone."""
+    guest = stub_state.create_network(
+        {"name": "Guests", "purpose": "guest", "vlan": 60, "ip_subnet": "10.60.0.1/24"}
+    )
+    stub_state.zone_firewall.migrate()
+    zones = dict(stub_state.zone_firewall.zone_ids)
+
+    result = await _call(
+        stub_server,
+        "provision_homelab_service",
+        {
+            "name": "kiosk",
+            "mac": "11:22:33:44:55:91",
+            "ip": "10.60.0.20",
+            "network_id": guest["legacy_id"],
+            "ports": [8080],
+        },
+    )
+
+    assert "error" not in result, result
+    policy = result["firewall_policy"]
+    assert policy["destination"]["zoneId"] == zones["Hotspot"]
+    assert policy["destination"]["zoneId"] != zones["Internal"]
+    assert "not found" not in policy["description"]
+
+
 class _RecordingBackend:
     def __init__(self) -> None:
         self.sent: list[dict[str, Any]] = []
@@ -550,6 +614,17 @@ async def test_real_create_answers_what_was_sent_and_the_record_read_back(
     assert result["record"] == stored
     assert result["_id"] == "u9"
     assert result["summary"] == "Reserved 192.168.1.42 for aa:bb:cc:dd:ee:ff"
+
+
+async def test_restore_description_says_the_uuid_lease_write_is_unverified(
+    stub_server: FastMCP,
+) -> None:
+    listed = next(t for t in await stub_server.list_tools() if t.name == "restore_config")
+    description = listed.description or ""
+    assert "Args:" not in description
+    assert "legacy_id" in description
+    assert "has not been verified live" in description
+    assert "same controller" in description
 
 
 @pytest.mark.parametrize(
