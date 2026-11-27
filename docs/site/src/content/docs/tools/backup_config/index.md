@@ -11,13 +11,21 @@ Snapshot every persistent resource on the controller into one envelope.
 Side effects: None (read-only).
 
 Captures networks/VLANs, firewall groups, WLANs, legacy firewall
-rules, port profiles, static DHCP reservations, and port forwards
-into one versioned JSON envelope. It does NOT capture Zone-Based
-Firewall policies or zones, static routes, traffic rules and
-routes, content filters, dynamic DNS, AP groups, or site settings;
-the envelope's ``not_included`` field lists each, so a backup is
-never mistaken for a whole-site snapshot. Transient state (clients,
-devices, observability) is excluded by design.
+rules, port profiles, static DHCP reservations, port forwards, and
+the Zone-Based Firewall into one versioned JSON envelope.
+``firewall_policies`` holds every policy an operator created
+(controller-managed ones, including port-forward mirrors, are left
+out), with zones and networks named rather than referenced by id and
+runtime counters such as ``hits`` dropped; ``firewall_zones`` holds
+the zones those policies use, by name, with the networks in each
+(and a count of members it could not name). A zone-wide policy is
+backed up but ``restore_config`` will not restore it. A site on
+legacy rulesets gets two empty sections. It does NOT capture
+static routes, traffic rules and routes, content filters, dynamic
+DNS, AP groups, or site settings; the envelope's ``not_included``
+field lists each, so a backup is never mistaken for a whole-site
+snapshot. Transient state (clients, devices, observability) is
+excluded by design.
 
 Secret handling: every sensitive field on a WLAN or network record
 is replaced with the sentinel ``<redacted-on-backup>`` — WLAN
