@@ -174,7 +174,7 @@ async def test_emit_writes_jsonl_with_full_envelope(tmp_path: Path) -> None:
     assert event.args["api_key"] == REDACTED
     assert event.args["vlan_id"] == 50
     assert event.error is None
-    assert event.schema == "1"
+    assert event.schema == "2"
     assert event.ts.endswith("Z")
 
     # File contains exactly one well-formed line with the same data.
@@ -188,7 +188,7 @@ async def test_emit_writes_jsonl_with_full_envelope(tmp_path: Path) -> None:
     assert record["args"]["vlan_id"] == 50
     assert record["result"] == {"_id": "abc", "vlan_id": 50}
     assert record["error"] is None
-    assert record["schema"] == "1"
+    assert record["schema"] == "2"
 
 
 async def test_emit_failure_carries_error_string(tmp_path: Path) -> None:

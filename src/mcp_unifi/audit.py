@@ -24,6 +24,21 @@ Design notes
   small set of well-known sensitive names (case-insensitive substring match
   against the registered patterns). Values become the literal string
   ``"***"``; structure is preserved so the log shape stays stable.
+
+Correlation and tamper evidence (schema ``"2"``)
+------------------------------------------------
+* Every record carries a unique ``event_id`` and an ``operation_id``. A plain
+  call's ``operation_id`` is its own ``event_id``. A destructive preview
+  stores its ``event_id`` on the pending action, and the later
+  ``confirm_destructive_action`` record carries that same value as its
+  ``operation_id``, so ``jq 'select(.operation_id == "...")'`` returns the
+  preview and the executed change together, in order.
+* Every record carries ``prev_hash`` and ``hash`` (see
+  :mod:`mcp_unifi.audit_chain`). Sealing happens inside the same lock as the
+  sink write, after redaction, so the hash covers exactly what is written and
+  two concurrent calls cannot fork the chain. The head hash is kept in memory;
+  the file sink's last line is read once, on the first write after start.
+* ``mcp-unifi-audit-verify`` walks a file and reports the first broken link.
 """
 
 from __future__ import annotations
@@ -34,11 +49,14 @@ import logging
 import logging.handlers
 import os
 import sys
-from collections.abc import Iterable, Mapping
+import uuid
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
+
+from mcp_unifi import audit_chain
 
 logger = logging.getLogger("mcp_unifi.audit")
 
@@ -92,9 +110,24 @@ class AuditEvent:
     #: this field distinguishes it without parsing prose. Replay reads it
     #: to skip refused calls instead of re-issuing them.
     denied_by: str | None = None
+    #: Unique id of this record (schema 2+). ``None`` only on records parsed
+    #: from a log written before schema 2.
+    event_id: str | None = None
+    #: Groups the records that make up one change (schema 2+). Equal to
+    #: ``event_id`` for a plain call. A ``confirm_destructive_action`` record
+    #: carries the ``event_id`` of the preview it executed.
+    operation_id: str | None = None
+    #: Set only on a record that begins a new hash-chain segment, naming why
+    #: (``audit_chain.CHAIN_START_*``). ``None`` on a record that continues one.
+    chain_start: str | None = None
+    #: ``hash`` of the record before this one, or the genesis value.
+    prev_hash: str | None = None
+    #: SHA-256 over this record without ``hash``. See :mod:`mcp_unifi.audit_chain`.
+    hash: str | None = None
     # Schema version. Bump when the envelope shape changes so replay can
-    # reject incompatible logs cleanly.
-    schema: str = field(default="1")
+    # reject incompatible logs cleanly. "2" added the ids and the hash chain;
+    # every field it added has a default, so schema-1 lines still parse.
+    schema: str = field(default=audit_chain.CHAINED_SCHEMA)
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), default=str, sort_keys=True)
@@ -124,7 +157,12 @@ class Sink(Protocol):
 
 
 class FileSink:
-    """Append-only JSONL sink. Creates parent directories as needed."""
+    """Append-only JSONL sink. Creates parent directories as needed.
+
+    It is the one sink that can read back what it wrote, so it is the one that
+    continues the hash chain across restarts (:meth:`resume_chain`). It never
+    rewrites an existing line.
+    """
 
     def __init__(self, path: str | os.PathLike[str]) -> None:
         self._path = Path(path)
@@ -147,6 +185,14 @@ class FileSink:
             fh.write(line)
             fh.flush()
             os.fsync(fh.fileno())
+
+    async def resume_chain(self) -> audit_chain.ChainResume:
+        """Where the chain continues: the ``hash`` on the file's last line.
+
+        Reads only the tail of the file, once, before this process's first
+        write. Never raises; see :func:`mcp_unifi.audit_chain.resume_from_file`.
+        """
+        return await asyncio.to_thread(audit_chain.resume_from_file, self._path)
 
     async def aclose(self) -> None:
         return None
@@ -210,21 +256,91 @@ DEFAULT_PATH = "./audit.jsonl"
 VALID_SINKS: frozenset[str] = frozenset({"file", "stdout", "syslog"})
 
 
+def _new_event_id() -> str:
+    """A fresh record id: 32 lowercase hex characters of a UUID4."""
+    return uuid.uuid4().hex
+
+
 class AuditLog:
     """Async-safe audit emitter with a swappable sink.
 
     The class is deliberately small — one lock, one sink, one ``emit`` method.
-    Higher-level concerns (correlation IDs, sampling, multi-sink fan-out)
-    can be layered on later if a real need shows up.
+    It also owns the head of the hash chain, because only code inside the
+    lock may read and advance it.
+
+    Args:
+        sink: Where records go.
+        id_factory: Makes ``event_id`` values. Tests inject a deterministic
+            one; the default is a UUID4 in hex.
+        client_id_override: When set, every record carries this ``client_id``
+            whatever the caller passed. ``mcp-unifi-replay`` marks its records
+            this way. It has to happen here, before the record is hashed: a
+            sink that changed a field after sealing would break the chain.
     """
 
-    def __init__(self, sink: Sink) -> None:
+    def __init__(
+        self,
+        sink: Sink,
+        *,
+        id_factory: Callable[[], str] | None = None,
+        client_id_override: str | None = None,
+    ) -> None:
         self._sink = sink
         self._lock = asyncio.Lock()
+        self._new_id = id_factory or _new_event_id
+        self._client_id_override = client_id_override
+        #: ``hash`` of the last record this process sealed. ``None`` until the
+        #: first write, which resumes it from the sink.
+        self._head: str | None = None
 
     @property
     def sink(self) -> Sink:
         return self._sink
+
+    def new_event_id(self) -> str:
+        """Allocate an ``event_id`` before the record exists.
+
+        The audit decorator does this when a tool call starts, so a preview
+        can store its own id on the pending action before its record is
+        written. Pass the value back to :meth:`emit` as ``event_id``.
+        """
+        return self._new_id()
+
+    async def _resume(self) -> audit_chain.ChainResume:
+        resume = getattr(self._sink, "resume_chain", None)
+        if resume is None:
+            # stdout and syslog cannot be read back, so each process start
+            # begins a segment of its own.
+            return audit_chain.ChainResume(
+                audit_chain.GENESIS_HASH, audit_chain.CHAIN_START_PROCESS_START
+            )
+        result: audit_chain.ChainResume = await resume()
+        return result
+
+    async def _seal(self, event: AuditEvent) -> None:
+        """Link ``event`` to the chain and hash it. Caller holds the lock."""
+        if self._head is None:
+            try:
+                start = await self._resume()
+            except Exception:
+                logger.exception("audit chain could not be resumed; starting a new segment")
+                start = audit_chain.ChainResume(
+                    audit_chain.GENESIS_HASH, audit_chain.CHAIN_START_AFTER_UNREADABLE
+                )
+            self._head = start.prev_hash
+            event.chain_start = start.chain_start
+        event.prev_hash = self._head
+        # Hash the record as it will read back from the file, and keep those
+        # values on the event, so the line the sink writes is exactly the
+        # material that was hashed (plus ``hash`` itself).
+        material = audit_chain.normalize({k: v for k, v in asdict(event).items() if k != "hash"})
+        event.args = material["args"]
+        event.result = material["result"]
+        event.hash = audit_chain.record_hash(material)
+        # Advanced whether or not the sink write then succeeds: a record that
+        # was sealed but never landed shows up to the verifier as a missing
+        # record, instead of vanishing without a trace.
+        self._head = event.hash
 
     async def emit(
         self,
@@ -237,6 +353,8 @@ class AuditLog:
         error: str | None = None,
         client_id: str | None = None,
         denied_by: str | None = None,
+        event_id: str | None = None,
+        operation_id: str | None = None,
     ) -> AuditEvent:
         """Record a single tool invocation, or a refusal to make one.
 
@@ -245,9 +363,15 @@ class AuditLog:
         for tests that want to assert on the envelope without re-parsing the
         sink output.
 
+        ``event_id`` defaults to a fresh id (see :meth:`new_event_id`) and
+        ``operation_id`` defaults to the ``event_id``, so a caller that knows
+        nothing about correlation, such as the scope and write gates in
+        :mod:`mcp_unifi.scoping`, still writes a complete record.
+
         Failures inside the sink are logged and swallowed: an audit-log
         outage must never break a tool call.
         """
+        eid = event_id or self._new_id()
         event = AuditEvent(
             ts=_utc_now_iso(),
             controller=controller,
@@ -257,10 +381,19 @@ class AuditLog:
             success=success,
             latency_ms=round(latency_ms, 3),
             error=error,
-            client_id=client_id,
+            client_id=self._client_id_override or client_id,
             denied_by=denied_by,
+            event_id=eid,
+            operation_id=operation_id or eid,
         )
         async with self._lock:
+            try:
+                await self._seal(event)
+            except Exception:  # pragma: no cover - defensive only
+                logger.exception(
+                    "audit record could not be sealed into the hash chain",
+                    extra={"controller": controller, "tool": tool},
+                )
             try:
                 await self._sink.write(event)
             except Exception:  # pragma: no cover - defensive only
@@ -448,6 +581,13 @@ def parse_jsonl(lines: Iterable[str]) -> list[AuditEvent]:
                     # Absent in logs written before v0.21.0; a missing field
                     # correctly reads as "this call was dispatched".
                     denied_by=payload.get("denied_by"),
+                    # Absent from schema-1 logs, which predate correlation
+                    # and the hash chain. Each reads as None.
+                    event_id=payload.get("event_id"),
+                    operation_id=payload.get("operation_id"),
+                    chain_start=payload.get("chain_start"),
+                    prev_hash=payload.get("prev_hash"),
+                    hash=payload.get("hash"),
                 )
             )
         except KeyError as exc:

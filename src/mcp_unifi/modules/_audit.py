@@ -122,6 +122,38 @@ _ANNOTATIONS: ContextVar[dict[str, Any] | None] = ContextVar(
 )
 
 
+#: ``event_id`` of the audited call in progress, so code inside a tool body can
+#: record which operation it belongs to (see :func:`current_operation_id`).
+_OPERATION: ContextVar[str | None] = ContextVar("mcp_unifi_audit_operation", default=None)
+
+
+def current_operation_id() -> str | None:
+    """The ``event_id`` the audited call in progress will be recorded under.
+
+    A destructive preview stores this on its pending action
+    (:meth:`mcp_unifi.modules.network._pending.PendingActionsRegistry.put`),
+    which is what lets the later confirm be filed under the same operation.
+    ``None`` outside an audited call.
+    """
+    return _OPERATION.get()
+
+
+def continue_operation(operation_id: str | None) -> None:
+    """File the audited call in progress under an earlier operation.
+
+    ``confirm_destructive_action`` calls this with the ``operation_id`` its
+    pending action recorded at preview time, so the preview record and the
+    executed change share one ``operation_id``. It is recorded on the event's
+    envelope, not in ``args``, and does nothing when ``operation_id`` is
+    empty (a pending action queued outside an audited call) or when no
+    audited call is in progress.
+    """
+    current = _ANNOTATIONS.get()
+    if current is None or not operation_id:
+        return
+    current["operation_id"] = operation_id
+
+
 def annotate_audit(*, controller: str | None = None, **fields: Any) -> None:
     """Correct or enrich the audit event for the tool call in progress.
 
@@ -253,12 +285,20 @@ def audited(
             controller = str(kwargs.get("controller", "default"))
             client_id = _current_client_id()
             log = audit.get_audit_log()
+            # Allocated before the body runs so a preview can store it on its
+            # pending action; the record is written under the same id.
+            event_id = log.new_event_id()
+            operation_id = event_id
             annotations: dict[str, Any] = {}
             annotations_token = _ANNOTATIONS.set(annotations)
+            operation_token = _OPERATION.set(event_id)
 
             def _apply_annotations() -> None:
-                nonlocal controller
+                nonlocal controller, operation_id
+                _ANNOTATIONS.reset(annotations_token)
+                _OPERATION.reset(operation_token)
                 controller = str(annotations.get("controller", controller))
+                operation_id = str(annotations.get("operation_id", operation_id))
                 audit_args.update(annotations.get("args", {}))
 
             # The span wraps the audit emit as well as the tool body, so its
@@ -281,7 +321,6 @@ def audited(
                     # write may already have reached the controller by the
                     # time the cancellation lands, and a client could cancel
                     # on purpose to keep its own writes out of the log.
-                    _ANNOTATIONS.reset(annotations_token)
                     _apply_annotations()
                     span.set(telemetry.ATTR_CONTROLLER, controller)
                     latency_ms = (time.perf_counter() - start) * 1000.0
@@ -296,11 +335,12 @@ def audited(
                             latency_ms=latency_ms,
                             error=CANCELLED_ERROR,
                             client_id=client_id,
+                            event_id=event_id,
+                            operation_id=operation_id,
                         )
                     )
                     raise
                 except Exception as exc:
-                    _ANNOTATIONS.reset(annotations_token)
                     _apply_annotations()
                     span.set(telemetry.ATTR_CONTROLLER, controller)
                     latency_ms = (time.perf_counter() - start) * 1000.0
@@ -315,13 +355,14 @@ def audited(
                             latency_ms=latency_ms,
                             error=str(exc),
                             client_id=client_id,
+                            event_id=event_id,
+                            operation_id=operation_id,
                         )
                     )
                     if cancelled is not None:
                         raise cancelled from exc
                     raise
 
-                _ANNOTATIONS.reset(annotations_token)
                 _apply_annotations()
                 # The span opened with the controller from kwargs; a tool
                 # that resolved a different one (confirm_destructive_action)
@@ -338,6 +379,8 @@ def audited(
                         success=True,
                         latency_ms=latency_ms,
                         client_id=client_id,
+                        event_id=event_id,
+                        operation_id=operation_id,
                     )
                 )
                 if cancelled is not None:
@@ -355,5 +398,7 @@ __all__ = [
     "annotate_audit",
     "audited",
     "classified_tools",
+    "continue_operation",
+    "current_operation_id",
     "tool_mutates",
 ]

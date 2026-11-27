@@ -7,6 +7,7 @@ FastMCP server, and surfaces failures.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,7 +17,7 @@ import httpx
 import pytest
 import respx
 
-from mcp_unifi import audit
+from mcp_unifi import audit, audit_chain
 from mcp_unifi.audit import AuditEvent
 from mcp_unifi.cli import replay as replay_mod
 from mcp_unifi.clients.stubs import StubState
@@ -541,6 +542,56 @@ def test_main_real_replay_is_audited_and_marked_as_a_replay(
     assert [(r.tool, r.client_id) for r in records] == [
         ("list_networks", replay_mod.REPLAY_CLIENT_ID)
     ]
+    # The mark is applied before the record is hashed. Rewriting client_id
+    # after sealing (in a sink wrapper, as replay used to) breaks the chain.
+    report = audit_chain.verify_lines(audit_chain.read_lines([real_replay_env]))
+    assert report.ok, report.broken
+    assert report.chained == 1
+
+
+async def _chained_log(path: Path) -> None:
+    """A schema-2 log as the server writes it: one dispatched call, one refusal."""
+    log = audit.AuditLog(sink=audit.FileSink(path))
+    await log.emit("default", "list_networks", {}, [], True, 1.0)
+    await log.emit(
+        "default",
+        "create_vlan",
+        {"name": "Office", "vlan_id": 51, "subnet": "10.0.51.0/24"},
+        None,
+        False,
+        0.0,
+        error="refused: read-only mode",
+        denied_by="readonly",
+    )
+
+
+@pytest.mark.parametrize("legacy_prefix", [False, True])
+def test_main_stub_replay_reads_chained_logs_and_still_skips_refusals(
+    clean_replay_env: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    legacy_prefix: bool,
+) -> None:
+    """Replay reads schema-2 records, alone or after schema-1 ones, unchanged.
+
+    The chain fields are envelope, not arguments: nothing new reaches the
+    replayed tool, and a refused call is still skipped rather than re-issued.
+    """
+    log = tmp_path / "input.jsonl"
+    if legacy_prefix:
+        _write_log(log, [_logged("list_devices")])
+    asyncio.run(_chained_log(log))
+    assert audit_chain.verify_lines(audit_chain.read_lines([log])).ok
+
+    rc = replay_mod.main([str(log), "--json"])
+
+    assert rc == 0, capsys.readouterr()
+    results = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
+    expected = [("list_networks", True, False), ("create_vlan", False, True)]
+    if legacy_prefix:
+        expected.insert(0, ("list_devices", True, False))
+    assert [(r["tool"], r["success"], r["skipped"]) for r in results] == expected
+    assert "refused at capture time by readonly" in results[-1]["skip_reason"]
 
 
 def test_main_real_replay_refuses_to_replay_the_sink_it_appends_to(

@@ -18,6 +18,12 @@ tool annotates its own event with the same value plus the queued ``action`` and
 the controller the pending action actually targets. Without that annotation
 the confirm event said ``controller: default`` regardless, because this tool
 takes no ``controller`` argument for the decorator to read.
+
+The pending action also carries the preview record's ``event_id``, and this
+tool files its own record under it as ``operation_id``, so one ``jq`` filter on
+``operation_id`` returns the preview and the executed change together. An
+unknown, expired or wrong-client token is recorded under a fresh operation of
+its own, because nothing was executed.
 """
 
 from __future__ import annotations
@@ -27,7 +33,7 @@ from typing import TYPE_CHECKING
 
 from mcp_unifi.annotations import DESTRUCTIVE_ONCE
 from mcp_unifi.clients.unifi import UniFiError
-from mcp_unifi.modules._audit import annotate_audit, audited
+from mcp_unifi.modules._audit import annotate_audit, audited, continue_operation
 from mcp_unifi.modules.network._common import make_err
 from mcp_unifi.modules.network._pending import get_pending_actions, preview_id
 
@@ -84,6 +90,7 @@ def register(mcp: FastMCP, settings: Settings, _registry: ControllerRegistry) ->
                 "destructive tool to get a fresh token."
             )
         annotate_audit(controller=pending.controller, action=pending.action)
+        continue_operation(pending.operation_id)
         try:
             return await pending.executor()
         except UniFiError as exc:
