@@ -1152,3 +1152,119 @@ async def test_an_unrecognised_schedule_holds_back_quoting_what_the_site_returne
     assert [a["action"] for a in mine] == ["blocked"]
     assert quoted in mine[0]["reason"]
     assert "mode None" not in mine[0]["reason"]
+
+
+# ---------------------------------------------------------------------------
+# Review round 4 (#265): blank address lists, destination-only zone-wide
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("ips", "port"),
+    [([""], ""), (["   "], ""), ([" "], "443")],
+    ids=["empty", "spaces", "space-plus-port"],
+)
+async def test_an_address_side_with_only_blank_entries_is_held_back(
+    source_server: FastMCP,
+    target_server: FastMCP,
+    target_state: StubState,
+    ips: list[str],
+    port: str,
+) -> None:
+    """Blank entries are dropped when the body is built, which used to leave
+    a source with no filter (or a port-only one): a zone-wide policy."""
+    envelope = await _backup(source_server)
+    spec = next(
+        p for p in envelope["resources"]["firewall_policies"] if p["name"] == "Allow Dewfront web"
+    )
+    spec["source"]["ips"] = ips
+    if port:
+        spec["source"]["port"] = port
+        spec["source"]["port_matching_type"] = "SPECIFIC"
+    spy = WriteSpy(target_state)
+
+    dry = await _dry(target_server, envelope)
+    mine = [a for a in _policy_actions(dry["would_apply"]) if a["name"] == "Allow Dewfront web"]
+    assert [a["action"] for a in mine] == ["blocked"], mine
+    assert "source" in mine[0]["reason"] and "blank" in mine[0]["reason"]
+    assert not [
+        a
+        for a in _policy_actions(dry["would_apply"], "create")
+        if "trafficFilter" not in a["payload"]["source"]
+        or a["payload"]["source"]["trafficFilter"].get("type") == "PORT"
+    ]
+
+    await _apply(target_server, envelope)
+    sent = {args[0]["name"] for method, args in spy.calls if method == "create_policy"}
+    assert "Allow Dewfront web" not in sent
+
+
+async def test_a_policy_zone_wide_only_on_its_destination_is_held_back(
+    source_server: FastMCP,
+    source_state: StubState,
+    target_server: FastMCP,
+    target_state: StubState,
+) -> None:
+    from mcp_unifi.clients.zone_firewall_stubs import _v2_endpoint, _v2_policy
+
+    zone = {z["name"]: z["_id"] for z in source_state.firewall_zones}
+    trusted = next(n["_id"] for n in source_state.networks if n.get("name") == "TRUSTED")
+    source_state.firewall_policies.append(
+        _v2_policy(
+            "Allow TRUSTED to all Internal",
+            "ALLOW",
+            _v2_endpoint(zone["Internal"], side="source", networks=[trusted]),
+            _v2_endpoint(zone["Internal"], side="destination"),
+            index=10020,
+        )
+    )
+    envelope = await _backup(source_server)
+    spy = WriteSpy(target_state)
+
+    dry = await _dry(target_server, envelope)
+    blocked = {a["name"]: a["reason"] for a in _policy_actions(dry["would_apply"], "blocked")}
+    assert set(blocked) == {"Allow TRUSTED to all Internal"}
+    assert (
+        "destination matches every network in zone 'Internal'"
+        in blocked["Allow TRUSTED to all Internal"]
+    )
+
+    await _apply(target_server, envelope)
+    sent = {args[0]["name"] for method, args in spy.calls if method == "create_policy"}
+    assert sent == set(USER_NAMES)
+
+
+async def test_a_side_that_builds_to_no_filter_is_held_back(
+    source_server: FastMCP,
+    target_server: FastMCP,
+    target_state: StubState,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The zone-wide guard runs on the body that would be sent, not only on
+    the backup's input: an address list the body builder turns into no items
+    must not reach the console as a whole-zone match."""
+    from mcp_unifi.clients import zone_policy
+
+    monkeypatch.setattr(zone_policy, "address_items", lambda addresses: [])
+    envelope = await _backup(source_server)
+    spy = WriteSpy(target_state)
+
+    dry = await _dry(target_server, envelope)
+    blocked = {a["name"]: a["reason"] for a in _policy_actions(dry["would_apply"], "blocked")}
+    # Every policy with an address side; the four Ecowitt ones share a name.
+    assert set(blocked) == {
+        ECOWITT,
+        "Allow MGMT DNS",
+        "Block Guest to Internal",
+        "Allow Vpn to Internal",
+        "Allow Dewfront web",
+    }
+    for reason in blocked.values():
+        assert "matches every network in zone" in reason
+    for action in _policy_actions(dry["would_apply"], "create"):
+        for side in ("source", "destination"):
+            assert action["payload"][side]["trafficFilter"]["type"] == "NETWORK"
+
+    await _apply(target_server, envelope)
+    sent = {args[0]["name"] for method, args in spy.calls if method == "create_policy"}
+    assert sent == {"Allow TRUSTED to MGMT", "Block IoT to TRUSTED"}

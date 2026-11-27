@@ -460,7 +460,12 @@ def _side(label: str, endpoint: Any) -> _Side:
     elif target == "IP":
         if not isinstance(ips, list) or not ips or networks:
             raise Untranslatable(f"{label} matches IP without a plain address list")
-        addresses = tuple(str(a) for a in ips)
+        addresses = tuple(str(a).strip() for a in ips if str(a).strip())
+        if not addresses:
+            raise Untranslatable(
+                f"{label} matches IP but every entry in its address list is blank, which "
+                "would match every network in the zone"
+            )
     else:
         raise Untranslatable(f"{label} matches by {target}")
 
@@ -545,6 +550,25 @@ def translate(spec: dict[str, Any]) -> _Intent:
 # ---------------------------------------------------------------------------
 # Restore: plan
 # ---------------------------------------------------------------------------
+
+
+def scoped_filter(endpoint: Any) -> bool:
+    """True when a built v1 ``source``/``destination`` matches named networks
+    or addresses: a ``NETWORK`` filter with at least one network id, or an
+    ``IP_ADDRESS`` filter with at least one item. Anything else, no filter or
+    a port-only one included, matches the whole zone."""
+    traffic = endpoint.get("trafficFilter") if isinstance(endpoint, dict) else None
+    if not isinstance(traffic, dict):
+        return False
+    if traffic.get("type") == "NETWORK":
+        nets = traffic.get("networkFilter")
+        ids = nets.get("networkIds") if isinstance(nets, dict) else None
+        return isinstance(ids, list) and any(ids)
+    if traffic.get("type") == "IP_ADDRESS":
+        addrs = traffic.get("ipAddressFilter")
+        items = addrs.get("items") if isinstance(addrs, dict) else None
+        return isinstance(items, list) and any(items)
+    return False
 
 
 def _part(record: dict[str, Any], key: str) -> dict[str, Any]:
@@ -682,14 +706,28 @@ async def plan_policies(
         except PolicyLookupError as exc:
             raise Blocked(str(exc)) from exc
 
+    def _zone_wide(label: str, zone: str) -> Blocked:
+        return Blocked(
+            f"{label} matches every network in zone {zone!r}; restore cannot "
+            "prove that zone covers the same networks on this site, so it never "
+            "writes zone-wide policies. Recreate it with create_firewall_policy."
+        )
+
     async def _body(intent: _Intent) -> dict[str, Any]:
+        body = await _built_body(intent)
+        # Checked on what would be SENT: a side is written only when its
+        # traffic filter names at least one network or one address. Input
+        # that looked scoped but built to no filter, or to a port-only one,
+        # would match the whole zone.
+        for key, side in (("source", intent.source), ("destination", intent.destination)):
+            if not scoped_filter(body.get(key)):
+                raise _zone_wide(key, side.zone)
+        return body
+
+    async def _built_body(intent: _Intent) -> dict[str, Any]:
         for side, label in ((intent.source, "source"), (intent.destination, "destination")):
             if not side.network_names and not side.addresses:
-                raise Blocked(
-                    f"{label} matches every network in zone {side.zone!r}; restore cannot "
-                    "prove that zone covers the same networks on this site, so it never "
-                    "writes zone-wide policies. Recreate it with create_firewall_policy."
-                )
+                raise _zone_wide(label, side.zone)
         source_zone = _zone(intent.source.zone, "source zone")
         destination_zone = _zone(intent.destination.zone, "destination zone")
         source_networks = await _networks(intent.source.network_names, "source")
