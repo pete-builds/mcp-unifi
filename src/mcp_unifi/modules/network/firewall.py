@@ -16,6 +16,7 @@ from mcp_unifi.modules._params import (
 from mcp_unifi.modules.network._common import format_json, make_err
 from mcp_unifi.modules.network._pending import format_preview_envelope, get_pending_actions
 from mcp_unifi.modules.network._verify import verified_update
+from mcp_unifi.modules.network._zone_policy import site_is_zone_based
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -31,8 +32,38 @@ _FIREWALL_GROUP_TYPES: frozenset[str] = frozenset(
 )
 
 
+def _zbf_refusal(tool: str, policy_tool: str) -> str:
+    return (
+        f"{tool} refused: this site uses the Zone-Based Firewall (forced on every site "
+        "since UniFi Network 11.0.97), which has no legacy firewall rules, so a legacy "
+        f"rule write cannot take effect. Use {policy_tool} instead. Nothing was changed."
+    )
+
+
 def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> None:
     err = make_err(settings)
+
+    async def _refuse_if_zone_based(
+        tool: str, policy_tool: str, controller: str, *, dry_run: bool = False
+    ) -> str | None:
+        """Error envelope when the site is zone-based, else ``None``.
+
+        Only a state of ``configured`` refuses; ``legacy``, ``unsupported`` and
+        ``disabled`` (``UNIFI_WRITE_API=private``) go on exactly as before. When
+        the state cannot be read, a real write refuses with the read error
+        (the same stance as the provisioning composites: a write that cannot
+        prove the site is legacy does not run), while a dry run, which writes
+        nothing, previews as it always did.
+        """
+        try:
+            zone_based = await site_is_zone_based(resolve_backend(registry, controller))
+        except UniFiError as exc:
+            if dry_run:
+                logger.warning("dry run could not read the firewall model", exc_info=True)
+                return None
+            logger.exception("%s: firewall model detection failed", tool)
+            return err(str(exc))
+        return err(_zbf_refusal(tool, policy_tool)) if zone_based else None
 
     @mcp.tool(annotations=READ_ONLY)
     @audited("list_firewall_rules", mutates=False)
@@ -155,6 +186,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     ) -> str:
         """Create a firewall rule on the controller.
 
+        On Zone-Based Firewall sites (every site on UniFi Network 11) this tool
+        refuses; use create_firewall_policy.
+
         Side effects:
         - Adds a new rule into the named ``ruleset`` at the given
           ``rule_index``. Rules with lower indexes evaluate first.
@@ -216,6 +250,11 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             dry_run: Preview the change without applying it. Returns the
                 predicted change set.
         """
+        refusal = await _refuse_if_zone_based(
+            "create_firewall_rule", "create_firewall_policy", controller, dry_run=dry_run
+        )
+        if refusal is not None:
+            return refusal
         payload: dict[str, Any] = {
             "name": name,
             "ruleset": ruleset,
@@ -275,6 +314,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     ) -> str:
         """Patch fields on an existing firewall rule.
 
+        On Zone-Based Firewall sites (every site on UniFi Network 11) this tool
+        refuses; use update_firewall_policy.
+
         Side effects:
         - Modifies the named rule in place. Only fields supplied in
           ``updates`` change; everything else is preserved.
@@ -304,6 +346,11 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             dry_run: Preview the change without applying it. Returns the
                 predicted change set.
         """
+        refusal = await _refuse_if_zone_based(
+            "update_firewall_rule", "update_firewall_policy", controller, dry_run=dry_run
+        )
+        if refusal is not None:
+            return refusal
         if dry_run:
             return format_json(
                 {
@@ -338,6 +385,9 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     ) -> str:
         """Preview deletion of a firewall rule.
 
+        On Zone-Based Firewall sites (every site on UniFi Network 11) this tool
+        refuses; use delete_firewall_policy.
+
         v0.7.0: this tool no longer deletes on its own. It returns a preview
         envelope with a ``token``; call ``confirm_destructive_action(token)``
         to commit the delete. Tokens expire after 5 minutes.
@@ -359,6 +409,11 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 ``{"dry_run": true, ...}`` envelope. ``False`` (default)
                 generates a preview token that must be confirmed.
         """
+        refusal = await _refuse_if_zone_based(
+            "delete_firewall_rule", "delete_firewall_policy", controller, dry_run=dry_run
+        )
+        if refusal is not None:
+            return refusal
         if dry_run:
             return format_json(
                 {
@@ -390,6 +445,13 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         }
 
         async def _execute() -> str:
+            # The token may be minutes old and a site can migrate to zones in
+            # that time, so the guard runs again at commit.
+            refusal = await _refuse_if_zone_based(
+                "delete_firewall_rule", "delete_firewall_policy", controller
+            )
+            if refusal is not None:
+                return refusal
             try:
                 ok = await backend.delete_firewall_rule(rule_id)
                 return format_json({"deleted": ok, "rule_id": rule_id})

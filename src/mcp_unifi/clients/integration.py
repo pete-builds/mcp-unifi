@@ -26,7 +26,8 @@ When the private path is used instead:
 When it is not: a 5xx, a timeout, or a dropped connection after the request
 was sent. Those leave the outcome unknown, and replaying the write on the
 other surface could apply it twice, so the error propagates exactly as a
-private-path failure would.
+private-path failure would. A write that times out says so in plain words: the
+outcome is unknown and the caller must check before retrying.
 """
 
 from __future__ import annotations
@@ -34,6 +35,8 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal
+
+import httpx
 
 from mcp_unifi.clients import integration_translate as tr
 from mcp_unifi.clients.errors import UniFiError, describe_error_body, error_fields, parse_json_body
@@ -51,6 +54,16 @@ ZoneFirewallState = Literal["configured", "legacy", "unsupported", "disabled"]
 
 #: The 400 code a site still on legacy rulesets returns from v1 firewall routes.
 ZBF_NOT_CONFIGURED = "api.firewall.zone-based-firewall-not-configured"
+
+#: Seconds a v1 WRITE (POST, PUT, PATCH, DELETE) waits for the console. UniFi
+#: Network before 11.1.58 could stall an Integration API request for up to 40 s
+#: (fixed in the 11.1.58 release notes), and the console may still apply a
+#: write that stalled, so the wait must outlast the stall. The client's own 15 s
+#: stays for reads, and the connect phase stays short so an unreachable console
+#: still fails fast.
+V1_WRITE_TIMEOUT_SECONDS = 60.0
+_V1_CONNECT_TIMEOUT_SECONDS = 15.0
+_V1_READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 
 def _created_id(created: Any, what: str) -> str:
@@ -121,15 +134,42 @@ class IntegrationWrites:
 
     async def _request(self, method: str, path: str, json: dict[str, Any] | None = None) -> Any:
         url = f"{self.client._base}/integration/v1{path}"
-        resp = await request_with_retry(
-            self.client._client,
-            method,
-            url,
-            logger=logger,
-            service="UniFi Integration",
-            error_cls=UniFiError,
-            json=json,
-        )
+        is_write = method.upper() not in _V1_READ_METHODS
+        try:
+            resp = await request_with_retry(
+                self.client._client,
+                method,
+                url,
+                logger=logger,
+                service="UniFi Integration",
+                error_cls=UniFiError,
+                json=json,
+                timeout=(
+                    httpx.Timeout(
+                        V1_WRITE_TIMEOUT_SECONDS,
+                        connect=_V1_CONNECT_TIMEOUT_SECONDS,
+                        pool=_V1_CONNECT_TIMEOUT_SECONDS,
+                    )
+                    if is_write
+                    else None
+                ),
+            )
+        except UniFiError as exc:
+            cause = exc.__cause__
+            # A ConnectTimeout or PoolTimeout means nothing reached the console,
+            # so only a timeout after the request was sent leaves the outcome unknown.
+            if (
+                is_write
+                and isinstance(cause, httpx.TimeoutException)
+                and not isinstance(cause, httpx.ConnectTimeout | httpx.PoolTimeout)
+            ):
+                raise UniFiError(
+                    f"UniFi Integration {method} {path} timed out after "
+                    f"{V1_WRITE_TIMEOUT_SECONDS:g}s. The outcome is unknown: the "
+                    f"console may have applied the change. Check with the matching "
+                    f"list or get tool before retrying, or a retry could apply it twice."
+                ) from cause
+            raise
         if 400 <= resp.status_code < 500:
             # Same scrubbing as the message: ``detail`` is logged by _fallback
             # under a key the log redactor does not treat as sensitive.

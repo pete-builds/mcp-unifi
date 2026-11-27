@@ -26,9 +26,31 @@ from mcp_unifi.clients.stats_shape import shape_speedtest_results, shape_top_tal
 from mcp_unifi.clients.zone_firewall_stubs import ZoneFirewallStubState
 from mcp_unifi.models import UniFiRecord
 
+#: The stub site's ``site_id``. Network 11 stores it as a UUID string.
+SITE_ID = "5b0c1d2e-3f40-4a51-8b62-7c83d94ea5f6"
 
-def _oid() -> str:
-    """24-character hex string in the shape of a Mongo ObjectId."""
+# Fixed ids for the records other seeds point at, so tests stay deterministic.
+# On Network 11 every ``_id`` is a UUID, and networks and WLANs keep their old
+# 24-hex ObjectId as ``legacy_id`` (LIVE-ID-SHAPES, probed 2026-11-27).
+_NET_DEFAULT_ID = "88a83e2a-5611-4d56-9a4e-4dc5d6cd2f43"
+_NET_DEFAULT_LEGACY_ID = "6a0525dd18ec98252c8a08cc"
+_NET_WAN_ID = "c1a2b3d4-0e1f-4a2b-9c3d-4e5f6a7b8c9d"
+_NET_WAN_LEGACY_ID = "6a0525dd18ec98252c8a08cd"
+_WLAN_HOME_ID = "4f1e2d3c-5b6a-4978-8a9b-0c1d2e3f4a5b"
+_WLAN_HOME_LEGACY_ID = "6a0525dd18ec98252c8a08ce"
+_AP_GROUP_DEFAULT_ID = "e214de6d-20bc-4237-866b-5a65d5901460"
+_ZONE_LAN_ID = "9add6b63-aca0-4331-be66-83f6c01e126e"
+_ZONE_WAN_ID = "d7e8f9a0-1b2c-4d3e-8f4a-5b6c7d8e9f0a"
+_SETTING_GUEST_ACCESS_ID = "e2f3a4b5-6c7d-4e8f-9a0b-1c2d3e4f5a6b"
+
+
+def _uid() -> str:
+    """A UUID string, the shape Network 11 gives every record ``_id``."""
+    return str(uuid.uuid4())
+
+
+def _legacy_id() -> str:
+    """24-character hex string in the shape of a Mongo ObjectId (``legacy_id``)."""
     return uuid.uuid4().hex[:24]
 
 
@@ -44,7 +66,7 @@ def _ts() -> int:
 def _seed_devices() -> list[UniFiRecord]:
     return [
         {
-            "_id": _oid(),
+            "_id": _uid(),
             "mac": "f4:e2:c6:00:00:01",
             "type": "ugw",
             "model": "UCGFiber",
@@ -71,7 +93,7 @@ def _seed_devices() -> list[UniFiRecord]:
             ],
         },
         {
-            "_id": _oid(),
+            "_id": _uid(),
             "mac": "f4:e2:c6:00:00:02",
             "type": "uap",
             "model": "U7Pro",
@@ -102,7 +124,7 @@ def _seed_devices() -> list[UniFiRecord]:
             },
         },
         {
-            "_id": _oid(),
+            "_id": _uid(),
             "mac": "f4:e2:c6:00:00:03",
             "type": "usw",
             "model": "USW24PoE",
@@ -126,7 +148,9 @@ def _seed_devices() -> list[UniFiRecord]:
 def _seed_networks() -> list[UniFiRecord]:
     return [
         {
-            "_id": _oid(),
+            "_id": _NET_DEFAULT_ID,
+            "legacy_id": _NET_DEFAULT_LEGACY_ID,
+            "firewall_zone_id": _ZONE_LAN_ID,
             "name": "Default",
             "purpose": "corporate",
             "vlan_enabled": False,
@@ -136,7 +160,7 @@ def _seed_networks() -> list[UniFiRecord]:
             "dhcpd_start": "192.168.1.100",
             "dhcpd_stop": "192.168.1.200",
             "domain_name": "localdomain",
-            "site_id": "default",
+            "site_id": SITE_ID,
             "enabled": True,
             # IPv6 keys mirror a real UCG-Fiber LAN networkconf record so the
             # IPv6 tools have plausible state to read-modify-write offline.
@@ -147,11 +171,12 @@ def _seed_networks() -> list[UniFiRecord]:
             "dhcpdv6_dns_auto": True,
         },
         {
-            "_id": _oid(),
+            "_id": _NET_WAN_ID,
+            "legacy_id": _NET_WAN_LEGACY_ID,
             "name": "Internet 1",
             "purpose": "wan",
             "attr_no_delete": True,
-            "site_id": "default",
+            "site_id": SITE_ID,
             "enabled": True,
             # IPv6 keys mirror a real UCG-Fiber WAN networkconf record with
             # DHCPv6 prefix delegation enabled (the live gateway state). A LAN
@@ -173,7 +198,8 @@ def _seed_networks() -> list[UniFiRecord]:
 def _seed_wlans(network_id: str) -> list[UniFiRecord]:
     return [
         {
-            "_id": _oid(),
+            "_id": _WLAN_HOME_ID,
+            "legacy_id": _WLAN_HOME_LEGACY_ID,
             "name": "Home",
             "enabled": True,
             "security": "wpapsk",
@@ -190,7 +216,7 @@ def _seed_wlans(network_id: str) -> list[UniFiRecord]:
 def _seed_firewall_rules() -> list[UniFiRecord]:
     return [
         {
-            "_id": _oid(),
+            "_id": _uid(),
             "name": "Allow established/related",
             "ruleset": "WAN_IN",
             "rule_index": 2000,
@@ -213,15 +239,15 @@ def _seed_firewall_zones() -> list[UniFiRecord]:
     """
     return [
         {
-            "_id": _oid(),
+            "_id": _ZONE_LAN_ID,
             "name": "LAN",
             "zone_key": "lan",
             "default_zone": True,
             "attr_no_edit": True,
-            "network_ids": [],
+            "network_ids": [_NET_DEFAULT_ID],
         },
         {
-            "_id": _oid(),
+            "_id": _ZONE_WAN_ID,
             "name": "WAN",
             "zone_key": "wan",
             "default_zone": True,
@@ -252,7 +278,7 @@ def _seed_firewall_policies(zones: list[UniFiRecord]) -> list[UniFiRecord]:
     }
     return [
         {
-            "_id": _oid(),
+            "_id": _uid(),
             "name": "Allow Return Traffic",
             "action": "ALLOW",
             "enabled": True,
@@ -286,18 +312,18 @@ def _seed_firewall_groups() -> list[UniFiRecord]:
     """
     return [
         {
-            "_id": _oid(),
+            "_id": _uid(),
             "name": "RFC1918",
             "group_type": "address-group",
             "group_members": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
-            "site_id": "default",
+            "site_id": SITE_ID,
         },
         {
-            "_id": _oid(),
+            "_id": _uid(),
             "name": "Web Ports",
             "group_type": "port-group",
             "group_members": ["80", "443"],
-            "site_id": "default",
+            "site_id": SITE_ID,
         },
     ]
 
@@ -312,7 +338,7 @@ def _seed_routes() -> list[UniFiRecord]:
     """
     return [
         {
-            "_id": _oid(),
+            "_id": _uid(),
             "name": "Lab subnet via firewall",
             "type": "static-route",
             "static-route_network": "10.99.0.0/24",
@@ -320,7 +346,7 @@ def _seed_routes() -> list[UniFiRecord]:
             "static-route_distance": 1,
             "static-route_type": "nexthop-route",
             "enabled": True,
-            "site_id": "default",
+            "site_id": SITE_ID,
         },
     ]
 
@@ -335,7 +361,7 @@ def _seed_traffic_rules() -> list[UniFiRecord]:
     """
     return [
         {
-            "_id": _oid(),
+            "_id": _uid(),
             "action": "BLOCK",
             "matching_target": "INTERNET",
             "target_devices": [],
@@ -355,7 +381,7 @@ def _seed_traffic_routes() -> list[UniFiRecord]:
     """
     return [
         {
-            "_id": _oid(),
+            "_id": _uid(),
             "matching_target": "DOMAIN",
             "domains": [{"domain": "example.com", "port_ranges": [], "ports": []}],
             "next_hop": "",
@@ -378,7 +404,7 @@ def _seed_content_filters(network_id: str) -> list[UniFiRecord]:
     """
     return [
         {
-            "_id": _oid(),
+            "_id": _uid(),
             "name": "adblock",
             "enabled": True,
             "categories": ["ADVERTISEMENT"],
@@ -412,11 +438,11 @@ def _seed_ap_groups() -> list[UniFiRecord]:
     """
     return [
         {
-            "_id": _oid(),
+            "_id": _AP_GROUP_DEFAULT_ID,
             "name": "Default",
             "attr_hidden_id": "default",
             "device_macs": ["f4:e2:c6:00:00:02"],
-            "site_id": "default",
+            "site_id": SITE_ID,
         },
     ]
 
@@ -424,17 +450,17 @@ def _seed_ap_groups() -> list[UniFiRecord]:
 def _seed_port_profiles() -> list[UniFiRecord]:
     return [
         {
-            "_id": _oid(),
+            "_id": _uid(),
             "name": "All",
-            "site_id": "default",
+            "site_id": SITE_ID,
             "native_networkconf_id": "",
             "forward": "all",
             "poe_mode": "auto",
         },
         {
-            "_id": _oid(),
+            "_id": _uid(),
             "name": "Disabled",
-            "site_id": "default",
+            "site_id": SITE_ID,
             "forward": "disabled",
             "poe_mode": "off",
         },
@@ -456,7 +482,7 @@ def _seed_clients() -> list[UniFiRecord]:
     now = _ts()
     return [
         {
-            "_id": _oid(),
+            "_id": _uid(),
             "mac": "aa:bb:cc:00:00:01",
             "hostname": "petes-laptop",
             "name": "Pete's MacBook",
@@ -481,7 +507,7 @@ def _seed_clients() -> list[UniFiRecord]:
             "first_seen": now - 14523,
         },
         {
-            "_id": _oid(),
+            "_id": _uid(),
             "mac": "aa:bb:cc:00:00:02",
             "hostname": "iphone-15",
             "name": "iPhone 15",
@@ -506,7 +532,7 @@ def _seed_clients() -> list[UniFiRecord]:
             "first_seen": now - 86342,
         },
         {
-            "_id": _oid(),
+            "_id": _uid(),
             "mac": "aa:bb:cc:00:00:03",
             "hostname": "nas",
             "name": "Synology NAS",
@@ -524,7 +550,7 @@ def _seed_clients() -> list[UniFiRecord]:
             "first_seen": now - 2580412,
         },
         {
-            "_id": _oid(),
+            "_id": _uid(),
             "mac": "aa:bb:cc:00:00:04",
             "hostname": "echo-dot",
             "name": "Echo Dot",
@@ -551,8 +577,12 @@ def _seed_clients() -> list[UniFiRecord]:
     ]
 
 
-def _seed_dhcp_leases(network_id: str) -> list[UniFiRecord]:
+def _seed_dhcp_leases(network: UniFiRecord) -> list[UniFiRecord]:
     """Static DHCP reservations.
+
+    On Network 11 a reservation's ``network_id`` is the network's ``legacy_id``
+    (24-hex), while ``last_connection_network_id`` is its UUID ``_id``. A user
+    record has no ``legacy_id`` of its own.
 
     UniFi stores fixed leases on the ``user`` object with
     ``use_fixedip=true``. The seed list intentionally mirrors that shape so
@@ -560,13 +590,14 @@ def _seed_dhcp_leases(network_id: str) -> list[UniFiRecord]:
     """
     return [
         {
-            "_id": _oid(),
+            "_id": _uid(),
             "mac": "aa:bb:cc:00:00:03",
             "name": "Synology NAS",
             "hostname": "nas",
             "use_fixedip": True,
             "fixed_ip": "192.168.1.10",
-            "network_id": network_id,
+            "network_id": network["legacy_id"],
+            "last_connection_network_id": network["_id"],
             "noted": True,
         },
     ]
@@ -575,7 +606,7 @@ def _seed_dhcp_leases(network_id: str) -> list[UniFiRecord]:
 def _seed_port_forwards() -> list[UniFiRecord]:
     return [
         {
-            "_id": _oid(),
+            "_id": _uid(),
             "name": "HTTPS to NAS",
             "enabled": True,
             "src": "any",
@@ -592,7 +623,7 @@ def _seed_events() -> list[UniFiRecord]:
     now = _ts()
     return [
         {
-            "_id": _oid(),
+            "_id": _uid(),
             "time": now - 60,
             "datetime": "stub",
             "key": "EVT_LU_Connected",
@@ -600,7 +631,7 @@ def _seed_events() -> list[UniFiRecord]:
             "subsystem": "wlan",
         },
         {
-            "_id": _oid(),
+            "_id": _uid(),
             "time": now - 3600,
             "datetime": "stub",
             "key": "EVT_GW_WANConnected",
@@ -614,7 +645,7 @@ def _seed_alarms() -> list[UniFiRecord]:
     now = _ts()
     return [
         {
-            "_id": _oid(),
+            "_id": _uid(),
             "time": now - 7200,
             "datetime": "stub",
             "archived": False,
@@ -749,9 +780,9 @@ def _seed_settings(default_network_id: str) -> dict[str, UniFiRecord]:
     """
     return {
         "guest_access": {
-            "_id": "6a0525dd18ec98252c8a08ba",
+            "_id": _SETTING_GUEST_ACCESS_ID,
             "key": "guest_access",
-            "site_id": "default",
+            "site_id": SITE_ID,
             "portal_enabled": True,
             "auth": "none",
             "expire": 480,
@@ -765,9 +796,9 @@ def _seed_settings(default_network_id: str) -> dict[str, UniFiRecord]:
             "facebook_wifi_enabled": None,
         },
         "ips": {
-            "_id": _oid(),
+            "_id": _uid(),
             "key": "ips",
-            "site_id": "default",
+            "site_id": SITE_ID,
             "ips_mode": "off",
             "enabled_categories": [],
             "enabled_networks": [default_network_id],
@@ -780,9 +811,9 @@ def _seed_settings(default_network_id: str) -> dict[str, UniFiRecord]:
             "advanced_filtering_preference": "manual",
         },
         "teleport": {
-            "_id": _oid(),
+            "_id": _uid(),
             "key": "teleport",
-            "site_id": "default",
+            "site_id": SITE_ID,
             "enabled": False,
         },
     }
@@ -799,7 +830,7 @@ def _seed_speedtest_results() -> list[UniFiRecord]:
     now = _ts()
     return [
         {
-            "_id": _oid(),
+            "_id": _uid(),
             "time": (now - 86400) * 1000,
             "xput_up": 1820.5,
             "xput_upload": 1820.5,
@@ -862,7 +893,7 @@ def _seed_sessions() -> list[UniFiRecord]:
     now = _ts()
     return [
         {
-            "_id": _oid(),
+            "_id": _uid(),
             "mac": "aa:bb:cc:00:00:01",
             "hostname": "petes-laptop",
             "name": "Pete's MacBook",
@@ -877,7 +908,7 @@ def _seed_sessions() -> list[UniFiRecord]:
             "satisfaction": 96,
         },
         {
-            "_id": _oid(),
+            "_id": _uid(),
             "mac": "aa:bb:cc:00:00:02",
             "hostname": "iphone-15",
             "name": "iPhone 15",
@@ -926,7 +957,7 @@ class StubState:
         self.port_profiles: list[UniFiRecord] = _seed_port_profiles()
         self.ap_groups: list[UniFiRecord] = _seed_ap_groups()
         self.clients: list[UniFiRecord] = _seed_clients()
-        self.dhcp_leases: list[UniFiRecord] = _seed_dhcp_leases(default_net_id)
+        self.dhcp_leases: list[UniFiRecord] = _seed_dhcp_leases(self.networks[0])
         self.port_forwards: list[UniFiRecord] = _seed_port_forwards()
         self.events: list[UniFiRecord] = _seed_events()
         self.alarms: list[UniFiRecord] = _seed_alarms()
@@ -1050,8 +1081,9 @@ class StubState:
     def create_network(self, payload: dict[str, Any]) -> UniFiRecord:
         self._check_failure("create_network")
         record: UniFiRecord = {
-            "_id": _oid(),
-            "site_id": "default",
+            "_id": _uid(),
+            "legacy_id": _legacy_id(),
+            "site_id": SITE_ID,
             "enabled": True,
             **payload,
         }
@@ -1087,7 +1119,12 @@ class StubState:
 
     def create_wlan(self, payload: dict[str, Any]) -> UniFiRecord:
         self._check_failure("create_wlan")
-        record: UniFiRecord = {"_id": _oid(), "enabled": True, **payload}
+        record: UniFiRecord = {
+            "_id": _uid(),
+            "legacy_id": _legacy_id(),
+            "enabled": True,
+            **payload,
+        }
         # Don't echo the passphrase back in stub responses.
         if "x_passphrase" in record:
             record["x_passphrase"] = "[REDACTED]"  # noqa: S105 - redaction sentinel
@@ -1123,7 +1160,7 @@ class StubState:
 
     def create_firewall_rule(self, payload: dict[str, Any]) -> UniFiRecord:
         self._check_failure("create_firewall_rule")
-        record: UniFiRecord = {"_id": _oid(), "enabled": True, **payload}
+        record: UniFiRecord = {"_id": _uid(), "enabled": True, **payload}
         self.firewall_rules.append(record)
         return record
 
@@ -1147,7 +1184,7 @@ class StubState:
 
     def create_firewall_group(self, payload: dict[str, Any]) -> UniFiRecord:
         self._check_failure("create_firewall_group")
-        record: UniFiRecord = {"_id": _oid(), "site_id": "default", **payload}
+        record: UniFiRecord = {"_id": _uid(), "site_id": SITE_ID, **payload}
         self.firewall_groups.append(record)
         return record
 
@@ -1171,7 +1208,7 @@ class StubState:
 
     def create_route(self, payload: dict[str, Any]) -> UniFiRecord:
         self._check_failure("create_route")
-        record: UniFiRecord = {"_id": _oid(), "site_id": "default", "enabled": True, **payload}
+        record: UniFiRecord = {"_id": _uid(), "site_id": SITE_ID, "enabled": True, **payload}
         self.routes.append(record)
         return record
 
@@ -1195,7 +1232,7 @@ class StubState:
 
     def create_traffic_rule(self, payload: dict[str, Any]) -> UniFiRecord:
         self._check_failure("create_traffic_rule")
-        record: UniFiRecord = {"_id": _oid(), "enabled": True, **payload}
+        record: UniFiRecord = {"_id": _uid(), "enabled": True, **payload}
         self.traffic_rules.append(record)
         return record
 
@@ -1243,7 +1280,7 @@ class StubState:
 
     def create_dynamic_dns(self, payload: dict[str, Any]) -> UniFiRecord:
         self._check_failure("create_dynamic_dns")
-        record: UniFiRecord = {"_id": _oid(), "site_id": "default", **payload}
+        record: UniFiRecord = {"_id": _uid(), "site_id": SITE_ID, **payload}
         self.dynamic_dns.append(record)
         return record
 
@@ -1267,7 +1304,7 @@ class StubState:
 
     def create_port_profile(self, payload: dict[str, Any]) -> UniFiRecord:
         self._check_failure("create_port_profile")
-        record: UniFiRecord = {"_id": _oid(), "site_id": "default", **payload}
+        record: UniFiRecord = {"_id": _uid(), "site_id": SITE_ID, **payload}
         self.port_profiles.append(record)
         return record
 
@@ -1350,7 +1387,7 @@ class StubState:
         # not recreate a reservation for a known client on real hardware.
         if self.find_user_by_mac(str(payload.get("mac", ""))) is not None:
             raise UniFiError("UniFi API error 400: api.err.MacUsed")
-        record: UniFiRecord = {"_id": _oid(), "use_fixedip": True, **payload}
+        record: UniFiRecord = {"_id": _uid(), "use_fixedip": True, **payload}
         self.dhcp_leases.append(record)
         return record
 
@@ -1439,7 +1476,7 @@ class StubState:
 
     def create_port_forward(self, payload: dict[str, Any]) -> UniFiRecord:
         self._check_failure("create_port_forward")
-        record: UniFiRecord = {"_id": _oid(), "enabled": True, **payload}
+        record: UniFiRecord = {"_id": _uid(), "enabled": True, **payload}
         self.port_forwards.append(record)
         return record
 
@@ -1487,7 +1524,7 @@ class StubState:
         # ``xput_upload`` (live controller field name) and ``xput_up``
         # (documented return shape) so callers don't have to branch.
         result = {
-            "_id": _oid(),
+            "_id": _uid(),
             "time": _ts() * 1000,
             "xput_up": 1820.5,
             "xput_upload": 1820.5,
@@ -1559,7 +1596,7 @@ class StubState:
         self._check_failure("set_setting")
         existing = self.settings.get(key)
         if existing is None:
-            existing = {"_id": _oid(), "key": key, "site_id": "default"}
+            existing = {"_id": _uid(), "key": key, "site_id": SITE_ID}
         existing.update(patch)
         self.settings[key] = existing
         return dict(existing)
