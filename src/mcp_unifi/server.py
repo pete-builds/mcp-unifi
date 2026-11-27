@@ -186,15 +186,17 @@ def build_server(
         return JSONResponse(body)
 
     register_modules(mcp, settings, registry)
-    # First, so it sits outermost and appends its line after every other
-    # middleware has framed the result (including a scope or write-gate refusal).
+    # FastMCP runs middleware in registration order, first registered
+    # outermost. First, so it appends its line after every other middleware
+    # has framed the result (including a scope or write-gate refusal).
     _install_simulated_data_notice(mcp, settings)
-    _install_scope_middleware(mcp, settings)
+    # Outside both gates, because it is where the error contract is enforced:
+    # every error envelope, a scope or write-gate refusal included, comes back
+    # out through it and gets isError: true. Before this order, the scope gate
+    # sat outside it and could only raise a bare ToolError.
     _install_adaptive_response_middleware(mcp, settings)
-    # Added last, so it sits innermost: FastMCP builds the chain in reverse
-    # registration order, which puts the write gate closest to the tool. A
-    # refusal therefore comes back out through the adaptive-response
-    # middleware and is framed exactly like any other tool error envelope.
+    _install_scope_middleware(mcp, settings)
+    # Added last, so it sits innermost, closest to the tool.
     _install_write_gate_middleware(mcp, settings)
     return mcp
 
@@ -249,7 +251,7 @@ def _install_scope_middleware(mcp: FastMCP, settings: Settings) -> None:
     scopes = settings.auth_client_scopes
     if not scopes or all(WILDCARD in modules for modules in scopes.values()):
         return
-    mcp.add_middleware(ScopeMiddleware(client_scopes=scopes))
+    mcp.add_middleware(ScopeMiddleware(client_scopes=scopes, stub_mode=settings.stub_mode))
     logger.info(
         "per-client tool scoping enabled",
         extra={"scopes": {client_id: sorted(modules) for client_id, modules in scopes.items()}},

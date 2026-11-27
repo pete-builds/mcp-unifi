@@ -141,6 +141,39 @@ the result. On a host that passes only the text block, compact mode leaves the
 model with a record count and no records. That was the default from 0.19.0
 through 0.27.0; it is opt-in from 0.28.0.
 
+### Error contract
+
+Every failure a tool reports, and every call a control refuses, comes back the
+same way, whatever MCP revision the client negotiated and whatever the two
+settings above say:
+
+1. **One envelope.** The text block is a JSON object with a string `error` and
+   a boolean `stub_mode`, for example
+   `{"error": "Unknown controller 'nope'. Available: default.", "stub_mode": true}`.
+   Some failures add keys beside them (`partial` and `rolled_back` when a
+   composite tool undoes its own steps). A client on `2025-06-18` or later gets
+   the same object as `structuredContent`. Compact mode never summarises an
+   error: the text block is the envelope.
+2. **`isError` is `true`.** A client or agent that checks `isError` sees every
+   failed call as failed. Before this was guaranteed, tool failures and
+   read-only refusals came back with `isError: false`.
+3. **A refusal looks like any other error.** A read-only refusal and a
+   per-client scope denial use the same envelope and the same flag. A scope
+   denial says only `Tool '<name>' is not available to this client.`, the same
+   words for a tool outside the caller's scope and for a name that does not
+   exist, so a scoped client cannot map the tools it cannot see. Which control
+   refused a call is recorded only in the audit log's `denied_by` field
+   ([Audit log](/mcp-unifi/guides/dry-run-audit/#refused-calls)).
+
+A successful result is never flagged because some field inside it is called
+`error`: per-item errors in `update_clients`, `firewall_policies_error` in
+`audit_open_ports`, and probe errors in `get_console_health` are partial
+results, not failures. Only the top-level envelope above is an error.
+
+Two kinds of failure come from the MCP framework rather than this server and
+keep its shape, plain text with `isError: true`: an argument that fails the
+tool's input schema, and an unexpected crash inside a tool.
+
 ## Logging
 
 | Variable | Type | Default | Required | Notes |

@@ -26,7 +26,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
-from fastmcp.exceptions import ToolError
+from fastmcp.tools import ToolResult
 
 from mcp_unifi.audit import REDACTED, AuditLog, FileSink, set_audit_log
 from mcp_unifi.config import Settings
@@ -264,6 +264,20 @@ class _StubCallContext:
         self.fastmcp_context = _StubFmCtx()
 
 
+def _denial(result: Any) -> dict[str, Any]:
+    """Assert ``result`` is a scope denial in the standard envelope; return it.
+
+    The middleware itself leaves ``is_error`` unset: the response middleware
+    outside it sets that for every envelope (tests/test_error_contract.py
+    covers the whole stack).
+    """
+    assert isinstance(result, ToolResult), f"expected a refusal result, got {result!r}"
+    assert len(result.content) == 1
+    payload = json.loads(result.content[0].text)
+    assert set(payload) == {"error", "stub_mode"}
+    return dict(payload)
+
+
 def _all_tools() -> list[_StubTool]:
     return [
         _StubTool("list_networks", {"network"}),
@@ -275,7 +289,7 @@ def _all_tools() -> list[_StubTool]:
 
 @pytest.mark.asyncio
 async def test_list_tools_returns_everything_when_scope_is_wildcard() -> None:
-    mw = ScopeMiddleware(client_scopes={"admin": {WILDCARD}})
+    mw = ScopeMiddleware(stub_mode=True, client_scopes={"admin": {WILDCARD}})
 
     async def call_next(ctx: Any) -> list[_StubTool]:
         return _all_tools()
@@ -287,7 +301,7 @@ async def test_list_tools_returns_everything_when_scope_is_wildcard() -> None:
 
 @pytest.mark.asyncio
 async def test_list_tools_filters_to_scoped_modules() -> None:
-    mw = ScopeMiddleware(client_scopes={"readonly": {"protect", "access"}})
+    mw = ScopeMiddleware(stub_mode=True, client_scopes={"readonly": {"protect", "access"}})
 
     async def call_next(ctx: Any) -> list[_StubTool]:
         return _all_tools()
@@ -300,7 +314,7 @@ async def test_list_tools_filters_to_scoped_modules() -> None:
 @pytest.mark.asyncio
 async def test_list_tools_denies_when_client_unknown() -> None:
     """A client_id not in the scope map is an anomaly — fail closed, don't grant wildcard."""
-    mw = ScopeMiddleware(client_scopes={"admin": {WILDCARD}})
+    mw = ScopeMiddleware(stub_mode=True, client_scopes={"admin": {WILDCARD}})
 
     async def call_next(ctx: Any) -> list[_StubTool]:
         return _all_tools()
@@ -315,7 +329,7 @@ async def test_list_tools_denies_when_no_client_id_available() -> None:
     """Middleware isn't installed on stdio, so client_id=None here means the auth
     context is broken or missing — deny rather than fall through to wildcard.
     """
-    mw = ScopeMiddleware(client_scopes={"readonly": {"network"}})
+    mw = ScopeMiddleware(stub_mode=True, client_scopes={"readonly": {"network"}})
 
     async def call_next(ctx: Any) -> list[_StubTool]:
         return _all_tools()
@@ -332,7 +346,7 @@ async def test_list_tools_denies_when_no_client_id_available() -> None:
 
 @pytest.mark.asyncio
 async def test_call_tool_allowed_when_scope_matches() -> None:
-    mw = ScopeMiddleware(client_scopes={"readonly": {"protect"}})
+    mw = ScopeMiddleware(stub_mode=True, client_scopes={"readonly": {"protect"}})
     tools = {t.name: t for t in _all_tools()}
 
     async def call_next(ctx: Any) -> str:
@@ -345,23 +359,21 @@ async def test_call_tool_allowed_when_scope_matches() -> None:
 
 @pytest.mark.asyncio
 async def test_call_tool_rejected_when_scope_does_not_match() -> None:
-    mw = ScopeMiddleware(client_scopes={"readonly": {"protect"}})
+    mw = ScopeMiddleware(stub_mode=True, client_scopes={"readonly": {"protect"}})
     tools = {t.name: t for t in _all_tools()}
 
     async def call_next(ctx: Any) -> str:
         pytest.fail("call_next must not run for a scope-denied tool")
         return "unreachable"
 
-    with (
-        patch("mcp_unifi.scoping._current_client_id", return_value="readonly"),
-        pytest.raises(ToolError, match="not available"),
-    ):
-        await mw.on_call_tool(_StubCallContext("delete_vlan", tools), call_next)
+    with patch("mcp_unifi.scoping._current_client_id", return_value="readonly"):
+        result = await mw.on_call_tool(_StubCallContext("delete_vlan", tools), call_next)
+    assert "not available" in _denial(result)["error"]
 
 
 @pytest.mark.asyncio
 async def test_call_tool_wildcard_bypasses_the_gate() -> None:
-    mw = ScopeMiddleware(client_scopes={"admin": {WILDCARD}})
+    mw = ScopeMiddleware(stub_mode=True, client_scopes={"admin": {WILDCARD}})
     tools = {t.name: t for t in _all_tools()}
 
     async def call_next(ctx: Any) -> str:
@@ -375,25 +387,27 @@ async def test_call_tool_wildcard_bypasses_the_gate() -> None:
 @pytest.mark.asyncio
 async def test_call_tool_rejection_message_does_not_leak_module_names() -> None:
     """A scoped client shouldn't be able to probe which modules exist."""
-    mw = ScopeMiddleware(client_scopes={"readonly": {"network"}})
+    mw = ScopeMiddleware(stub_mode=True, client_scopes={"readonly": {"network"}})
     tools = {t.name: t for t in _all_tools()}
 
     async def call_next(ctx: Any) -> str:
         return "unreachable"
 
-    with (
-        patch("mcp_unifi.scoping._current_client_id", return_value="readonly"),
-        pytest.raises(ToolError) as exc,
-    ):
-        await mw.on_call_tool(_StubCallContext("list_cameras", tools), call_next)
-    assert "protect" not in str(exc.value).lower()
-    assert "access" not in str(exc.value).lower()
+    with patch("mcp_unifi.scoping._current_client_id", return_value="readonly"):
+        result = await mw.on_call_tool(_StubCallContext("list_cameras", tools), call_next)
+    text = result.content[0].text.lower()
+    assert "protect" not in text
+    assert "access" not in text
+    assert _denial(result) == {
+        "error": "Tool 'list_cameras' is not available to this client.",
+        "stub_mode": True,
+    }
 
 
 @pytest.mark.asyncio
 async def test_call_tool_denied_when_client_id_is_none() -> None:
     """Unresolved identity denies calls, not silently permits them."""
-    mw = ScopeMiddleware(client_scopes={"readonly": {"network"}})
+    mw = ScopeMiddleware(stub_mode=True, client_scopes={"readonly": {"network"}})
     tools = {t.name: t for t in _all_tools()}
 
     async def call_next(ctx: Any) -> str:
@@ -403,11 +417,9 @@ async def test_call_tool_denied_when_client_id_is_none() -> None:
     # list_networks is a real network tool in the client's own scope, so only
     # the identity check can refuse it. These tests used to call list_vlans,
     # which does not exist and was refused whatever the identity logic did.
-    with (
-        patch("mcp_unifi.scoping._current_client_id", return_value=None),
-        pytest.raises(ToolError, match="not available"),
-    ):
-        await mw.on_call_tool(_StubCallContext("list_networks", tools), call_next)
+    with patch("mcp_unifi.scoping._current_client_id", return_value=None):
+        result = await mw.on_call_tool(_StubCallContext("list_networks", tools), call_next)
+    assert "not available" in _denial(result)["error"]
 
 
 @pytest.mark.asyncio
@@ -415,18 +427,16 @@ async def test_call_tool_denied_when_client_id_not_in_scope_map() -> None:
     """A configured token whose client_id isn't in the scope map is anomalous.
     Fail closed rather than treating the missing entry as wildcard.
     """
-    mw = ScopeMiddleware(client_scopes={"readonly": {"network"}})
+    mw = ScopeMiddleware(stub_mode=True, client_scopes={"readonly": {"network"}})
     tools = {t.name: t for t in _all_tools()}
 
     async def call_next(ctx: Any) -> str:
         pytest.fail("call_next must not run for a client not in the scope map")
         return "unreachable"
 
-    with (
-        patch("mcp_unifi.scoping._current_client_id", return_value="mystery-client"),
-        pytest.raises(ToolError, match="not available"),
-    ):
-        await mw.on_call_tool(_StubCallContext("list_networks", tools), call_next)
+    with patch("mcp_unifi.scoping._current_client_id", return_value="mystery-client"):
+        result = await mw.on_call_tool(_StubCallContext("list_networks", tools), call_next)
+    assert "not available" in _denial(result)["error"]
 
 
 # ---------------------------------------------------------------------------
@@ -508,18 +518,15 @@ async def test_scope_denial_writes_an_audit_event(audit_log_path: Path) -> None:
     this client refused" — so the record carries the same envelope with a
     different ``denied_by`` value.
     """
-    mw = ScopeMiddleware(client_scopes={"readonly": {"protect"}})
+    mw = ScopeMiddleware(stub_mode=True, client_scopes={"readonly": {"protect"}})
     tools = {t.name: t for t in _all_tools()}
 
     async def call_next(ctx: Any) -> str:
         pytest.fail("call_next must not run for a scope-denied tool")
         return "unreachable"
 
-    with (
-        patch("mcp_unifi.scoping._current_client_id", return_value="readonly"),
-        pytest.raises(ToolError),
-    ):
-        await mw.on_call_tool(_StubCallContext("delete_vlan", tools), call_next)
+    with patch("mcp_unifi.scoping._current_client_id", return_value="readonly"):
+        _denial(await mw.on_call_tool(_StubCallContext("delete_vlan", tools), call_next))
 
     events = _events(audit_log_path)
     assert len(events) == 1
@@ -533,21 +540,20 @@ async def test_scope_denial_writes_an_audit_event(audit_log_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_scope_denial_scrubs_the_attempted_arguments(audit_log_path: Path) -> None:
     """Same redaction discipline as every other emitter on this path."""
-    mw = ScopeMiddleware(client_scopes={"readonly": {"protect"}})
+    mw = ScopeMiddleware(stub_mode=True, client_scopes={"readonly": {"protect"}})
     tools = {t.name: t for t in _all_tools()}
     secret = "scope-denied-but-still-a-secret"
 
     async def call_next(ctx: Any) -> str:
         return "unreachable"
 
-    with (
-        patch("mcp_unifi.scoping._current_client_id", return_value="readonly"),
-        pytest.raises(ToolError),
-    ):
-        await mw.on_call_tool(
+    with patch("mcp_unifi.scoping._current_client_id", return_value="readonly"):
+        result = await mw.on_call_tool(
             _StubCallContext("delete_vlan", tools, {"passphrase": secret, "vlan_id": 7}),
             call_next,
         )
+    _denial(result)
+    assert secret not in result.content[0].text
 
     assert secret not in audit_log_path.read_text()
     ev = _events(audit_log_path)[0]
@@ -558,7 +564,7 @@ async def test_scope_denial_scrubs_the_attempted_arguments(audit_log_path: Path)
 @pytest.mark.asyncio
 async def test_scope_permitted_call_writes_no_refusal_event(audit_log_path: Path) -> None:
     """An in-scope call is dispatched; the middleware annotates nothing."""
-    mw = ScopeMiddleware(client_scopes={"readonly": {"protect"}})
+    mw = ScopeMiddleware(stub_mode=True, client_scopes={"readonly": {"protect"}})
     tools = {t.name: t for t in _all_tools()}
 
     async def call_next(ctx: Any) -> str:

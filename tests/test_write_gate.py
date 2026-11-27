@@ -325,7 +325,9 @@ async def test_readonly_refusal_reaches_a_negotiated_client(stub_state: StubStat
         result = await client.call_tool(
             "create_vlan",
             {"name": "Nope", "vlan_id": 88, "subnet": "10.0.88.0/24"},
+            raise_on_error=False,
         )
+        assert result.is_error is True
         assert "read-only mode" in result.structured_content["error"]
         assert not any(n.get("name") == "Nope" for n in stub_state.networks)
 

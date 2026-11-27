@@ -45,6 +45,37 @@ tool manifest, to express one transport concern. The same reasoning that put
 per-client scoping in :mod:`mcp_unifi.scoping` applies here: the tools keep
 returning JSON strings, and the boundary decides how to frame them.
 
+THE ERROR CONTRACT
+------------------
+Every tool reports a failure the same way: it returns the error envelope
+``{"error": "<message>", "stub_mode": <bool>, ...}`` as its JSON text, and does
+not raise. The read-only write gate and per-client scoping refuse a call with
+that same envelope. Until this middleware set it, the MCP result for all of
+those said ``isError: false``, so a client that keyed on ``isError`` read a
+failed write as a success.
+
+:func:`is_error_envelope` recognises the envelope and
+:meth:`AdaptiveResponseMiddleware.on_call_tool` sets ``isError: true`` on the
+result. That is the one place the flag is set, for every client era and in
+every response mode, so no tool and no refusal site has to remember it. On an
+error the text block is always the envelope JSON (compact mode does not
+summarise it), because the error text is the one thing a caller must be able to
+read wherever it looks.
+
+Recognising the envelope needs both keys at the top level: a non-empty string
+``error`` and a boolean ``stub_mode``. Every producer (``make_err``, the
+composite and restore failure paths, ``update_clients``, both refusal gates)
+writes both. A successful payload that only *contains* an ``error`` key, inside
+a per-item result or a probe record, or under a different name such as
+``firewall_policies_error``, is not an envelope and is never flagged; nor is a
+raw controller record that happens to carry a top-level ``error`` field,
+because no controller record carries ``stub_mode``.
+
+Failures this server does not author keep FastMCP's own shape: an argument
+that fails schema validation, an unknown tool name on an unscoped server, or an
+unexpected exception inside a tool come back as plain text with
+``isError: true``.
+
 WHAT THE COMPACT SUMMARY DELIBERATELY DOES NOT SAY
 --------------------------------------------------
 The summary never invents facts. It reports the envelope's own shape (did it
@@ -83,6 +114,27 @@ MAX_COMPACT_TEXT_CHARS = 2000
 
 #: Envelope keys holding a record count, in the order they are preferred.
 _COUNT_KEYS = ("count", "returned_count", "total_count")
+
+
+def is_error_envelope(payload: Any) -> bool:
+    """True when ``payload`` is this server's tool error envelope.
+
+    The envelope is a JSON object with a non-empty string ``error`` and a
+    boolean ``stub_mode`` at the top level, the shape
+    :func:`mcp_unifi.modules.network._common.make_err` builds. Extra keys
+    (``partial``, ``rolled_back``, ``controller``) are allowed: the composite
+    failure paths add them. Both keys are required so that a success payload
+    with an ``error`` field of its own is never misread as a failure. See the
+    module docstring, "The error contract".
+    """
+    if not isinstance(payload, dict):
+        return False
+    error = payload.get("error")
+    return (
+        isinstance(error, str)
+        and bool(error.strip())
+        and isinstance(payload.get("stub_mode"), bool)
+    )
 
 
 def supports_structured_content(protocol_version: str | None) -> bool:
@@ -196,6 +248,15 @@ def _structured_payload(result: ToolResult) -> Any | None:
     structured = result.structured_content
     if structured is not None and not _is_autowrapped_string(structured):
         return None
+    return _text_payload(result)
+
+
+def _text_payload(result: ToolResult) -> Any | None:
+    """Parse a single-text-block result as JSON, or return ``None``.
+
+    The tool's own text is what the error check reads, whatever
+    ``structured_content`` FastMCP synthesised beside it.
+    """
     blocks = result.content
     if not isinstance(blocks, list) or len(blocks) != 1:
         return None
@@ -217,10 +278,11 @@ class AdaptiveResponseMiddleware(Middleware):
             ``structuredContent`` only. Off by default: a host that shows the
             model only the text block would see a record count and no
             records (issue #226).
-        force_full_text: When ``True``, every client gets the tool's result
+        force_full_text: When ``True``, every client gets the tool's content
             exactly as the tool returned it, with no ``structuredContent``
             substitution and the synthesised output schema left in place.
-            Wins over ``compact``.
+            Wins over ``compact``. An error envelope still gets
+            ``isError: true``: the error contract holds in every mode.
     """
 
     def __init__(self, *, compact: bool = False, force_full_text: bool = False) -> None:
@@ -259,6 +321,12 @@ class AdaptiveResponseMiddleware(Middleware):
         call_next: CallNext[mt.CallToolRequestParams, ToolResult],
     ) -> ToolResult:
         result = await call_next(context)
+        failed = is_error_envelope(_text_payload(result))
+        if failed:
+            # The error contract: the one place isError is set for a tool
+            # failure or a refusal. Before the era and mode checks below, so
+            # it holds for every client and in every response mode.
+            result = result.model_copy(update={"is_error": True})
         if self._force_full_text:
             return result
         if not supports_structured_content(_negotiated_revision(context)):
@@ -273,8 +341,9 @@ class AdaptiveResponseMiddleware(Middleware):
         structured = payload if isinstance(payload, dict) else {"result": payload}
         # The text block is the only channel every host is guaranteed to show
         # the model, so by default it keeps the tool's own JSON, byte for byte.
+        # An error keeps it in compact mode too: the envelope is the answer.
         content: list[mt.ContentBlock] = result.content
-        if self._compact:
+        if self._compact and not failed:
             summary = compact_content_text(payload, tool_name=context.message.name)
             content = [mt.TextContent(type="text", text=summary)]
         return ToolResult(
@@ -346,5 +415,6 @@ __all__ = [
     "AdaptiveResponseMiddleware",
     "SimulatedDataNoticeMiddleware",
     "compact_content_text",
+    "is_error_envelope",
     "supports_structured_content",
 ]
