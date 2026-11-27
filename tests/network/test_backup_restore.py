@@ -49,7 +49,7 @@ async def _restore_applying(server, backup_json: str):
     real two-step flow here also means these tests exercise the gate rather than
     bypassing it.
     """
-    preview = await _call(server, "restore_config", {"backup_json": backup_json})
+    preview = await _call(server, "restore_config", {"backup_json": backup_json, "dry_run": False})
     assert preview.get("preview") is True, f"expected a preview envelope, got {preview}"
     return await _call(server, "confirm_destructive_action", {"token": preview["token"]})
 
@@ -1002,7 +1002,9 @@ async def test_restore_config_requires_confirmation(
     )
     before = {n["name"] for n in fresh_state.list_networks()}
 
-    preview = await _call(fresh_server, "restore_config", {"backup_json": backup_json})
+    preview = await _call(
+        fresh_server, "restore_config", {"backup_json": backup_json, "dry_run": False}
+    )
     assert preview["preview"] is True
     assert preview["confirm_with"] == "confirm_destructive_action"
     assert len(preview["token"]) == 36
@@ -1020,7 +1022,9 @@ async def test_restore_config_token_is_single_use(
     fresh_state: StubState, fresh_server: FastMCP
 ) -> None:
     envelope = await _call(fresh_server, "backup_config", {})
-    preview = await _call(fresh_server, "restore_config", {"backup_json": json.dumps(envelope)})
+    preview = await _call(
+        fresh_server, "restore_config", {"backup_json": json.dumps(envelope), "dry_run": False}
+    )
     await _call(fresh_server, "confirm_destructive_action", {"token": preview["token"]})
     second = await _call(fresh_server, "confirm_destructive_action", {"token": preview["token"]})
     assert "error" in second
@@ -1231,7 +1235,9 @@ async def test_restore_refuses_when_a_matched_network_is_gone_at_confirm(
     backup_json = json.dumps(await _call(fresh_server, "backup_config", {}))
     fresh_state.port_profiles = [p for p in fresh_state.port_profiles if p["name"] != "IoT-Access"]
 
-    preview = await _call(fresh_server, "restore_config", {"backup_json": backup_json})
+    preview = await _call(
+        fresh_server, "restore_config", {"backup_json": backup_json, "dry_run": False}
+    )
     assert preview["preview"] is True
 
     # Someone deletes and recreates IoT between the preview and the confirm.
@@ -1370,7 +1376,9 @@ async def test_restore_plan_repeats_what_it_does_not_restore(
     assert dry["not_restored"] == NOT_INCLUDED
     assert any("routes, traffic rules" in w for w in dry["warnings"])
 
-    preview = await _call(fresh_server, "restore_config", {"backup_json": backup_json})
+    preview = await _call(
+        fresh_server, "restore_config", {"backup_json": backup_json, "dry_run": False}
+    )
     assert preview["resource"]["not_restored"] == NOT_INCLUDED
     assert preview["resource"]["blocked"] == 0
 

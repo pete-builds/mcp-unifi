@@ -132,6 +132,7 @@ from typing import TYPE_CHECKING, Any
 
 from mcp_unifi.annotations import DESTRUCTIVE, READ_ONLY
 from mcp_unifi.backends import Backend
+from mcp_unifi.clients import zone_policy as zp
 from mcp_unifi.clients.unifi import UniFiError
 from mcp_unifi.dispatcher import resolve_backend
 from mcp_unifi.modules._audit import audited
@@ -846,7 +847,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
     async def restore_config(
         backup_json: BoundedJson,
         controller: str = "default",
-        dry_run: bool = False,
+        dry_run: bool = True,
     ) -> str:
         """Restore controller state from a ``backup_config`` envelope.
 
@@ -868,13 +869,18 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
           destination zone (names repeat across zone pairs). A missing
           policy is created and a changed one updated, through the
           Integration API, with zones and networks mapped by name to this
-          site's ids. A controller-managed policy is never created, changed
-          or deleted, zones are never written, and a policy on the site but
-          not in the backup is reported, never deleted. A policy pointing at
-          a zone or network this site lacks, or one the Integration API body
-          cannot express exactly (a schedule, an IPsec or group match), is a
-          ``blocked`` action and is not written. A backup with no
-          ``firewall_policies`` section leaves every policy as it is.
+          site's ids. An update puts every field back to the backup's
+          value, clearing a description, connection-state filter or IPsec
+          filter the backup's policy does not have. A controller-managed
+          policy is never created, changed or deleted, zones are never
+          written, and a policy on the site but not in the backup is
+          reported, never deleted. A policy pointing at a zone or network
+          this site lacks, one the Integration API body cannot express
+          exactly (a schedule, an IPsec or group match), one whose site copy
+          runs on a schedule, and any name plus zone pair the backup holds
+          more than once is a ``blocked`` action and is not written. A
+          backup with no ``firewall_policies`` section leaves every policy
+          as it is.
         - Not covered: routes, traffic rules, content filters, dynamic DNS,
           AP groups and site settings are not in a backup and are left as
           they are; the plan lists them under ``not_restored``.
@@ -887,13 +893,23 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
           known-string SSID is never broadcast and a VPN tunnel is never
           stood up on a public pre-shared key. The operator must reset each
           secret and re-enable manually.
-        - Mutates controller state. Use dry_run=True to preview the change
-          without applying.
+        - Defaults to a dry run: a call with ``dry_run`` left at its default
+          returns the plan (``would_apply``) and writes nothing and mints no
+          token. Pass ``dry_run=False`` to get a preview with a one-time
+          token; nothing is written until ``confirm_destructive_action``
+          runs it.
+        - At confirm, a zone policy the plan updates is re-read first; one
+          that changed since the preview is refused (reported, not written).
+        - Zone policy order: restore does not reorder. The plan warns when
+          it creates or updates in a zone pair that holds other user
+          policies, and when matched policies sit in a different order than
+          in the backup, since the first match wins.
         - Rollback: if any sub-step fails, all prior creates are reverted
           in reverse order, updated zone policies are put back, and the
-          response includes ``partial`` and ``rolled_back`` keys. Deletes that already ran are NOT undone
-          (no copy was kept); the response reports them so the operator
-          can re-run with ``dry_run`` to inspect the residual gap.
+          response includes ``partial`` and ``rolled_back`` keys. Deletes
+          that already ran are NOT undone (no copy was kept); the response
+          reports them so the operator can re-run with ``dry_run`` to
+          inspect the residual gap.
 
         Zone-based sites: legacy ``firewall_rules`` in the backup are not
         replayed onto a site running the Zone-Based Firewall. They appear in
@@ -908,8 +924,8 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             backup_json: The envelope JSON string from ``backup_config``.
             controller: Name of the UniFi controller to target. Defaults to
                 ``"default"``.
-            dry_run: Preview the change without applying it. Returns the
-                predicted change set.
+            dry_run: ``True`` (default) returns the plan and writes nothing.
+                ``False`` returns a preview with a confirm token.
         """
         # Parse envelope
         try:
@@ -1239,9 +1255,35 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                     if action["action"] == "update" and action["type"] == zbf.POLICIES:
                         # A user-defined zone policy already on the site: the
                         # plan carries the whole PUT body and the body before.
+                        # The body was built from the policy as the preview
+                        # read it, and the PUT replaces the whole policy. An
+                        # edit made since would be overwritten unseen, so a
+                        # policy that changed is refused, not written.
                         policy_id = str(action["id"])
+                        now = await backend.get_v1_firewall_policy(policy_id)
+                        if now is None or zp.put_body(now, {}) != action["before"]:
+                            applied.append(
+                                {
+                                    **action,
+                                    "result": "refused",
+                                    "reason": (
+                                        "the policy changed since the preview (or is gone); "
+                                        "nothing was written to it. Run restore_config again."
+                                    ),
+                                }
+                            )
+                            continue
                         await backend.update_v1_firewall_policy(policy_id, action["payload"])
                         updated_for_rollback.append((policy_id, action["before"]))
+                        kept = zbf.reset_kept(
+                            await backend.get_v1_firewall_policy(policy_id), action
+                        )
+                        if kept:
+                            raise UniFiError(
+                                f"restore_config: zone policy {action['name']!r} still holds "
+                                f"{', '.join(kept)} after a full PUT that left it out; the "
+                                "console did not reset it"
+                            )
                         applied.append({**action, "result": "updated"})
                         continue
 

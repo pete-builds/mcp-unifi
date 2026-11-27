@@ -28,13 +28,16 @@ Writes through the Integration API (ADR 0009) with the same body builders
 resolving zones by name with :func:`pick_zone` and networks by name, then
 through ``external_id`` with :func:`v1_networks`. Identity is
 ``(name, source zone, destination zone)``, because policy names repeat
-across zone pairs. A matching operator policy is updated only in the fields
-that differ; a missing one is created. Restore never creates, updates or
-deletes a controller-managed policy, never writes a zone, and never deletes an
-operator policy the backup lacks: those are reported. A policy whose v2 shape
-the v1 body cannot express exactly (a schedule, an IPsec match, a group or
-region match, a negated match, an ICMP type) is blocked with the reason rather
-than written as an approximation.
+across zone pairs, and an identity the backup holds twice is held back. A
+matching operator policy whose fields differ is updated so every field is the
+backup's value again (:func:`update_for`), including the ones the backup sets
+by leaving them out; a missing one is created. Restore never creates, updates
+or deletes a controller-managed policy, never writes a zone, never reorders,
+and never deletes an operator policy the backup lacks: those are reported. A
+policy whose v2 shape the v1 body cannot express exactly (a schedule, an IPsec
+match, a group or region match, a negated match, an ICMP type) is blocked
+with the reason rather than written as an approximation, and so is one whose
+copy on the site runs on a schedule.
 """
 
 from __future__ import annotations
@@ -136,9 +139,80 @@ _IP_VERSIONS: dict[str, str] = {
     "IPV4_AND_IPV6": "IPV4_AND_IPV6",
 }
 
-#: v1 keys a restore does not set and so leaves as the target has them. A
-#: target policy that sets one is reported, since the backup's policy did not.
-_UNSET_V1_KEYS: tuple[str, ...] = ("connectionStateFilter", "ipsecFilter")
+#: Optional v1 filters an update removes when the backup's policy does not
+#: set them. The v1 PUT replaces the whole policy (see
+#: ``update_firewall_policy``), so a PUT without one is the same "every
+#: connection state" / "no IPsec match" a create without it gets. The apply
+#: step re-reads the policy and fails (rolling back) if the console kept one.
+RESET_BY_OMISSION: tuple[str, ...] = ("connectionStateFilter", "ipsecFilter")
+
+
+def schedule_is_always(value: Any) -> bool:
+    """True when a v1 ``schedule`` readback means "always": absent or mode ALWAYS."""
+    if value in (None, {}):
+        return True
+    return isinstance(value, dict) and str(value.get("mode", "")).upper() == "ALWAYS"
+
+
+def update_for(
+    current: dict[str, Any], body: dict[str, Any], description: str
+) -> tuple[list[str], dict[str, Any]]:
+    """The fields that differ and the PUT body that sets the backup's whole policy.
+
+    Every writable field the backup describes is put back to the backup's
+    value, including the ones it describes by leaving them out: an empty
+    description is cleared, an all-states policy loses a connection-state
+    filter, a policy without an IPsec match loses an IPsec filter. A
+    schedule is the one field this server cannot write (its v1 shape is not
+    known), so a site's policy on any schedule other than always raises
+    :class:`Blocked` rather than being reported as a match. An ALWAYS
+    schedule the site reports is sent back as the site has it.
+    """
+    before = zp.put_body(current, {})
+    schedule = before.get("schedule")
+    if not schedule_is_always(schedule):
+        mode = schedule.get("mode") if isinstance(schedule, dict) else schedule
+        raise Blocked(
+            f"the site's policy runs on a schedule (mode {mode!r}) and the backup's runs "
+            "always; this server cannot write a v1 schedule, so the policy is held back: "
+            "clear the schedule on the console, then run restore_config again"
+        )
+    payload: dict[str, Any] = {k: v for k, v in before.items() if k == "schedule"}
+    payload.update(body)
+    if description or before.get("description"):
+        payload["description"] = description
+    else:
+        payload.pop("description", None)
+
+    changes: list[str] = []
+    for key in sorted({*body, "description", *RESET_BY_OMISSION}):
+        have = before.get(key)
+        if key == "description":
+            differs = (have or "") != description
+        elif key in RESET_BY_OMISSION and key not in body:
+            differs = _is_set(have)
+        else:
+            differs = have != body.get(key)
+        if differs:
+            changes.append(key)
+    return changes, payload
+
+
+def reset_kept(readback: dict[str, Any] | None, action: dict[str, Any]) -> list[str]:
+    """Fields an applied update meant to reset that the console still holds."""
+    if readback is None:
+        return ["the whole policy (it is gone)"]
+    payload = action.get("payload") or {}
+    kept = [
+        key
+        for key in RESET_BY_OMISSION
+        if key in action.get("changes", []) and key not in payload and _is_set(readback.get(key))
+    ]
+    if "description" in action.get("changes", []) and (readback.get("description") or "") != (
+        payload.get("description") or ""
+    ):
+        kept.append("description")
+    return kept
 
 
 def norm(value: object) -> str:
@@ -475,6 +549,10 @@ def _identity(name: object, source_zone: object, destination_zone: object) -> tu
     return (norm(name), norm(source_zone), norm(destination_zone))
 
 
+def _pair_key(pair: tuple[Any, Any]) -> tuple[str, str]:
+    return (norm(pair[0]), norm(pair[1]))
+
+
 def _index(spec: dict[str, Any]) -> int:
     value = spec.get("index")
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
@@ -603,7 +681,12 @@ async def plan_policies(
 
     actions: list[dict[str, Any]] = []
     reported: set[tuple[str, str, str]] = set()
-    for _, spec in ordered:
+    # Zone pairs this restore creates or updates in, with the ids it updates;
+    # and, per pair, (backup index, backup position, site index) of every
+    # matched policy, to spot an evaluation order that differs.
+    touched_pairs: dict[tuple[str, str], tuple[tuple[Any, Any], set[str]]] = {}
+    matched_order: dict[tuple[str, str], tuple[tuple[Any, Any], list[tuple[int, int, int]]]] = {}
+    for position, spec in ordered:
         lab = _label(spec)
         ident = _identity(lab["name"], lab["source_zone"], lab["destination_zone"])
 
@@ -623,7 +706,7 @@ async def plan_policies(
             )
             continue
         held = user_live.get(ident, [])
-        if held and (len(held) > 1 or backup_counts[ident] > 1):
+        if backup_counts[ident] > 1 or len(held) > 1:
             if ident not in reported:
                 reported.add(ident)
                 _blocked(
@@ -633,7 +716,8 @@ async def plan_policies(
                 )
             continue
         try:
-            body = await _body(translate(spec))
+            intent = translate(spec)
+            body = await _body(intent)
         except Untranslatable as exc:
             _blocked(f"cannot be written exactly through the Integration API: {exc}")
             continue
@@ -641,37 +725,33 @@ async def plan_policies(
             _blocked(str(exc))
             continue
 
+        pair = (lab["source_zone"], lab["destination_zone"])
         if not held:
             actions.append({**lab, "action": "create", "payload": body})
+            touched_pairs.setdefault(_pair_key(pair), (pair, set()))
             continue
         current = held[0]
-        before = zp.put_body(current, {})
-        changes = {k: v for k, v in body.items() if before.get(k) != v}
-        left = [k for k in _UNSET_V1_KEYS if k not in body and _is_set(before.get(k))]
+        if isinstance(current.get("index"), int):
+            matched_order.setdefault(_pair_key(pair), (pair, []))[1].append(
+                (_index(spec), position, current["index"])
+            )
+        try:
+            changes, payload = update_for(current, body, intent.description)
+        except Blocked as exc:
+            _blocked(str(exc))
+            continue
         if changes:
-            action: dict[str, Any] = {
-                **lab,
-                "action": "update",
-                "id": current.get("id"),
-                "changes": sorted(changes),
-                "payload": zp.put_body(current, changes),
-                "before": before,
-            }
-            if left:
-                action["left_as_is"] = left
-            actions.append(action)
-        elif left:
             actions.append(
                 {
                     **lab,
-                    "action": "skip",
+                    "action": "update",
                     "id": current.get("id"),
-                    "reason": (
-                        "matches the backup on every field it carries; the site's policy "
-                        f"also sets {', '.join(left)}, which the backup does not, left as is"
-                    ),
+                    "changes": changes,
+                    "payload": payload,
+                    "before": zp.put_body(current, {}),
                 }
             )
+            touched_pairs.setdefault(_pair_key(pair), (pair, set()))[1].add(str(current.get("id")))
 
     for ident, held in user_live.items():
         if ident in backup_counts:
@@ -693,6 +773,36 @@ async def plan_policies(
             )
 
     warnings: list[str] = []
+    crowded = []
+    for key, (pair, updated_ids) in touched_pairs.items():
+        others = [
+            p
+            for ident, held in user_live.items()
+            if (ident[1], ident[2]) == key
+            for p in held
+            if str(p.get("id")) not in updated_ids
+        ]
+        if others:
+            crowded.append(f"{pair[0]} -> {pair[1]}")
+    if crowded:
+        warnings.append(
+            f"Evaluation order: zone pair(s) {', '.join(sorted(crowded))} already hold other "
+            "user policies. The console checks a pair's policies in order and the first "
+            "match wins; a created policy lands after the ones already there, and restore "
+            "does not reorder. Check the order of those pairs on the console."
+        )
+    reordered = []
+    for pair, rows in matched_order.values():
+        site_indexes = [site for _, _, site in sorted(rows)]
+        if site_indexes != sorted(site_indexes):
+            reordered.append(f"{pair[0]} -> {pair[1]}")
+    if reordered:
+        warnings.append(
+            f"Evaluation order differs from the backup in zone pair(s) "
+            f"{', '.join(sorted(reordered))}: the matched policies sit in a different order "
+            "on the site. Restore does not reorder, and the first match wins, so check "
+            "them on the console."
+        )
     carried = sorted(
         {key for spec in specs for key in NOT_CARRIED_FIELDS if spec.get(key) is not None}
     )

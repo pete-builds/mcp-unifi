@@ -113,7 +113,9 @@ async def _backup(server: FastMCP) -> dict[str, Any]:
 
 
 async def _apply(server: FastMCP, envelope: dict[str, Any]) -> dict[str, Any]:
-    preview = await _call(server, "restore_config", {"backup_json": json.dumps(envelope)})
+    preview = await _call(
+        server, "restore_config", {"backup_json": json.dumps(envelope), "dry_run": False}
+    )
     assert preview.get("preview") is True, preview
     return await _call(server, "confirm_destructive_action", {"token": preview["token"]})
 
@@ -238,11 +240,14 @@ async def test_round_trip_recreates_policies_with_the_targets_ids(
         {"type": "PORT_NUMBER", "value": 443},
     ]
 
-    # A second run finds nothing to do.
+    # A second run finds nothing to do: every policy matches its own record,
+    # including the four that share a name across zone pairs.
     again = await _dry(target_server, envelope)
     assert not [
-        a for a in _policy_actions(again["would_apply"]) if a["action"] in ("create", "update")
-    ]
+        a
+        for a in _policy_actions(again["would_apply"])
+        if a["action"] in ("create", "update", "blocked")
+    ], _policy_actions(again["would_apply"])
 
 
 async def test_duplicate_names_across_zone_pairs_restore_as_distinct_policies(
@@ -272,12 +277,14 @@ async def test_duplicate_names_across_zone_pairs_restore_as_distinct_policies(
 async def test_restore_without_dry_run_previews_and_writes_nothing(
     source_server: FastMCP, target_server: FastMCP, target_state: StubState
 ) -> None:
-    """The first call is a preview behind a confirm token; dry_run=True too."""
+    """dry_run=False is a preview behind a confirm token; dry_run=True too."""
     envelope = await _backup(source_server)
     spy = WriteSpy(target_state)
     before = copy.deepcopy(target_state.zone_firewall.policies)
 
-    preview = await _call(target_server, "restore_config", {"backup_json": json.dumps(envelope)})
+    preview = await _call(
+        target_server, "restore_config", {"backup_json": json.dumps(envelope), "dry_run": False}
+    )
     assert preview.get("preview") is True
     assert len(_policy_actions(preview["resource"]["plan"], "create")) == 10
 
@@ -547,3 +554,331 @@ async def test_a_network_this_restore_creates_blocks_the_policy_until_a_second_r
     await _apply(target_server, envelope)
     iot = next(p for p in _user_v1(target_state) if p["name"] == "Block IoT to TRUSTED")
     assert iot["source"]["trafficFilter"]["networkFilter"]["networkIds"] == ["iot-v1-id"]
+
+
+# ---------------------------------------------------------------------------
+# Review round 1 (#265): what an update resets, duplicates, guards, order,
+# stale previews, and the dry_run default
+# ---------------------------------------------------------------------------
+
+
+async def _restored_target(source_server: FastMCP, target_server: FastMCP) -> dict[str, Any]:
+    """Back up the source, restore it onto the target, return the envelope."""
+    envelope = await _backup(source_server)
+    result = await _apply(target_server, envelope)
+    assert "error" not in result, result
+    return envelope
+
+
+def _target_policy(state: StubState, name: str) -> dict[str, Any]:
+    return next(p for p in _user_v1(state) if p["name"] == name)
+
+
+async def test_restore_defaults_to_a_dry_run_that_mints_no_token(
+    source_server: FastMCP, target_server: FastMCP, target_state: StubState
+) -> None:
+    envelope = await _backup(source_server)
+    spy = WriteSpy(target_state)
+    result = await _call(target_server, "restore_config", {"backup_json": json.dumps(envelope)})
+    assert result.get("dry_run") is True
+    assert "token" not in result
+    assert result.get("preview") is not True
+    assert len(_policy_actions(result["would_apply"], "create")) == 10
+    assert spy.calls == []
+
+
+async def test_an_update_clears_a_description_the_backup_does_not_have(
+    source_server: FastMCP, target_server: FastMCP, target_state: StubState
+) -> None:
+    envelope = await _restored_target(source_server, target_server)
+    _target_policy(target_state, "Block IoT to TRUSTED")["description"] = "temporary hole"
+
+    dry = await _dry(target_server, envelope)
+    updates = _policy_actions(dry["would_apply"], "update")
+    assert [(a["name"], a["changes"]) for a in updates] == [
+        ("Block IoT to TRUSTED", ["description"])
+    ]
+    await _apply(target_server, envelope)
+    assert _target_policy(target_state, "Block IoT to TRUSTED").get("description", "") == ""
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("connectionStateFilter", ["NEW"]),
+        ("ipsecFilter", {"type": "MATCH_IPSEC"}),
+    ],
+)
+async def test_an_update_resets_a_filter_the_backup_does_not_have(
+    source_server: FastMCP,
+    target_server: FastMCP,
+    target_state: StubState,
+    key: str,
+    value: Any,
+) -> None:
+    """The backup's policy matches every connection state and no IPsec; a
+    target that narrowed either is put back, not reported as a match."""
+    envelope = await _restored_target(source_server, target_server)
+    _target_policy(target_state, "Block IoT to TRUSTED")[key] = value
+
+    dry = await _dry(target_server, envelope)
+    updates = _policy_actions(dry["would_apply"], "update")
+    assert [(a["name"], a["changes"]) for a in updates] == [("Block IoT to TRUSTED", [key])]
+    assert key not in updates[0]["payload"]
+
+    await _apply(target_server, envelope)
+    assert key not in _target_policy(target_state, "Block IoT to TRUSTED")
+
+
+async def test_a_target_schedule_holds_the_policy_back_instead_of_matching(
+    source_server: FastMCP, target_server: FastMCP, target_state: StubState
+) -> None:
+    """A business-hours BLOCK on the site against an always-on BLOCK in the
+    backup used to read as a match. This server cannot write a v1 schedule,
+    so the policy is held back with the reason."""
+    envelope = await _restored_target(source_server, target_server)
+    victim = _target_policy(target_state, "Block IoT to TRUSTED")
+    victim["schedule"] = {"mode": "EVERY_DAY", "timeRangeStart": "09:00", "timeRangeEnd": "17:00"}
+    before = copy.deepcopy(victim)
+    spy = WriteSpy(target_state)
+
+    dry = await _dry(target_server, envelope)
+    mine = [a for a in _policy_actions(dry["would_apply"]) if a["name"] == "Block IoT to TRUSTED"]
+    assert [a["action"] for a in mine] == ["blocked"]
+    assert "schedule" in mine[0]["reason"]
+    assert any("Block IoT to TRUSTED" in w and "schedule" in w for w in dry["warnings"])
+
+    await _apply(target_server, envelope)
+    assert spy.calls == []
+    assert _target_policy(target_state, "Block IoT to TRUSTED") == before
+
+
+async def test_an_update_keeps_an_always_schedule_the_site_reports(
+    source_server: FastMCP, target_server: FastMCP, target_state: StubState
+) -> None:
+    """A schedule already equal to the backup's (ALWAYS) is sent back as the
+    site has it, rather than dropped from the PUT."""
+    envelope = await _restored_target(source_server, target_server)
+    victim = _target_policy(target_state, "Block IoT to TRUSTED")
+    victim["schedule"] = {"mode": "ALWAYS"}
+    victim["enabled"] = False
+
+    dry = await _dry(target_server, envelope)
+    updates = _policy_actions(dry["would_apply"], "update")
+    assert [(a["name"], a["changes"]) for a in updates] == [("Block IoT to TRUSTED", ["enabled"])]
+    await _apply(target_server, envelope)
+    after = _target_policy(target_state, "Block IoT to TRUSTED")
+    assert after["enabled"] is True
+    assert after["schedule"] == {"mode": "ALWAYS"}
+
+
+async def test_an_identity_twice_in_the_backup_is_held_back_even_on_an_empty_target(
+    source_server: FastMCP, target_server: FastMCP, target_state: StubState
+) -> None:
+    envelope = await _backup(source_server)
+    policies = envelope["resources"]["firewall_policies"]
+    twin = copy.deepcopy(next(p for p in policies if p["name"] == "Allow TRUSTED to MGMT"))
+    twin["action"] = "BLOCK"
+    policies.append(twin)
+
+    dry = await _dry(target_server, envelope)
+    mine = [a for a in _policy_actions(dry["would_apply"]) if a["name"] == "Allow TRUSTED to MGMT"]
+    assert [a["action"] for a in mine] == ["blocked"]
+    assert "2 in the backup" in mine[0]["reason"]
+
+    await _apply(target_server, envelope)
+    assert "Allow TRUSTED to MGMT" not in {p["name"] for p in _user_v1(target_state)}
+
+
+@pytest.mark.parametrize(
+    ("where", "key", "value", "words"),
+    [
+        ("source", "match_opposite_networks", True, "match_opposite_networks"),
+        ("destination", "match_opposite_ips", True, "match_opposite_ips"),
+        ("destination", "match_opposite_ports", True, "match_opposite_ports"),
+        (None, "icmp_typename", "ECHO_REQUEST", "icmp_typename"),
+        (None, "icmp_v6_typename", "ECHO_REQUEST", "icmp_v6_typename"),
+        (None, "match_ip_sec", True, "match_ip_sec"),
+        (None, "match_opposite_protocol", True, "match_opposite_protocol"),
+    ],
+)
+async def test_a_match_the_v1_body_would_widen_is_held_back(
+    source_server: FastMCP,
+    target_server: FastMCP,
+    target_state: StubState,
+    where: str | None,
+    key: str,
+    value: Any,
+    words: str,
+) -> None:
+    """Negated matches, ICMP types, IPsec and a negated protocol have no place
+    in the v1 body this server builds; writing without them would match more."""
+    envelope = await _backup(source_server)
+    spec = next(
+        p for p in envelope["resources"]["firewall_policies"] if p["name"] == "Block IoT to TRUSTED"
+    )
+    (spec[where] if where else spec)[key] = value
+    spy = WriteSpy(target_state)
+
+    dry = await _dry(target_server, envelope)
+    mine = [a for a in _policy_actions(dry["would_apply"]) if a["name"] == "Block IoT to TRUSTED"]
+    assert [a["action"] for a in mine] == ["blocked"]
+    assert words in mine[0]["reason"]
+
+    await _apply(target_server, envelope)
+    sent = {args[0]["name"] for method, args in spy.calls if method == "create_policy"}
+    assert "Block IoT to TRUSTED" not in sent
+
+
+async def test_custom_connection_states_are_written_as_the_backup_has_them(
+    source_server: FastMCP, target_server: FastMCP, target_state: StubState
+) -> None:
+    """An ESTABLISHED/RELATED-only ALLOW must never come back as all-states."""
+    envelope = await _backup(source_server)
+    spec = next(
+        p
+        for p in envelope["resources"]["firewall_policies"]
+        if p["name"] == "Allow Vpn to Internal"
+    )
+    spec["connection_state_type"] = "CUSTOM"
+    spec["connection_states"] = ["ESTABLISHED", "RELATED"]
+    await _apply(target_server, envelope)
+    restored = _target_policy(target_state, "Allow Vpn to Internal")
+    assert restored["connectionStateFilter"] == ["ESTABLISHED", "RELATED"]
+
+
+async def test_both_ip_versions_restore_as_both(
+    source_server: FastMCP, target_server: FastMCP, target_state: StubState
+) -> None:
+    envelope = await _backup(source_server)
+    spec = next(
+        p
+        for p in envelope["resources"]["firewall_policies"]
+        if p["name"] == "Allow Vpn to Internal"
+    )
+    spec["ip_version"] = "BOTH"
+    await _apply(target_server, envelope)
+    restored = _target_policy(target_state, "Allow Vpn to Internal")
+    assert restored["ipProtocolScope"]["ipVersion"] == "IPV4_AND_IPV6"
+
+
+async def test_a_network_this_restore_deletes_holds_its_policies_back(
+    source_server: FastMCP, target_server: FastMCP, target_state: StubState
+) -> None:
+    envelope = await _backup(source_server)
+    envelope["resources"]["networks"] = [
+        n for n in envelope["resources"]["networks"] if n.get("name") != "IoT"
+    ]
+    spy = WriteSpy(target_state)
+
+    dry = await _dry(target_server, envelope)
+    assert [
+        a["name"] for a in dry["would_apply"] if a["type"] == "networks" and a["action"] == "delete"
+    ] == ["IoT"]
+    blocked = {a["name"]: a["reason"] for a in _policy_actions(dry["would_apply"], "blocked")}
+    assert "deleted by this restore" in blocked["Block IoT to TRUSTED"]
+
+    await _apply(target_server, envelope)
+    sent = {args[0]["name"] for method, args in spy.calls if method == "create_policy"}
+    assert "Block IoT to TRUSTED" not in sent
+
+
+async def test_a_failed_create_reverts_an_update_already_applied(
+    source_server: FastMCP, target_server: FastMCP, target_state: StubState
+) -> None:
+    envelope = await _restored_target(source_server, target_server)
+    fw = target_state.zone_firewall
+    # The Internal -> Internal Ecowitt policy (index 10000) is planned before
+    # "Block IoT to TRUSTED" (index 10002): an update, then a create.
+    internal = fw.zone_ids["Internal"]
+    updated = next(
+        p
+        for p in _user_v1(target_state)
+        if p["name"] == ECOWITT and p["destination"]["zoneId"] == internal
+    )
+    updated["enabled"] = False
+    fw.policies = [p for p in fw.policies if p.get("name") != "Block IoT to TRUSTED"]
+
+    def _fails(body: dict[str, Any]) -> dict[str, Any]:
+        from mcp_unifi.clients.errors import UniFiError
+
+        raise UniFiError("UniFi Integration returned 400: boom")
+
+    fw.create_policy = _fails  # type: ignore[method-assign]
+    result = await _apply(target_server, envelope)
+    assert "boom" in result["error"]
+    assert [a["result"] for a in result["partial"] if a.get("result") == "updated"] == ["updated"]
+    reverted = [r for r in result["rolled_back"] if r.get("reverted") is not None]
+    assert reverted == [{"type": "firewall_policies", "id": updated["id"], "reverted": True}]
+    assert next(p for p in fw.policies if p["id"] == updated["id"])["enabled"] is False
+
+
+async def test_creating_into_a_zone_pair_with_other_user_policies_warns_about_order(
+    source_server: FastMCP, target_server: FastMCP, target_state: StubState
+) -> None:
+    """First match wins, and a created policy lands after the ones already in
+    its zone pair, so a restored BLOCK can sit below an ALLOW."""
+    fw = target_state.zone_firewall
+    fw.create_policy(
+        {
+            "name": "Lab allow",
+            "enabled": True,
+            "loggingEnabled": False,
+            "action": {"type": "ALLOW", "allowReturnTraffic": True},
+            "source": {"zoneId": fw.zone_ids["Internal"]},
+            "destination": {"zoneId": fw.zone_ids["Internal"]},
+            "ipProtocolScope": {"ipVersion": "IPV4"},
+        }
+    )
+    envelope = await _backup(source_server)
+    dry = await _dry(target_server, envelope)
+    order = [w for w in dry["warnings"] if "order" in w]
+    assert len(order) == 1
+    assert "Internal -> Internal" in order[0]
+    assert "Internal -> Hotspot" not in order[0]
+
+
+async def test_matched_policies_in_a_different_order_are_reported(
+    source_server: FastMCP, target_server: FastMCP, target_state: StubState
+) -> None:
+    envelope = await _restored_target(source_server, target_server)
+    allow = _target_policy(target_state, "Allow TRUSTED to MGMT")
+    block = _target_policy(target_state, "Block IoT to TRUSTED")
+    allow["index"], block["index"] = block["index"], allow["index"]
+
+    dry = await _dry(target_server, envelope)
+    order = [w for w in dry["warnings"] if "order" in w]
+    assert len(order) == 1
+    assert "Internal -> Internal" in order[0]
+
+    clean = await _restored_target(source_server, target_server)
+    allow["index"], block["index"] = block["index"], allow["index"]
+    again = await _dry(target_server, clean)
+    assert not [w for w in again["warnings"] if "order" in w]
+
+
+async def test_a_policy_edited_after_the_preview_is_refused_at_confirm(
+    source_server: FastMCP, target_server: FastMCP, target_state: StubState
+) -> None:
+    envelope = await _restored_target(source_server, target_server)
+    victim = _target_policy(target_state, "Block IoT to TRUSTED")
+    victim["enabled"] = False
+
+    preview = await _call(
+        target_server, "restore_config", {"backup_json": json.dumps(envelope), "dry_run": False}
+    )
+    assert [a["name"] for a in _policy_actions(preview["resource"]["plan"], "update")] == [
+        "Block IoT to TRUSTED"
+    ]
+    # Someone edits the policy between the preview and the confirm.
+    victim["loggingEnabled"] = True
+    edited = copy.deepcopy(victim)
+    spy = WriteSpy(target_state)
+
+    result = await _call(target_server, "confirm_destructive_action", {"token": preview["token"]})
+    assert "error" not in result, result
+    mine = [a for a in result["applied"] if a.get("name") == "Block IoT to TRUSTED"]
+    assert [a["result"] for a in mine] == ["refused"]
+    assert "changed since the preview" in mine[0]["reason"]
+    assert spy.calls == []
+    assert _target_policy(target_state, "Block IoT to TRUSTED") == edited
