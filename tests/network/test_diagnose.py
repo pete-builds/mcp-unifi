@@ -28,6 +28,7 @@ from fastmcp import FastMCP
 
 from mcp_unifi.backends import StubBackend
 from mcp_unifi.clients.stubs import StubState
+from mcp_unifi.clients.system_log import finish_detections
 from mcp_unifi.clients.unifi import UniFiError, UniFiUnsupportedError
 from mcp_unifi.config import Settings
 from mcp_unifi.dispatcher import build_registry, register_modules
@@ -211,6 +212,16 @@ def test_resource_rules_fire_above_the_threshold_only(rule_id: str, key: str) ->
 @pytest.mark.parametrize(
     ("rule_id", "key"), [("device.high_cpu", "cpu"), ("device.high_memory", "mem")]
 )
+def test_resource_rules_fire_just_above_the_threshold(rule_id: str, key: str) -> None:
+    """90.1 fires, so a threshold quietly loosened anywhere above 90 goes red."""
+    data = _healthy_data()
+    data[SRC_DEVICES][2]["system-stats"][key] = "90.1"
+    assert [f["subject"]["mac"] for f in _of(_report(_snap(data)), rule_id)] == [SW]
+
+
+@pytest.mark.parametrize(
+    ("rule_id", "key"), [("device.high_cpu", "cpu"), ("device.high_memory", "mem")]
+)
 def test_resource_rules_skip_disconnected_devices(rule_id: str, key: str) -> None:
     data = _healthy_data()
     data[SRC_DEVICES][0]["system-stats"][key] = "99"
@@ -338,7 +349,9 @@ def test_weak_signal_fires_at_three_weak_clients_on_one_ap() -> None:
     assert found[0]["subject"] == {"type": "access_point", "mac": AP, "name": "AP"}
     assert {"fact": "weak_clients=3", "source": "list_clients"} in found[0]["observed"]
     assert {"fact": "weakest_signal_dbm=-82", "source": "list_clients"} in found[0]["observed"]
-    assert found[0]["next"] == [{"tool": "get_device_radios", "args": {"device_mac": AP}}]
+    assert found[0]["next"] == [
+        {"tool": "get_device_radios", "args": {"controller": "default", "device_mac": AP}}
+    ]
 
 
 def test_weak_signal_near_misses_do_not_fire() -> None:
@@ -657,7 +670,7 @@ async def test_each_failing_source_is_contained_and_reported(
     gaps = {g["rule"] for g in report["not_evaluated"] if g["scope"] == "rule"}
     assert dependent <= gaps
     assert not dependent & set(report["rules_evaluated"])
-    assert report["next"] == [{"tool": "get_console_health", "args": {}}]
+    assert report["next"] == [{"tool": "get_console_health", "args": {"controller": "default"}}]
     assert "1 of 5 reads failed" in report["summary"]
     # A read that failed for any reason but "route absent" leaves the
     # diagnosis blind: never healthy, whichever read it was.
@@ -784,8 +797,171 @@ def test_wrong_shape_counts_as_a_failed_read() -> None:
     assert diagnose._shape_alarms({"entries": []}).ok is False
     assert diagnose._shape_threats([]).ok is False
     assert diagnose._shape_alarms({"alarms": [], "more_available": True}).partial
-    assert diagnose._shape_threats({"detections": [], "complete": False}).partial
+    assert diagnose._shape_threats({"detections": [], "complete": False}).constituent_failure
     assert not diagnose._shape_threats({"detections": [], "complete": True}).partial
+
+
+# ---------------------------------------------------------------------------
+# Next steps name the controller the diagnosis ran on
+# ---------------------------------------------------------------------------
+
+
+def _all_steps(report: dict[str, Any]) -> list[dict[str, Any]]:
+    steps = list(report["next"])
+    for item in report["findings"]:
+        steps.extend(item["next"])
+    return steps
+
+
+@pytest.mark.parametrize("controller", ["office", "default"])
+def test_every_next_step_names_the_controller(controller: str) -> None:
+    snap = _snap(_everything_fires())
+    snap[SRC_ALARMS] = SourceResult(SRC_ALARMS, ok=False, error="boom")
+    report = build_report(snap, controller=controller, stub_mode=True)
+    steps = _all_steps(report)
+    assert report["next"], "the failed read must produce a top-level next step"
+    assert len(steps) > len(diagnose.RULES)
+    for step in steps:
+        assert step["args"]["controller"] == controller, step
+        assert list(step["args"]) == sorted(step["args"]), "args keep a stable key order"
+
+
+async def test_next_steps_name_a_non_default_controller_end_to_end(
+    multi_site_server: FastMCP,
+) -> None:
+    report = await _call(multi_site_server, "diagnose_site", {"controller": "office"})
+    assert report["controller"] == "office"
+    steps = _all_steps(report)
+    assert steps, "the seeded stub site carries findings with next steps"
+    assert {step["args"]["controller"] for step in steps} == {"office"}
+
+
+# ---------------------------------------------------------------------------
+# A failed IPS constituent route blinds the diagnosis; a capped one does not
+# ---------------------------------------------------------------------------
+
+
+def _ips_envelope(
+    *, failures: list[str], sources: list[dict[str, Any]], detections: int = 0
+) -> dict[str, Any]:
+    """The real list_threat_detections envelope, built by the same helper the
+    client uses."""
+    flows = [
+        {"time": 1_000 + i, "action": "blocked", "src_ip": "192.0.2.1", "source": "flows"}
+        for i in range(detections)
+    ]
+    return finish_detections(
+        flows,
+        [],
+        sources=sources,
+        failures=failures,
+        window=(24, 0, 86_400_000),
+        client="",
+        limit=100,
+    )
+
+
+def test_one_failed_ips_route_makes_a_healthy_site_unknown() -> None:
+    envelope = _ips_envelope(
+        failures=["POST /traffic-flows answered HTTP 500"],
+        sources=[
+            {"endpoint": "POST /traffic-flows", "ok": False, "error": "answered HTTP 500"},
+            {"endpoint": "POST /system-log/threat-alert", "ok": True, "rows_read": 0},
+        ],
+    )
+    assert envelope["complete"] is False
+    snap = _snap()
+    snap[SRC_THREATS] = diagnose._shape_threats(envelope)
+    report = _report(snap)
+    assert report["verdict"] == "unknown"
+    check = next(c for c in report["checks"] if c["source"] == SRC_THREATS)
+    assert check["constituent_failure"] == (
+        "1 of 2 IPS sources failed (see list_threat_detections)"
+    )
+    assert [g["scope"] for g in _gaps(report, "threats.detected")] == ["rule"]
+    assert report["next"] == [{"tool": "get_console_health", "args": {"controller": "default"}}]
+
+
+def test_failed_ips_route_never_softens_a_worse_verdict() -> None:
+    data = _healthy_data()
+    data[SRC_DEVICES][0]["state"] = 0
+    snap = _snap(data)
+    snap[SRC_THREATS] = diagnose._shape_threats(
+        {"detections": [], "complete": False, "sources": [{"ok": False}, {"ok": True}]}
+    )
+    assert _report(snap)["verdict"] == "critical"
+
+
+def test_capped_ips_route_is_partial_not_blind() -> None:
+    envelope = _ips_envelope(
+        failures=[],
+        sources=[
+            {"endpoint": "POST /traffic-flows", "ok": True, "more_available": True},
+            {"endpoint": "POST /system-log/threat-alert", "ok": True, "more_available": False},
+        ],
+        detections=2,
+    )
+    assert envelope["complete"] is False
+    snap = _snap()
+    snap[SRC_THREATS] = diagnose._shape_threats(envelope)
+    report = _report(snap)
+    assert report["verdict"] == "healthy"  # two blocked detections are info
+    assert _gaps(report, "threats.detected") == [
+        {
+            "rule": "threats.detected",
+            "scope": "partial",
+            "reason": "1 IPS source(s) were cut off at the scan cap",
+        }
+    ]
+    assert report["next"] == []
+
+
+def test_incomplete_ips_read_without_sources_is_treated_as_failed() -> None:
+    snap = _snap()
+    snap[SRC_THREATS] = diagnose._shape_threats({"detections": [], "complete": False})
+    assert _report(snap)["verdict"] == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# Rows that are not objects are counted, never silently dropped
+# ---------------------------------------------------------------------------
+
+
+def _with_junk_row(source: str) -> SourceResult:
+    data = _healthy_data()
+    rows: list[Any] = [*data[source], "not-an-object"]
+    if source == SRC_ALARMS:
+        return diagnose._shape_alarms({"alarms": rows})
+    if source == SRC_THREATS:
+        return diagnose._shape_threats({"detections": rows, "complete": True})
+    return diagnose._shape_list(source, rows)
+
+
+@pytest.mark.parametrize("source", SOURCES)
+def test_non_object_rows_are_a_partial_gap_for_every_rule_reading_them(source: str) -> None:
+    snap = _snap()
+    snap[source] = _with_junk_row(source)
+    report = _report(snap)
+    check = next(c for c in report["checks"] if c["source"] == source)
+    assert check["skipped_rows"] == 1
+    reason = f"1 row(s) of {source} were not objects and were skipped"
+    dependent = [r for r in diagnose.RULES if source in r.requires]
+    assert dependent
+    for rule in dependent:
+        assert {"rule": rule.id, "scope": "partial", "reason": reason} in report["not_evaluated"]
+    if any(r.id in diagnose.CRITICAL_CAPABLE for r in dependent):
+        assert report["verdict"] == "unknown"
+    else:
+        assert report["verdict"] == "healthy"
+
+
+async def test_a_malformed_device_row_cannot_hide_behind_healthy(stub_settings: Settings) -> None:
+    class Malformed(StubBackend):
+        async def list_devices(self) -> Any:
+            return [*self.state.list_devices(), ["the offline device, mangled"]]
+
+    report = await _call(_server_with(Malformed(_healthy_state()), stub_settings), "diagnose_site")
+    assert report["verdict"] == "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -883,6 +1059,11 @@ async def test_every_next_tool_is_registered_with_valid_arguments(stub_server: F
     declared = {tool for rule in diagnose.RULES for tool in rule.next_tools}
     declared.add(diagnose.SOURCE_FAILURE_NEXT["tool"])
     assert declared <= set(tools), declared - set(tools)
+    # Every next step is stamped with the controller, so every tool a step can
+    # name must take one.
+    assert all("controller" in params[tool] for tool in declared), [
+        tool for tool in declared if "controller" not in params[tool]
+    ]
     assert set(SOURCES) <= set(tools), "every check source must be a tool an agent can call"
 
     report = _report(_snap(_everything_fires()))
@@ -1052,3 +1233,7 @@ async def test_description_is_short_and_says_call_it_first(stub_server: FastMCP)
     description = tool.description or ""
     assert len(description) < 900
     assert "FIRST" in description and "granular tools" in description
+    # The return shape is named in the summary part, above any Args section.
+    summary_part = description.split("Args:")[0]
+    for term in ("verdict", "findings", "not_evaluated", "checks", "thresholds"):
+        assert f"``{term}``" in summary_part, term
