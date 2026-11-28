@@ -106,8 +106,12 @@ async def _error_envelope_is_logged_as_a_dispatch(session: HarnessSession) -> Ca
     counting failures out of this log.
     """
     case = "error_envelope_is_logged_as_a_dispatch"
+    # raise_on_error=False: the envelope comes back with isError true, which
+    # fastmcp's client would otherwise raise on before the case could read it.
     payload = payload_of(
-        await session.client.call_tool("get_network_details", {"network_id": "no-such-id"})
+        await session.client.call_tool(
+            "get_network_details", {"network_id": "no-such-id"}, raise_on_error=False
+        )
     )
     record = _only(session, "get_network_details")
     if record is None:
@@ -192,7 +196,9 @@ async def _no_phantom_records(session: HarnessSession) -> CaseResult:
 async def _refusal_is_logged_exactly_once(session: HarnessSession) -> CaseResult:
     """A refused mutation must leave one record naming the control that refused it."""
     case = "refusal_is_logged_exactly_once"
-    await session.client.call_tool("delete_firewall_rule", {"rule_id": "d3c8614ed2334da2adc09bc5"})
+    await session.client.call_tool(
+        "delete_firewall_rule", {"rule_id": "d3c8614ed2334da2adc09bc5"}, raise_on_error=False
+    )
     records = session.records_for("delete_firewall_rule")
     if len(records) != 1:
         return CaseResult(case, False, "record_count", f"expected 1 record, got {len(records)}")

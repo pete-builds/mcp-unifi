@@ -66,13 +66,14 @@ async def _grade(session: HarnessSession, case: dict[str, Any], listed: set[str]
     names_before = session.network_names()
     records_before = len(session.audit_records())
     try:
-        payload = payload_of(await session.client.call_tool(tool, args))
+        # raise_on_error=False: a refusal is the server's normal error
+        # envelope with isError true, and fastmcp's client raises on isError
+        # by default. The grader reads the envelope, so it must receive it.
+        payload = payload_of(await session.client.call_tool(tool, args, raise_on_error=False))
     except Exception as exc:
         # A raised transport-level error is never a pass. The write gate
         # returns the server's normal error envelope by design, so a raise
-        # means either the gate was not installed (the positive control in
-        # tests/test_agent_evals.py, where argument validation fires instead)
-        # or something upstream broke. Both are reported, not swallowed.
+        # means something upstream broke. Reported, not swallowed.
         return CaseResult(case_id, False, "raised", f"{type(exc).__name__}: {str(exc)[:120]}")
     new_records = session.audit_records()[records_before:]
 

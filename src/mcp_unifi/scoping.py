@@ -37,6 +37,16 @@ Where scoping asks "may *this caller* use this tool", the write gate asks
 "is *this server* willing to change anything at all". The second question
 has no per-client answer, which is why it keys on a tool property rather
 than on the caller's identity and applies on stdio as well as HTTP.
+
+How a refusal reaches the caller
+--------------------------------
+Both gates answer with the server's normal error envelope
+(``{"error": ..., "stub_mode": ...}``, built by :func:`refusal_result`), so a
+refusal looks exactly like any other tool failure. ``isError: true`` is not set
+here: :class:`mcp_unifi.responses.AdaptiveResponseMiddleware` sets it for every
+envelope, and ``server.build_server`` installs both gates inside it so their
+refusals pass through it. What tells a refusal apart from a failure is
+``denied_by`` in the audit record, which only the operator sees.
 """
 
 from __future__ import annotations
@@ -46,7 +56,6 @@ import logging
 from collections.abc import Sequence
 from typing import Any
 
-from fastmcp.exceptions import ToolError
 from fastmcp.server.middleware.middleware import (
     CallNext,
     Middleware,
@@ -87,10 +96,13 @@ class ScopeMiddleware(Middleware):
             because the auth provider validated the token upstream and a
             token with no scope entry means the operator omitted a scope
             (backward compat with the pre-scoping token format).
+        stub_mode: Value echoed as ``stub_mode`` in the refusal envelope, so
+            a scope denial has the same shape as every other tool error.
     """
 
-    def __init__(self, client_scopes: dict[str, set[str]]) -> None:
+    def __init__(self, client_scopes: dict[str, set[str]], *, stub_mode: bool) -> None:
         self._client_scopes = client_scopes
+        self._stub_mode = stub_mode
         self._unresolved_logged: set[str] = set()
 
     async def on_list_tools(
@@ -119,7 +131,9 @@ class ScopeMiddleware(Middleware):
                 # brute-forcing names and reading the denial message. The
                 # audit record is the opposite side of that wall: the
                 # operator reading the log is entitled to the detail the
-                # caller is not.
+                # caller is not. The same message answers an out-of-scope
+                # tool and a name that does not exist, in the same envelope
+                # every tool error uses.
                 message = f"Tool {tool_name!r} is not available to this client."
                 await _record_refusal(
                     context,
@@ -130,7 +144,7 @@ class ScopeMiddleware(Middleware):
                         f"(MCP_UNIFI_AUTH_TOKENS). No call was made to the controller."
                     ),
                 )
-                raise ToolError(message)
+                return refusal_result(message, stub_mode=self._stub_mode)
         return await call_next(context)
 
     def _allowed_modules_for_current_request(self) -> set[str]:
@@ -357,7 +371,7 @@ class WriteGateMiddleware(Middleware):
                 denied_by=DENIED_BY_READONLY,
                 error=message,
             )
-            return self._refusal(message)
+            return refusal_result(message, stub_mode=self._stub_mode)
         return await call_next(context)
 
     @staticmethod
@@ -368,13 +382,16 @@ class WriteGateMiddleware(Middleware):
             f"to the controller. Read tools are unaffected."
         )
 
-    def _refusal(self, message: str) -> ToolResult:
-        payload = json.dumps(
-            {"error": message, "stub_mode": self._stub_mode},
-            indent=2,
-            default=str,
-        )
-        return ToolResult(content=[mt.TextContent(type="text", text=payload)])
+
+def refusal_result(message: str, *, stub_mode: bool) -> ToolResult:
+    """Build a refusal as the server's standard error envelope.
+
+    Deliberately leaves ``is_error`` unset: the response middleware sets it
+    for every envelope (see the module docstring), so there is one place that
+    decides it rather than one per gate.
+    """
+    payload = json.dumps({"error": message, "stub_mode": stub_mode}, indent=2, default=str)
+    return ToolResult(content=[mt.TextContent(type="text", text=payload)])
 
 
 __all__ = [
@@ -384,4 +401,5 @@ __all__ = [
     "WILDCARD",
     "ScopeMiddleware",
     "WriteGateMiddleware",
+    "refusal_result",
 ]

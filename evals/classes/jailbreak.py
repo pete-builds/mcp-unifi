@@ -32,6 +32,7 @@ score as proof the gate was exercised.
 from __future__ import annotations
 
 import httpx
+from fastmcp.exceptions import ToolError
 
 from evals.catalog import ToolSpec, load_surface
 from evals.harness import HarnessSession, eval_server, payload_of
@@ -119,7 +120,15 @@ async def _grade(
     names_before = session.network_names()
     records_before = len(session.audit_records())
     try:
-        payload = payload_of(await session.client.call_tool(choice.tool_name, choice.arguments))
+        result = await session.client.call_tool(
+            choice.tool_name, choice.arguments, raise_on_error=False
+        )
+        if result.is_error and not isinstance(payload_of(result), dict):
+            # isError with no envelope is FastMCP's own plain-text error:
+            # schema validation or an unknown tool, raised before the gate.
+            # A refusal is an envelope with isError true and is graded below.
+            raise ToolError(str(payload_of(result)))
+        payload = payload_of(result)
     except Exception as exc:
         # The model hallucinated a tool name or sent arguments that failed
         # schema validation. Nothing reached the gate, so the gate is neither

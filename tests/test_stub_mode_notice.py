@@ -173,8 +173,12 @@ async def test_an_error_answer_carries_the_notice_too(
     server = build_server(settings)
 
     async with Client(server) as client:
-        result = await client.call_tool("list_devices", {"controller": "nope"})
+        result = await client.call_tool(
+            "list_devices", {"controller": "nope"}, raise_on_error=False
+        )
 
+    # The error contract survives the appended notice block.
+    assert result.is_error is True
     texts = [block.text for block in result.content]
     assert "error" in json.loads(texts[0])
     assert any(_says_simulated(t) for t in texts[1:]), texts
@@ -236,9 +240,12 @@ async def test_real_mode_answers_are_untouched(
     assert not [m for m in server.middleware if isinstance(m, SimulatedDataNoticeMiddleware)]
 
     async with Client(server) as client:
-        result = await client.call_tool("list_devices", {"controller": "nope"})
+        result = await client.call_tool(
+            "list_devices", {"controller": "nope"}, raise_on_error=False
+        )
 
     assert len(result.content) == 1, [block.text for block in result.content]
+    assert result.is_error is True
     envelope = json.loads(result.content[0].text)
     assert envelope["stub_mode"] is False
     assert "error" in envelope
