@@ -10,12 +10,11 @@ List every Zone-Based Firewall policy on the controller (v2 API).
 
 Side effects: None (read-only).
 
-Sites on UniFi Network 9.x and newer that use the Zone-Based Firewall
-keep their policy here, not in the legacy rulesets that
-``list_firewall_rules`` reads. A site still on legacy rulesets returns
-``[]`` from this tool and its rules from ``list_firewall_rules``;
-``audit_open_ports`` reads both so you do not have to guess which
-model a site uses.
+UniFi Network 11.0.97 and later put every site on the Zone-Based
+Firewall, so the policy lives here, not in the legacy rulesets that
+``list_firewall_rules`` reads. A console older than 11.0.97 that has
+not been moved to zones returns ``[]`` from this tool and its rules
+from ``list_firewall_rules``; ``audit_open_ports`` reads both.
 
 Returns one record per policy with ``_id``, ``name``, ``action``
 (``ALLOW``/``BLOCK``/``REJECT``), ``enabled``, ``predefined``

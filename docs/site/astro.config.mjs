@@ -31,6 +31,7 @@ export default defineConfig({
             { label: 'Authentication', link: '/guides/auth/' },
             { label: 'Security Model', link: '/guides/security/' },
             { label: 'Migrate from v0.x', link: '/guides/migration/' },
+            { label: 'UniFi Network 11', link: '/guides/network-11/' },
           ],
         },
         {

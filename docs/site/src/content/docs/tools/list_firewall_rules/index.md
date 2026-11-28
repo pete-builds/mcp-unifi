@@ -11,11 +11,11 @@ List every legacy-ruleset firewall rule on the controller.
 Side effects: None (read-only).
 
 Reads the legacy ``/rest/firewallrule`` collection (rulesets such as
-``WAN_IN`` and ``LAN_IN``). A site that has migrated to the
-Zone-Based Firewall (Network 9.x and newer) keeps its policy elsewhere
-and this returns ``[]`` even though the firewall is configured: use
-``list_firewall_policies`` for those sites, or ``audit_open_ports``,
-which reads both.
+``WAN_IN`` and ``LAN_IN``). UniFi Network 11.0.97 and later put every
+site on the Zone-Based Firewall automatically, and on such a site this
+returns ``[]`` even though the firewall is configured: use
+``list_firewall_policies``, or ``audit_open_ports``, which reads both.
+Only consoles older than 11.0.97 can still hold legacy rules.
 
 Returns one record per rule with ``_id``, ``name``, ``ruleset``,
 ``rule_index``, ``action``, ``enabled``, ``protocol``, and
