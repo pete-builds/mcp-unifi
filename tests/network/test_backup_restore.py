@@ -576,8 +576,23 @@ _REF_FIELDS: dict[str, str] = {
 }
 
 
-def _seed_bound(state: StubState) -> None:
-    """Add a network and a group that other records point at by id."""
+#: The two forms a lease's ``network_id`` takes on UniFi Network 11: the
+#: network's UUID ``_id``, or its ``legacy_id`` (24-hex ObjectId), which
+#: reservations made before the migration still store (5 of 6 on the
+#: maintainer's gateway, LIVE-ID-SHAPES 2026-11-27; issue #219).
+LEASE_REF_FORMS = ("uuid", "legacy")
+
+
+def _lease_ref(network: dict[str, Any], form: str) -> str:
+    """The id a lease stores for ``network``, in the given form."""
+    return str(network["legacy_id"] if form == "legacy" else network["_id"])
+
+
+def _seed_bound(state: StubState, lease_ref: str = "uuid") -> None:
+    """Add a network and a group that other records point at by id.
+
+    ``lease_ref`` picks the form of Bound-Lease's ``network_id``.
+    """
     net = state.create_network(
         {
             "name": "Bound",
@@ -607,7 +622,7 @@ def _seed_bound(state: StubState) -> None:
             "mac": "aa:bb:cc:60:00:01",
             "name": "Bound-Lease",
             "fixed_ip": "10.60.0.10",
-            "network_id": net["_id"],
+            "network_id": _lease_ref(net, lease_ref),
         }
     )
     state.create_port_profile(
@@ -630,31 +645,39 @@ def _seed_bound(state: StubState) -> None:
     )
 
 
-def _points_at(record: dict[str, Any], kind: str, target_id: str) -> bool:
+def _points_at(record: dict[str, Any], kind: str, target: dict[str, Any]) -> bool:
+    """True if ``record`` points at ``target`` by its ``_id`` or ``legacy_id``."""
+    target_ids = {target.get("_id"), target.get("legacy_id")} - {None}
     for key, ref_kind in _REF_FIELDS.items():
         if ref_kind != kind:
             continue
         value = record.get(key)
-        if value == target_id or (isinstance(value, list) and target_id in value):
+        values = value if isinstance(value, list) else [value]
+        if any(v in target_ids for v in values):
             return True
     return False
 
 
-def _delete_pointing_at(state: StubState, kind: str, target_id: str) -> None:
-    """Delete every record that points at ``target_id`` (a real controller
+def _delete_pointing_at(state: StubState, kind: str, target: dict[str, Any]) -> None:
+    """Delete every record that points at ``target`` (a real controller
     refuses to delete a network or group something still references)."""
-    for wlan in [w for w in state.wlans if _points_at(w, kind, target_id)]:
+    for wlan in [w for w in state.wlans if _points_at(w, kind, target)]:
         state.delete_wlan(wlan["_id"])
-    for lease in [x for x in state.list_dhcp_leases() if _points_at(x, kind, target_id)]:
+    for lease in [x for x in state.list_dhcp_leases() if _points_at(x, kind, target)]:
         state.delete_dhcp_lease(lease["_id"])
-    for profile in [p for p in state.port_profiles if _points_at(p, kind, target_id)]:
+    for profile in [p for p in state.port_profiles if _points_at(p, kind, target)]:
         state.delete_port_profile(profile["_id"])
-    for rule in [r for r in state.firewall_rules if _points_at(r, kind, target_id)]:
+    for rule in [r for r in state.firewall_rules if _points_at(r, kind, target)]:
         state.delete_firewall_rule(rule["_id"])
 
 
-def _apply_mutation(state: StubState, kind: str, name: str, vlan_id: int) -> None:
-    """Apply a single mutation. Best-effort — unknown kinds are no-ops."""
+def _apply_mutation(
+    state: StubState, kind: str, name: str, vlan_id: int, lease_ref: str = "uuid"
+) -> None:
+    """Apply a single mutation. Best-effort — unknown kinds are no-ops.
+
+    ``lease_ref`` picks the form of an added lease's ``network_id``.
+    """
     if kind == "add_network":
         state.create_network(
             {
@@ -700,7 +723,7 @@ def _apply_mutation(state: StubState, kind: str, name: str, vlan_id: int) -> Non
                 "mac": mac,
                 "name": f"Extra-Lease-{name}",
                 "fixed_ip": f"192.168.1.{(vlan_id % 200) + 50}",
-                "network_id": state.networks[0]["_id"],
+                "network_id": _lease_ref(state.networks[0], lease_ref),
             }
         )
     elif kind == "add_wlan":
@@ -726,12 +749,12 @@ def _apply_mutation(state: StubState, kind: str, name: str, vlan_id: int) -> Non
     elif kind == "delete_bound_network":
         net = next((n for n in state.networks if n.get("name") == "Bound"), None)
         if net is not None:
-            _delete_pointing_at(state, "net", net["_id"])
+            _delete_pointing_at(state, "net", net)
             state.delete_network(net["_id"])
     elif kind == "delete_bound_group":
         group = next((g for g in state.firewall_groups if g.get("name") == "Bound-Hosts"), None)
         if group is not None:
-            _delete_pointing_at(state, "group", group["_id"])
+            _delete_pointing_at(state, "group", group)
             state.delete_firewall_group(group["_id"])
     elif kind == "delete_bound_profile":
         profile = next((p for p in state.port_profiles if p.get("name") == "Bound-Trunk"), None)
@@ -748,9 +771,20 @@ def _referential_view(state: StubState) -> dict[str, list[str]]:
     no longer exists renders as ``<dangling ...>`` and cannot match. Records
     are compared as sorted JSON so a recreated record landing at the end of
     its list is not a difference.
+
+    A network is found by its ``_id`` or its ``legacy_id``: a lease made
+    before Network 11 points at it by the legacy id, and a restore rewrites
+    that to the recreated network's ``_id``, which names the same network.
+    ``legacy_id`` and ``external_id`` are controller-assigned, so a
+    recreated record has new ones and they are not compared.
     """
-    names = {
-        "net": {n["_id"]: n.get("name") for n in state.networks},
+    names: dict[str, dict[Any, Any]] = {
+        "net": {
+            ref: n.get("name")
+            for n in state.networks
+            for ref in (n.get("_id"), n.get("legacy_id"))
+            if ref
+        },
         "group": {g["_id"]: g.get("name") for g in state.firewall_groups},
     }
 
@@ -766,7 +800,11 @@ def _referential_view(state: StubState) -> dict[str, list[str]]:
     for rtype, items in snap.items():
         rendered: list[str] = []
         for item in items:
-            rec = {k: v for k, v in item.items() if k not in {"_id", "site_id"}}
+            rec = {
+                k: v
+                for k, v in item.items()
+                if k not in {"_id", "site_id", "legacy_id", "external_id"}
+            }
             for key, kind in _REF_FIELDS.items():
                 if key in rec:
                     value = rec[key]
@@ -782,6 +820,7 @@ def _referential_view(state: StubState) -> dict[str, list[str]]:
     return out
 
 
+@pytest.mark.parametrize("lease_ref", LEASE_REF_FORMS)
 @given(
     mutations=st.lists(
         st.tuples(_mutation_kinds, _safe_names, _vlan_ids),
@@ -791,6 +830,7 @@ def _referential_view(state: StubState) -> dict[str, list[str]]:
 )
 async def test_property_restore_converges_to_backup(
     stub_settings: Settings,
+    lease_ref: str,
     mutations: list[tuple[str, str, int]],
 ) -> None:
     """Random mutations between backup and restore must converge.
@@ -801,9 +841,13 @@ async def test_property_restore_converges_to_backup(
     to the name of their target). Every WLAN the restore recreated must come
     back disabled, since its passphrase is the backup sentinel. Hypothesis
     shrinks any counterexample to the smallest failing mutation list.
+
+    Run once with the leases' ``network_id`` as the network's UUID ``_id``
+    and once as its ``legacy_id``, the form older reservations keep on
+    Network 11.
     """
     state = StubState()
-    _seed_bound(state)
+    _seed_bound(state, lease_ref)
     server = build_server(stub_settings, stub=state)
 
     # Baseline: snapshot AND backup the seeded state.
@@ -813,7 +857,7 @@ async def test_property_restore_converges_to_backup(
 
     # Apply random mutations on top.
     for kind, name, vlan_id in mutations:
-        _apply_mutation(state, kind, name, vlan_id)
+        _apply_mutation(state, kind, name, vlan_id, lease_ref)
     wlan_ids_before_restore = {w["_id"] for w in state.wlans}
 
     # Restore (real apply).
@@ -1030,10 +1074,6 @@ async def test_restore_config_token_is_single_use(
     assert "error" in second
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Network 11: lease network_id is the network's legacy_id; fixed in the legacy_id PR",
-)
 async def test_restore_recreates_a_lease_whose_user_record_survived(
     stub_server: FastMCP, stub_state: StubState
 ) -> None:

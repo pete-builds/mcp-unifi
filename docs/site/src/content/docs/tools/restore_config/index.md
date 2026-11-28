@@ -19,7 +19,16 @@ Side effects:
   firewall groups are never deleted.
 - References: a recreated network or group gets a new id, and every
   restored record pointing at one (WLAN, lease, port profile,
-  firewall rule) is remapped to it. A record whose reference cannot
+  firewall rule) is remapped to it. A lease pointing at its network
+  by ``legacy_id`` (UniFi Network 11) is remapped the same way, to
+  the network's ``_id``; a recreated network or WLAN gets new
+  ``legacy_id`` and ``external_id`` values from the controller,
+  which restore never sends. What a Network 11 controller stores for
+  a lease written with the network's UUID ``_id`` (kept, converted to
+  the legacy id, or refused) has not been verified live. That
+  includes a restore onto the same controller of a lease the backup
+  holds by legacy id: it is written back with the UUID, not the
+  legacy id it had. A record whose reference cannot
   be resolved, and any name both sides hold with a duplicate on
   either, appears as a ``blocked`` action and is not written.
 - Zone-Based Firewall policies: matched by name plus source and
