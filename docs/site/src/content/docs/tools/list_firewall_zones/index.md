@@ -12,8 +12,8 @@ Side effects: None (read-only).
 
 Zones are what ``list_firewall_policies`` records point at through
 ``source.zone_id`` and ``destination.zone_id``, so this is the lookup
-that turns a policy into "WAN to LAN". A site still on legacy
-rulesets returns ``[]``.
+that turns a policy into "WAN to LAN". A console older than
+11.0.97 still on legacy rulesets returns ``[]``.
 
 Returns one record per zone with ``_id``, ``name``, ``zone_key``
 (``"wan"``, ``"lan"``, ...), ``default_zone``, ``attr_no_edit`` and

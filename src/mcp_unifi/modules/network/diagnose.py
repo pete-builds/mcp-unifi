@@ -154,32 +154,46 @@ class SourceResult:
     #: exist on this firmware. Its rules are not evaluated, but the site is
     #: not "blind" because of it (ADR 0010).
     unsupported: bool = False
-    #: Set when the read succeeded but says it is incomplete.
+    #: Set when the read succeeded but was cut short (truncation, not failure).
     partial: str = ""
+    #: Set when the read answered but one of its constituent sources failed
+    #: (the IPS read merges two routes). Makes the diagnosis blind, like a
+    #: failed read: the answer is missing data, not merely capped.
+    constituent_failure: str = ""
+    #: Rows the read returned that were not JSON objects, and were skipped.
+    skipped: int = 0
 
 
 Snapshot = dict[str, SourceResult]
 
 
-def _dict_rows(value: Any) -> list[dict[str, Any]] | None:
+def _dict_rows(value: Any) -> tuple[list[dict[str, Any]], int] | None:
+    """The object rows of a list, and how many rows were not objects."""
     if not isinstance(value, list):
         return None
-    return [row for row in value if isinstance(row, dict)]
+    rows = [row for row in value if isinstance(row, dict)]
+    return rows, len(value) - len(rows)
 
 
 def _shape_list(name: str, raw: Any) -> SourceResult:
-    rows = _dict_rows(raw)
-    if rows is None:
+    shaped = _dict_rows(raw)
+    if shaped is None:
         return SourceResult(
             name, ok=False, error=f"{name} returned {type(raw).__name__}, not a list"
         )
-    return SourceResult(name, ok=True, records=rows)
+    rows, skipped = shaped
+    return SourceResult(name, ok=True, records=rows, skipped=skipped)
 
 
 def _shape_alarms(raw: Any) -> SourceResult:
-    rows = _dict_rows(raw.get("alarms")) if isinstance(raw, dict) else None
-    if rows is None:
+    shaped = _dict_rows(raw.get("alarms")) if isinstance(raw, dict) else None
+    if shaped is None:
         return SourceResult(SRC_ALARMS, ok=False, error="list_alarms envelope has no alarms list")
+    rows, skipped = shaped
+    # Every flag below is truncation, not failure: the alarm read is one route,
+    # and a failure there raises instead of answering. ``window_fully_read``
+    # is false when the client hit its scan cap or the controller stopped
+    # paging early (clients/unifi.py ``_system_log``).
     reasons: list[str] = []
     if raw.get("window_fully_read") is False:
         reasons.append("the alarm window was not read to the end")
@@ -188,22 +202,54 @@ def _shape_alarms(raw: Any) -> SourceResult:
         reasons.append(f"the alarm read returned {returned} of {total} entries")
     elif raw.get("more_available") is True:
         reasons.append("the alarm log holds more entries than were read")
-    return SourceResult(SRC_ALARMS, ok=True, records=rows, partial="; ".join(reasons))
+    return SourceResult(
+        SRC_ALARMS, ok=True, records=rows, partial="; ".join(reasons), skipped=skipped
+    )
 
 
 def _shape_threats(raw: Any) -> SourceResult:
-    rows = _dict_rows(raw.get("detections")) if isinstance(raw, dict) else None
-    if rows is None:
+    """The IPS envelope, telling a failed constituent apart from a capped one.
+
+    ``list_threat_detections`` merges two routes. ``complete: false`` means a
+    route failed OR a route was cut at the scan cap; ``sources`` says which,
+    one entry per route with ``ok`` and, when cut, ``more_available``. A
+    failed route is a constituent failure (the diagnosis is blind). The
+    envelope does not say whether a failed route was absent on this firmware
+    (404/405) or broke: the status is only inside the error text. So every
+    failed constituent blocks ``healthy`` (ADR 0010). ``complete: false``
+    with no readable per-route explanation is treated as a failure too.
+    """
+    shaped = _dict_rows(raw.get("detections")) if isinstance(raw, dict) else None
+    if shaped is None:
         return SourceResult(
             SRC_THREATS, ok=False, error="list_threat_detections envelope has no detections list"
         )
+    rows, skipped = shaped
+    raw_sources = raw.get("sources")
+    sources = (
+        [s for s in raw_sources if isinstance(s, dict)] if isinstance(raw_sources, list) else []
+    )
+    failed = sum(1 for s in sources if s.get("ok") is False)
+    cut = sum(1 for s in sources if s.get("ok") is True and s.get("more_available") is True)
+    failure = ""
     reasons: list[str] = []
-    if raw.get("complete") is False:
-        reasons.append("the IPS read was incomplete (a source failed or was cut off)")
+    if failed:
+        failure = f"{failed} of {len(sources)} IPS sources failed (see list_threat_detections)"
+    elif raw.get("complete") is False and not cut:
+        failure = "the IPS read reports itself incomplete without saying why"
+    if cut:
+        reasons.append(f"{cut} IPS source(s) were cut off at the scan cap")
     matched, returned = raw.get("matched"), raw.get("returned")
     if _count(matched) is not None and _count(returned) is not None and matched > returned:
         reasons.append(f"the IPS read returned {returned} of {matched} detections")
-    return SourceResult(SRC_THREATS, ok=True, records=rows, partial="; ".join(reasons))
+    return SourceResult(
+        SRC_THREATS,
+        ok=True,
+        records=rows,
+        partial="; ".join(reasons),
+        constituent_failure=failure,
+        skipped=skipped,
+    )
 
 
 def _count(value: Any) -> int | None:
@@ -673,15 +719,18 @@ def _alarms(snap: Snapshot) -> RuleOutcome:
 def _threats(snap: Snapshot) -> RuleOutcome:
     rule_id = "threats.detected"
     src = snap[SRC_THREATS]
-    if src.partial and not src.records:
+    # A failed constituent route and a capped read both leave detections
+    # unseen; the failure also makes the diagnosis blind (build_report).
+    incomplete = "; ".join(r for r in (src.constituent_failure, src.partial) if r)
+    if incomplete and not src.records:
         # An empty partial read is not proof that nothing was detected.
-        return [], [not_evaluated(rule_id, src.partial)]
+        return [], [not_evaluated(rule_id, incomplete)]
     groups: dict[str, list[dict[str, Any]]] = {}
     for det in src.records:
         action = clean_text(det.get("action")).lower() or "unknown"
         groups.setdefault(action, []).append(det)
-    gaps = [not_evaluated(rule_id, src.partial, scope="partial")] if src.partial else []
-    limitations = ["the read was partial; counts are lower bounds"] if src.partial else []
+    gaps = [not_evaluated(rule_id, incomplete, scope="partial")] if incomplete else []
+    limitations = ["the read was partial; counts are lower bounds"] if incomplete else []
     out: list[Finding] = []
     for action in sorted(groups):
         rows = groups[action]
@@ -822,6 +871,17 @@ def _summary(result: str, findings: list[Finding], gaps: list[NotEvaluated], fai
     return head + (" " + "; ".join(tail) + "." if tail else "")
 
 
+def _for_controller(steps: list[NextStep], controller: str) -> list[NextStep]:
+    """Copies of ``steps`` whose args name ``controller``, keys in sorted order."""
+    return [
+        {
+            "tool": step["tool"],
+            "args": dict(sorted({**step["args"], "controller": controller}.items())),
+        }
+        for step in steps
+    ]
+
+
 def build_report(snap: Snapshot, *, controller: str, stub_mode: bool) -> dict[str, Any]:
     """Run every rule over a snapshot. Pure: no I/O, no clock."""
     findings: list[Finding] = []
@@ -849,6 +909,18 @@ def build_report(snap: Snapshot, *, controller: str, stub_mode: bool) -> dict[st
             gaps.append(not_evaluated(rule.id, f"rule raised {type(exc).__name__}"))
             crashed = True
             continue
+        # Rows a read returned that were not objects were never looked at: a
+        # skipped device row could be the offline one. Every rule reading that
+        # source says so, and for a critical-capable rule that means unknown.
+        rule_gaps = rule_gaps + [
+            not_evaluated(
+                rule.id,
+                f"{snap[s].skipped} row(s) of {s} were not objects and were skipped",
+                scope="partial",
+            )
+            for s in rule.requires
+            if snap[s].skipped
+        ]
         kept, dropped = cap_findings(rule.id, found, MAX_FINDINGS_PER_RULE)
         findings.extend(kept)
         truncated.update(dropped)
@@ -865,8 +937,12 @@ def build_report(snap: Snapshot, *, controller: str, stub_mode: bool) -> dict[st
         check: dict[str, Any] = {"source": name, "ok": res.ok}
         if res.ok:
             check["records"] = len(res.records)
+            if res.skipped:
+                check["skipped_rows"] = res.skipped
             if res.partial:
                 check["partial"] = res.partial
+            if res.constituent_failure:
+                check["constituent_failure"] = res.constituent_failure
         else:
             check["error"] = res.error
             if res.unsupported:
@@ -874,9 +950,19 @@ def build_report(snap: Snapshot, *, controller: str, stub_mode: bool) -> dict[st
         checks.append(check)
 
     # Blind: a read failed for a reason other than "this firmware has no such
-    # route", or a rule crashed. A blind diagnosis is never healthy.
-    blind = crashed or any(not r.unsupported for r in failed_reads)
+    # route", one of a read's constituent routes failed, or a rule crashed. A
+    # blind diagnosis is never healthy.
+    part_failed = any(snap[s].constituent_failure for s in SOURCES)
+    blind = crashed or part_failed or any(not r.unsupported for r in failed_reads)
     result = verdict(findings, gaps, CRITICAL_CAPABLE, blind=blind)
+    # The one seam where next steps get the controller: every tool they name
+    # takes ``controller``, and without it an agent following ``next`` on a
+    # multi-site install would query (or act on) the default site.
+    for item in findings:
+        item["next"] = _for_controller(item["next"], controller)
+    top_next = _for_controller(
+        [SOURCE_FAILURE_NEXT] if failed_reads or part_failed else [], controller
+    )
     return {
         "diagnosis": "site",
         "controller": controller,
@@ -888,7 +974,7 @@ def build_report(snap: Snapshot, *, controller: str, stub_mode: bool) -> dict[st
         "not_evaluated": gaps,
         "rules_evaluated": sorted(evaluated),
         "checks": checks,
-        "next": [SOURCE_FAILURE_NEXT] if failed_reads else [],
+        "next": top_next,
         "thresholds": THRESHOLDS,
     }
 

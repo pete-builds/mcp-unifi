@@ -12,7 +12,8 @@ Side effects: None (read-only).
 
 Active alarms (``archived=False``) come from the v2 critical system log
 (``POST .../v2/api/site/<site>/system-log/critical``) in place of the
-legacy ``/list/alarm`` route, which answers 400 on Network 10.5.67; the
+legacy ``/list/alarm`` route, which newer consoles no
+longer serve; the
 legacy route is tried only when the v2 one is absent. The v2 log has no
 archived state, so ``archived=True`` reads the legacy route alone and
 returns an error where that route is gone. Any failure is an error
