@@ -35,7 +35,8 @@ What this proves, and what it does not, is set out in
 short: within one segment, an edited, removed, reordered or inserted record is
 detected, unless whoever changed the file also recomputed the hashes. What is
 not detected: records removed from the end of a segment or the end of the
-file; a removed whole segment or whole rotated file; a full rewrite.
+file; a removed, duplicated or reordered whole segment or whole rotated file;
+a full rewrite.
 
 This module is deliberately free of any import from :mod:`mcp_unifi.audit` so
 the verifier CLI can load it without building a sink.
@@ -47,6 +48,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -74,13 +76,17 @@ CHAIN_START_AFTER_UNCHAINED = "after_unchained"
 #: The last line in the file could not be read as a chained record. Valid only
 #: directly after one or more lines of the same file that are not JSON at all
 #: (crash damage). The writer also uses it when the last line is JSON but not a
-#: valid record, or when the file cannot be read; the verifier rejects both,
-#: because the line before it is already a break or nothing can be vouched for.
+#: valid record; the verifier has already reported that line as a break.
 CHAIN_START_AFTER_UNREADABLE = "after_unreadable"
-#: The sink is not a file this process can read back (stdout, syslog), so
-#: every process start begins a new segment. Valid anywhere: nothing in the
+#: The sink is not a file this process can read back (stdout, syslog, a pipe),
+#: so every process start begins a new segment. Valid anywhere: nothing in the
 #: log can say whether a process really restarted there.
 CHAIN_START_PROCESS_START = "process_start"
+#: The writer could not read its own log file (it can append but not read,
+#: mode 0200 for example), so it cannot tell what is before this record.
+#: Valid anywhere, and always reported by the verifier as needing a look
+#: (exit 3): an unknown number of records before it may be missing.
+CHAIN_START_UNREADABLE_LOG = "unreadable_log"
 
 CHAIN_START_LABELS: frozenset[str] = frozenset(
     {
@@ -88,6 +94,7 @@ CHAIN_START_LABELS: frozenset[str] = frozenset(
         CHAIN_START_AFTER_UNCHAINED,
         CHAIN_START_AFTER_UNREADABLE,
         CHAIN_START_PROCESS_START,
+        CHAIN_START_UNREADABLE_LOG,
     }
 )
 
@@ -199,14 +206,26 @@ def resume_from_file(path: Path) -> ChainResume:
     sink starts its own first line on a fresh line either way). Never raises
     and never rewrites anything: a file that cannot be read, or whose last line
     is not a chained record, starts a new segment, and ``chain_start`` on the
-    next record says which case it was.
+    next record says which case it was. A path that is not a regular file (a
+    pipe, a character device) is never opened for reading, since that can
+    block; like stdout, it starts a segment per process.
     """
+    try:
+        mode = path.stat().st_mode
+    except FileNotFoundError:
+        return ChainResume(GENESIS_HASH, CHAIN_START_NEW_LOG)
+    except OSError:
+        return ChainResume(GENESIS_HASH, CHAIN_START_UNREADABLE_LOG)
+    if stat.S_ISDIR(mode):
+        return ChainResume(GENESIS_HASH, CHAIN_START_UNREADABLE_LOG)
+    if not stat.S_ISREG(mode):
+        return ChainResume(GENESIS_HASH, CHAIN_START_PROCESS_START)
     try:
         last = _last_nonblank_line(path)
     except FileNotFoundError:
         return ChainResume(GENESIS_HASH, CHAIN_START_NEW_LOG)
     except OSError:
-        return ChainResume(GENESIS_HASH, CHAIN_START_AFTER_UNREADABLE)
+        return ChainResume(GENESIS_HASH, CHAIN_START_UNREADABLE_LOG)
     if last is None:
         return ChainResume(GENESIS_HASH, CHAIN_START_NEW_LOG)
     try:
@@ -270,9 +289,12 @@ class VerifyReport:
     #: not detectable, and the CLI says so for each one.
     segment_starts: list[tuple[str, str | None]] = field(default_factory=list)
     #: Locations of lines that are not JSON at all, in a run that ends with a
-    #: writer restart (``after_unreadable``): a crash mid-write. An unknown
-    #: number of records may be missing at each such point.
+    #: writer restart (``after_unreadable``) or with the end of its file: a
+    #: crash mid-write. An unknown number of records may be missing at each.
     damaged: list[str] = field(default_factory=list)
+    #: Segment starts labelled ``unreadable_log``: the writer could not read
+    #: the file, so an unknown number of records before each may be missing.
+    unvouched: list[str] = field(default_factory=list)
     #: ``hash`` of the last chained record that verified, and where it is.
     head_hash: str | None = None
     head_where: str | None = None
@@ -292,6 +314,7 @@ class VerifyReport:
             "unchained_runs": [{"first": a, "last": b} for a, b in self.unchained_runs],
             "segments": [{"starts_at": w, "chain_start": why} for w, why in self.segment_starts],
             "damaged_lines": list(self.damaged),
+            "unvouched_segment_starts": list(self.unvouched),
             "head_hash": self.head_hash,
             "head_at": self.head_where,
             "verified_through": self.verified_through,
@@ -384,7 +407,7 @@ def _segment_start_problem(entry: _Entry, before: _Entry | None) -> str | None:
     label = entry.chain_start
     if label not in CHAIN_START_LABELS:
         return f"a segment start with an unknown or missing chain_start {label!r}"
-    if label == CHAIN_START_PROCESS_START:
+    if label in (CHAIN_START_PROCESS_START, CHAIN_START_UNREADABLE_LOG):
         return None
     if label == CHAIN_START_NEW_LOG:
         if before is None:
@@ -423,8 +446,11 @@ def verify_lines(lines: Iterable[Line]) -> VerifyReport:
       ``chain_start`` label must fit where it is (see the constants above).
     * A run of one or more lines that are not JSON at all is crash damage
       when the next line of the same file is an ``after_unreadable`` segment
-      start: each is listed in ``damaged`` and verification continues. Any
-      other unreadable line is a break.
+      start, or when the run reaches the end of its file (the server crashed
+      and has not written since, or the file was rotated before it did): each
+      is listed in ``damaged`` and verification continues. Any other
+      unreadable line is a break.
+    * An ``unreadable_log`` segment start is listed in ``unvouched``.
     """
     report = VerifyReport()
     entries = list(_entries(lines))
@@ -514,6 +540,8 @@ def verify_lines(lines: Iterable[Line]) -> VerifyReport:
                 report.broken = ChainBreak(entry.where, problem)
                 break
             report.segment_starts.append((entry.where, entry.chain_start))
+            if entry.chain_start == CHAIN_START_UNREADABLE_LOG:
+                report.unvouched.append(entry.where)
         elif entry.chain_start is not None or entry.detail is not None:
             report.broken = ChainBreak(
                 entry.where,
@@ -540,25 +568,28 @@ def verify_lines(lines: Iterable[Line]) -> VerifyReport:
 
 
 def _restart_follows_damage(entries: list[_Entry], idx: int) -> bool:
-    """True when the non-JSON run starting at ``idx`` ends in a writer restart.
+    """True when the non-JSON run starting at ``idx`` is crash damage.
 
     The run is every consecutive non-JSON line of the same file (a second
-    crash while writing the first record after a crash leaves two). The line
-    after it must be, in the same file, a record at the genesis hash labelled
-    ``after_unreadable``. Whether that record's own hash holds is checked when
-    the walk reaches it, like any other record's.
+    crash while writing the first record after a crash leaves two). It is
+    damage when it reaches the end of its file, which is already outside the
+    guarantee, or when the line after it in the same file is a record at the
+    genesis hash labelled ``after_unreadable`` (or ``unreadable_log``, when the
+    restarted writer could not read the file to see the damage). Whether that record's own hash
+    holds is checked when the walk reaches it, like any other record's.
     """
     source = entries[idx].source
     j = idx
     while j < len(entries) and entries[j].kind == _NOT_JSON and entries[j].source == source:
         j += 1
-    if j >= len(entries):
-        return False
+    if j >= len(entries) or entries[j].source != source:
+        return True
     nxt = entries[j]
-    return (
-        nxt.source == source
-        and nxt.linked == GENESIS_HASH
-        and nxt.chain_start == CHAIN_START_AFTER_UNREADABLE
+    # unreadable_log: the restarted writer could not read the file, so it could
+    # not see the damage either; it is reported as unvouched on its own.
+    return nxt.linked == GENESIS_HASH and nxt.chain_start in (
+        CHAIN_START_AFTER_UNREADABLE,
+        CHAIN_START_UNREADABLE_LOG,
     )
 
 
@@ -619,6 +650,7 @@ __all__ = [
     "CHAIN_START_LABELS",
     "CHAIN_START_NEW_LOG",
     "CHAIN_START_PROCESS_START",
+    "CHAIN_START_UNREADABLE_LOG",
     "GENESIS_HASH",
     "UNCHAINED_SCHEMAS",
     "ChainBreak",

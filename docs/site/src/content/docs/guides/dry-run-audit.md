@@ -223,7 +223,7 @@ Each record carries the hash of the record before it, so the records form a chai
 
 **What it detects:** within one segment, an edited, removed, reordered or inserted record is detected, unless whoever changed the file also recomputed the hashes.
 
-**What it does not detect:** records removed from the end of a segment or the end of the file; a removed whole segment or whole rotated file; a full rewrite.
+**What it does not detect:** records removed from the end of a segment or the end of the file; a removed, duplicated or reordered whole segment or whole rotated file; a full rewrite.
 
 A *segment* is a run of records chained one to the next. A new one starts on a fresh log, after an upgrade, after a crash mid-write, when the server restarts after a log was rotated, and at every process start on a stdout or syslog sink.
 
@@ -238,7 +238,7 @@ audit-verify: OK audit.jsonl
   segments: 1
     1. starts at audit.jsonl:1 (new_log)
   last record hash: b146de1978f2872e91be9b8f3f1ee1074efabdafe49665f879ee7a54da5d53ac (audit.jsonl:5)
-  not covered: records before a segment start or after the last record, a removed whole segment or rotated file, and a full rewrite of the file
+  not covered: records before a segment start or after the last record, a removed, duplicated or reordered whole segment or rotated file, and a full rewrite of the file
 ```
 
 With a record removed from the middle:
@@ -258,20 +258,23 @@ Exit status:
 | `0` | Verified. |
 | `1` | A break. The output names the first one. |
 | `2` | Usage error, or a file cannot be read. |
-| `3` | Verified, but damaged lines are present (see below). |
+| `3` | Verified, with warnings: damaged lines, or a segment the server started without being able to read its log (see below). |
 
-`--json` prints one object instead (`ok`, `break`, `segments`, `damaged_lines`, `head_hash` and counts). Pass several files to check a rotated log as one chain, oldest first: `mcp-unifi-audit-verify audit.jsonl.1 audit.jsonl`.
+**Running it from cron:** exit `3` means the chain verified but the log has damaged lines or an unreadable restart where records may be missing. Treat it as needing a look, not as a pass and not as proof of tampering.
+
+`--json` prints one object instead (`ok`, `break`, `segments`, `damaged_lines`, `unvouched_segment_starts`, `head_hash` and counts). Pass several files to check a rotated log as one chain, oldest first: `mcp-unifi-audit-verify audit.jsonl.1 audit.jsonl`.
 
 ### The limits, plainly
 
 - **Anyone who can write the file can rewrite it.** SHA-256 is not a secret: an edit followed by recomputing every hash after it verifies. This is tamper evidence against edits that do not recompute the chain, not a signature.
 - **Records cut off the end of the file** leave a shorter chain that still verifies. So do records cut off the end of any segment, just before the next segment starts.
-- **A whole segment can go missing unnoticed**, for example a whole process run on a stdout or syslog sink.
+- **A whole segment can go missing, be duplicated or be moved unnoticed**: a whole process run on a stdout or syslog sink dropped, repeated or swapped with another, or the same file passed to the verifier twice.
 - **Dropping a whole rotated file from the middle of a set is not detected** whenever the next file starts a new segment, which it does if the server restarted after rotating. Do not rely on the verifier to tell you a rotated file is missing.
+- **A file rotated while the server kept running** (logrotate's `copytruncate`) starts in the middle of a chain. On its own it reports a break at its first line; verify it together with the file before it, oldest first.
 
 ### Damaged lines
 
-If the server crashes partway through writing a record, the file ends in a cut-off line. When it next writes, it starts on a fresh line and begins a new segment marked `chain_start: "after_unreadable"`. The verifier reports each cut-off line (two in a row if it crashed again before finishing that first record), verifies everything after it, and exits `3`:
+If the server crashes partway through writing a record, the file ends in a cut-off line. When it next writes, it starts on a fresh line and begins a new segment marked `chain_start: "after_unreadable"`. The verifier reports each cut-off line (two in a row if it crashed again before finishing that first record), verifies everything after it, and exits `3`. The same holds when the cut-off line is the last line of its file: the server has not written since the crash, or the file was rotated before it did (the next file then starts with `new_log`).
 
 ```text
 audit-verify: DAMAGED audit.jsonl (verified, with damaged lines; see below)
@@ -286,7 +289,7 @@ audit-verify: DAMAGED audit.jsonl (verified, with damaged lines; see below)
 
 An unknown number of records may be missing at a damaged line, not just the one that was being written: anyone who replaced the end of the file with a line of garbage and then let the server restart produces exactly this picture. Treat exit `3` as "look at this", not as a pass.
 
-A line that is not JSON with no restart directly after it, any line that is JSON but not a valid record, and an `after_unreadable` record that does not directly follow such damage in the same file are all breaks.
+A line that is not JSON followed by anything other than a restart in the same file, any line that is JSON but not a valid record, and an `after_unreadable` record that does not directly follow such damage in the same file are all breaks.
 
 ### Failed writes and concurrent writers
 
@@ -294,7 +297,7 @@ A line that is not JSON with no restart directly after it, any line that is JSON
 
 **One writer per file.** The server keeps the newest hash in memory and reads the file only once, when it first writes after starting. Two processes appending to one file fork the chain, and the verifier reports the first record where they cross. That includes `mcp-unifi-replay --real` while the server is running and both use the same file sink.
 
-**A server that cannot read its own log** when it starts begins a segment marked `after_unreadable` with no damage before it, which the verifier reports as a break: nothing before that point can be vouched for.
+**A server that can append to its log but not read it** (a file with mode `0200`, say) still writes every record. It cannot see what came before, so it starts a segment marked `chain_start: "unreadable_log"` (and, not knowing whether the file ends in a newline, writes one first, which may leave a blank line every reader skips). The verifier accepts that segment start anywhere, warns that an unknown number of records before it may be missing, and exits `3`. A file sink pointed at something that is not a regular file, such as a piped `/dev/stdout`, is never read back; it starts a segment per process, like the stdout sink. A file the server cannot write at all records nothing, as before this change, and the server logs an ERROR for each record.
 
 ### Upgrading an existing log
 
@@ -309,7 +312,7 @@ audit-verify: OK audit.jsonl
     1. starts at audit.jsonl:3 (after_unchained)
 ```
 
-Unchained records carry no protection, and they are accepted only *before* the first chained record of a file. An unchained record after a chained one is a break: either someone stripped the hash fields from a record, or the server was downgraded to a version without the chain, and the verifier cannot tell which.
+Unchained records carry no protection, and they are accepted only *before* the first chained record of a file. An unchained record after a chained one is a break: either someone stripped the hash fields from a record, or the server was downgraded to a version without the chain, and the verifier cannot tell which. Running an older version against a chained log breaks verification from that point on, so rotate the file before downgrading.
 
 A missing or empty file starts at `chain_start: "new_log"`, which is valid only as the first record of a file. A file that ends without a final newline gets one before the server's first new record. When the server restarts after a log was rotated, the new file starts with `new_log` too, and verifying the old and new files together lists it as a second segment.
 

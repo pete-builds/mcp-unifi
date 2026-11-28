@@ -48,6 +48,7 @@ import json
 import logging
 import logging.handlers
 import os
+import stat
 import sys
 import uuid
 from collections.abc import Callable, Iterable, Mapping
@@ -198,6 +199,23 @@ class FileSink:
         self._tail_ok = True
 
     def _newline_if_unterminated(self) -> str:
+        """``"\\n"`` when the file's last byte is not a newline, else ``""``.
+
+        Never raises: a read this sink cannot do must never stop a record
+        being written. A path that is not a regular file (a pipe such as a
+        piped ``/dev/stdout``, a character device) is a stream with no last
+        line to repair and is never opened for reading, because opening a pipe
+        to read can block. A regular file that cannot be read (mode 0200)
+        gets a newline: at worst one blank line, which every reader skips.
+        """
+        try:
+            mode = self._path.stat().st_mode
+        except FileNotFoundError:
+            return ""
+        except OSError:
+            return "\n"
+        if not stat.S_ISREG(mode):
+            return ""
         try:
             with self._path.open("rb") as fh:
                 fh.seek(0, os.SEEK_END)
@@ -207,6 +225,8 @@ class FileSink:
                 return "" if fh.read(1) == b"\n" else "\n"
         except FileNotFoundError:
             return ""
+        except OSError:
+            return "\n"
 
     async def resume_chain(self) -> audit_chain.ChainResume:
         """Where the chain continues: the ``hash`` on the file's last line.
@@ -347,7 +367,7 @@ class AuditLog:
             except Exception:
                 logger.exception("audit chain could not be resumed; starting a new segment")
                 start = audit_chain.ChainResume(
-                    audit_chain.GENESIS_HASH, audit_chain.CHAIN_START_AFTER_UNREADABLE
+                    audit_chain.GENESIS_HASH, audit_chain.CHAIN_START_UNREADABLE_LOG
                 )
             self._head = start.prev_hash
             event.chain_start = start.chain_start

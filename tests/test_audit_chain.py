@@ -22,6 +22,7 @@ import datetime as dt
 import hashlib
 import itertools
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +44,7 @@ from mcp_unifi.audit_chain import (
     CHAIN_START_AFTER_UNREADABLE,
     CHAIN_START_NEW_LOG,
     CHAIN_START_PROCESS_START,
+    CHAIN_START_UNREADABLE_LOG,
     GENESIS_HASH,
     Line,
     VerifyReport,
@@ -1167,7 +1169,12 @@ async def test_replacing_the_last_record_with_garbage_is_not_a_clean_pass(
 
 
 async def test_damage_needs_a_restart_in_the_same_file(tmp_path: Path) -> None:
-    """A fragment at the end of one file is not excused by the next file's start."""
+    """A fragment at the end of one file does not excuse after_unreadable in the next.
+
+    The fragment itself is damage (the tail of a file is outside the
+    guarantee); the next file's first record must stand on its own, and
+    after_unreadable as a first record never does.
+    """
     older, newer = tmp_path / "a.jsonl.1", tmp_path / "a.jsonl"
     lines = await _write_log(older, 2)
     _put_lines(older, [*lines, "garbage"])
@@ -1175,8 +1182,9 @@ async def test_damage_needs_a_restart_in_the_same_file(tmp_path: Path) -> None:
     _put_lines(newer, [restart])
 
     report = _verify([older, newer])
+    assert report.damaged == [f"{older}:3"]
     assert report.broken is not None
-    assert report.broken.where == f"{older}:3"
+    assert report.broken.where == f"{newer}:1"
 
 
 async def test_damage_needs_a_genesis_restart_after_it(tmp_path: Path) -> None:
@@ -1214,15 +1222,9 @@ async def test_new_log_is_valid_only_as_the_first_record_of_a_file(
     assert _report_for(path, [lines[0]]).ok
 
 
-def test_a_server_that_cannot_read_its_own_log_starts_a_segment_the_verifier_rejects(
-    tmp_path: Path,
-) -> None:
-    """Pinned: an unreadable file cannot be vouched for, so the restart is a break.
-
-    resume_from_file never raises. A directory stands in for a file the
-    server cannot read.
-    """
-    assert resume_from_file(tmp_path).chain_start == CHAIN_START_AFTER_UNREADABLE
+def test_resume_never_raises_on_a_path_it_cannot_read(tmp_path: Path) -> None:
+    """A directory stands in for a log the server cannot read back."""
+    assert resume_from_file(tmp_path).chain_start == CHAIN_START_UNREADABLE_LOG
 
 
 async def test_damage_then_an_edited_restart_is_reported_as_the_edit(tmp_path: Path) -> None:
@@ -1234,3 +1236,247 @@ async def test_damage_then_an_edited_restart_is_reported_as_the_edit(tmp_path: P
     assert report.broken is not None
     assert report.broken.where == f"{path}:3"
     assert report.broken.reason.startswith("edited record")
+
+
+# ---------------------------------------------------------------------------
+# Review round 3
+# ---------------------------------------------------------------------------
+
+needs_non_root = pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0, reason="root reads a 0200 file anyway"
+)
+
+
+@needs_non_root
+async def test_a_write_only_log_still_receives_every_record(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The server can append to its log but not read it (mode 0200).
+
+    Every record must still be written. The restart cannot see what came
+    before it, so it says so (unreadable_log), and the verifier reports that
+    as needing a look (exit 3), not as a pass and not as a break.
+    """
+    path = tmp_path / "a.jsonl"
+    await _write_log(path, 2)
+    path.chmod(0o200)
+    try:
+        log = AuditLog(sink=FileSink(path))
+        for i in range(3):
+            await _emit(log, 10 + i)
+    finally:
+        path.chmod(0o600)
+
+    records = [json.loads(x) for x in path.read_text().splitlines() if x.strip()]
+    assert len(records) == 5, "records were lost to a read the writer could not do"
+    assert records[2]["chain_start"] == CHAIN_START_UNREADABLE_LOG
+    assert records[2]["prev_hash"] == GENESIS_HASH
+    report = _verify(path)
+    assert report.ok, report.broken
+    assert report.unvouched == [f"{path}:4"]  # line 3 is the blank line the writer added
+    assert audit_verify.main([str(path)]) == 3
+    out = capsys.readouterr().out
+    assert f"WARNING: segment start at {path}:4 (unreadable_log)" in out
+
+
+async def test_a_pipe_sink_receives_every_record(tmp_path: Path) -> None:
+    """A file sink pointed at a pipe (``/dev/stdout`` piped, say)."""
+    read_fd, write_fd = os.pipe()
+    try:
+        log = AuditLog(sink=FileSink(f"/dev/fd/{write_fd}"))
+        for i in range(3):
+            await _emit(log, i)
+    finally:
+        os.close(write_fd)
+    with os.fdopen(read_fd, "r", encoding="utf-8") as fh:
+        received = fh.read()
+
+    lines = received.splitlines()
+    # Exactly the records: a stream is never opened to read its tail, so the
+    # writer adds no blank line to it.
+    assert len(lines) == 3 and all(x.startswith("{") for x in lines), received
+    assert json.loads(lines[0])["chain_start"] == CHAIN_START_PROCESS_START
+    collected = tmp_path / "collected.jsonl"
+    _put_lines(collected, lines)
+    assert audit_verify.main([str(collected)]) == 0
+
+
+@needs_non_root
+def test_an_unreadable_log_argument_exits_2(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "a.jsonl"
+    path.write_text(_legacy_line() + "\n")
+    path.chmod(0o200)
+    try:
+        assert audit_verify.main([str(path)]) == 2
+    finally:
+        path.chmod(0o600)
+    assert "Permission denied" in capsys.readouterr().err
+
+
+async def test_a_crash_then_verify_before_any_restart_is_damage_not_a_break(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "a.jsonl"
+    await _write_log(path, 2)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write('{"ts": "2026-11-27T00:00:00.000Z", "tool": "list_dev')
+    assert audit_verify.main([str(path)]) == 3
+    out = capsys.readouterr().out
+    assert f"WARNING: damaged line at {path}:3 (crash mid-write?)" in out
+
+
+# --- Legitimate sequences, end to end through the real writer ---------------
+
+_FRAGMENT = '{"ts": "2026-11-27T00:00:00.000Z", "tool": "list_dev'
+
+
+class _Server:
+    """Drives a log through starts, crashes and rotations, as a server would."""
+
+    def __init__(self, directory: Path) -> None:
+        self.dir = directory
+        self.path = directory / "audit.jsonl"
+        self.rotated: list[Path] = []
+        self.n = 0
+        self.log: AuditLog | None = None
+
+    async def start(self) -> None:
+        self.log = AuditLog(sink=FileSink(self.path))
+
+    async def write(self, count: int = 2) -> None:
+        assert self.log is not None
+        for _ in range(count):
+            await _emit(self.log, self.n)
+            self.n += 1
+
+    def crash(self) -> None:
+        """The process dies partway through a write."""
+        with self.path.open("a", encoding="utf-8") as fh:
+            fh.write(_FRAGMENT)
+        self.log = None
+
+    def crash_on_first_write(self) -> None:
+        """Restarted, wrote its newline and part of its first record, died again."""
+        with self.path.open("a", encoding="utf-8") as fh:
+            fh.write("\n" + _FRAGMENT)
+        self.log = None
+
+    def rotate(self) -> None:
+        """Move the file aside (the server is down or will reopen by name)."""
+        target = self.dir / f"audit.jsonl.{len(self.rotated) + 1}"
+        self.path.rename(target)
+        self.rotated.append(target)
+
+    def copytruncate(self) -> None:
+        """logrotate's copytruncate: the running server keeps writing."""
+        target = self.dir / f"audit.jsonl.{len(self.rotated) + 1}"
+        target.write_bytes(self.path.read_bytes())
+        self.path.write_bytes(b"")
+        self.rotated.append(target)
+
+    def files(self) -> list[Path]:
+        return [*self.rotated, *([self.path] if self.path.exists() else [])]
+
+
+async def _run(server: _Server, script: str) -> None:
+    for step in script.split():
+        if step == "start":
+            await server.start()
+        elif step == "write":
+            await server.write()
+        elif step == "crash":
+            server.crash()
+        elif step == "crash2":
+            server.crash_on_first_write()
+        elif step == "rotate":
+            server.rotate()
+        elif step == "copytruncate":
+            server.copytruncate()
+        elif step == "legacy":
+            server.path.write_text(_legacy_line() + "\n" + _legacy_line() + "\n")
+        elif step == "empty":
+            server.path.write_bytes(b"")
+        elif step == "bom":
+            server.path.write_bytes(b"\xef\xbb\xbf")
+        elif step == "crlf":
+            server.path.write_bytes(server.path.read_bytes().replace(b"\n", b"\r\n"))
+        elif step == "readonly":  # the server cannot write: nothing lands, as on main
+            server.path.chmod(0o400)
+        elif step == "writeonly":  # the server can append but not read
+            server.path.chmod(0o200)
+        elif step == "restore":
+            server.path.chmod(0o600)
+        else:  # pragma: no cover - a typo in a script
+            raise AssertionError(step)
+
+
+def _code(paths: list[Path]) -> int:
+    return audit_verify.main([str(x) for x in paths])
+
+
+#: (script, exit code for each file alone, exit code for all files oldest first)
+LEGIT_SEQUENCES = [
+    ("start write", [0], 0),
+    ("start write start write", [0], 0),  # restart
+    ("start write crash", [3], 3),  # crash, verified before any restart
+    ("start write crash start write", [3], 3),
+    ("start write crash crash2", [3], 3),  # double crash, no restart yet
+    ("start write crash crash2 start write", [3], 3),
+    ("start write rotate start write", [0, 0], 0),
+    ("start write crash rotate start write", [3, 0], 3),
+    ("start write crash crash2 rotate start write", [3, 0], 3),
+    ("start write crash start write crash rotate start write", [3, 0], 3),
+    ("start write rotate crash start write", [0, 3], 3),  # crash just after rotation
+    ("legacy start write", [0], 0),  # upgrade from schema 1
+    ("legacy crash start write", [3], 3),
+    ("empty start write", [0], 0),
+    ("bom start write", [0], 0),
+    ("start write crlf start write", [0], 0),
+    # copytruncate keeps one process writing across files: the newer file starts
+    # mid-chain and verifies only with the file before it (exit 1 alone, by
+    # design: a missing head is a break).
+    ("start write copytruncate write", [0, 1], 0),
+    ("start write crash start write copytruncate write", [3, 1], 3),
+    ("start write rotate empty start write", [0, 0], 0),  # logrotate "create"
+    ("empty crash start write", [3], 3),  # crashed during the very first write
+    pytest.param("empty writeonly start write restore", [3], 3, marks=needs_non_root),
+    pytest.param("start write readonly start write restore", [0], 0, marks=needs_non_root),
+    pytest.param("start write writeonly start write restore", [3], 3, marks=needs_non_root),
+    pytest.param("start write crash writeonly start write restore", [3], 3, marks=needs_non_root),
+]
+
+
+@pytest.mark.parametrize(("script", "alone", "together"), LEGIT_SEQUENCES)
+async def test_legitimate_sequences_verify(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    script: str,
+    alone: list[int],
+    together: int,
+) -> None:
+    server = _Server(tmp_path)
+    await _run(server, script)
+    files = server.files()
+    assert [_code([f]) for f in files] == alone
+    assert _code(files) == together
+    capsys.readouterr()
+
+
+async def test_files_given_newest_first(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Either order of two separately started files verifies: the order of whole
+    segments is not checked (documented). A file that continues the other's
+    chain, given first, is a break that names where its predecessor is."""
+    server = _Server(tmp_path)
+    await _run(server, "start write rotate start write")
+    assert _code(list(reversed(server.files()))) == 0
+
+    other = _Server(tmp_path / "b")
+    other.dir.mkdir()
+    await _run(other, "start write copytruncate write")
+    capsys.readouterr()
+    assert _code(list(reversed(other.files()))) == 1
+    out = capsys.readouterr().out
+    assert "reason: reordered: this record follows the record at " in out
+    assert f"{other.rotated[0]}:" in out

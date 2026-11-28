@@ -43,8 +43,8 @@ knowing anything about correlation.
 **Hash chain.** The guarantee, stated once and nowhere stronger: within one
 segment, an edited, removed, reordered or inserted record is detected, unless
 whoever changed the file also recomputed the hashes. What is not detected:
-records removed from the end of a segment or the end of the file; a removed whole
-segment or whole rotated file; a full rewrite.
+records removed from the end of a segment or the end of the file; a removed,
+duplicated or reordered whole segment or whole rotated file; a full rewrite.
 
 Every record carries `prev_hash` and `hash`.
 `hash = SHA-256(canonical JSON of the record without hash)`, as 64 lowercase hex
@@ -85,25 +85,31 @@ so it can be re-implemented elsewhere.
   label does not fit where it sits, or an unreadable line. As information only,
   it prints where every segment starts and the last record's hash, and closes
   with a line naming what is not covered. Exit codes: `0` verified, `1` break,
-  `2` usage, `3` verified with damaged lines.
+  `2` usage, `3` verified with warnings (damaged lines, or an `unreadable_log`
+  segment start); from cron, `3` needs a look and is neither a pass nor proof of
+  tampering.
 - Segment-start labels are checked where the log can check them: `new_log` only as
   the first record of a file (so a rotated log whose server then restarted
   verifies as two segments), `after_unchained` only directly after an unchained
   record, `after_unreadable` only directly after one or more non-JSON lines of the
   same file, and nothing else. `process_start` is accepted anywhere, because
   nothing in a stdout or syslog log can show that a process really restarted
-  there. A record that continues the chain must carry no label. The writer uses
+  there. `unreadable_log` is accepted anywhere and always reported (exit `3`).
+  A record that continues the chain must carry no label. The writer uses
   `new_log` for a missing or empty file (or one holding only a byte-order mark),
-  and `after_unreadable` after a non-JSON last line. It also uses
-  `after_unreadable` when the last line is JSON but not a valid record, or when
-  it cannot read the file at all; the verifier rejects both, because the line
-  before is already a break, or nothing before it can be vouched for.
+  `after_unreadable` after a non-JSON last line, and `unreadable_log` when it can
+  append to the file but not read it. It also uses `after_unreadable` when the last
+  line is JSON but not a valid record; the verifier has already reported that line
+  as a break. A path that is not a regular file (a pipe) is never read back and
+  gets `process_start`. No read on the write path can stop a record being
+  written: every one degrades to a segment start with one of these labels.
 - Records with no chain fields and schema `"1"` are counted as unchained, not as a
   break, but only before the first chained record of their file (the upgrade).
   After one, they are a break: otherwise stripping the hash fields would hide an
   edit.
-- A run of one or more non-JSON lines directly followed by an `after_unreadable`
-  segment start in the same file is crash damage (two lines when the server crashed
+- A run of one or more non-JSON lines that reaches the end of its file, or is
+  directly followed by an `after_unreadable` (or `unreadable_log`) segment start in
+  the same file, is crash damage (two lines when the server crashed
   again while writing its first record after a crash). Each is reported and
   counted, verification continues, and the exit code is `3`, not `0`, because an
   unknown number of records may be missing there.
@@ -158,9 +164,15 @@ The schema version moved from `"1"` to `"2"`. Every added field has a default, s
   upgrade, a restart after rotation, and every process start on stdout or syslog.
   The verifier lists every segment start and ends each report with what is not
   covered, rather than let an `OK` imply those points were checked.
-- **A removed whole segment, or a whole rotated file, is not detected.** Dropping a
-  rotated file from the middle of a set goes unnoticed whenever the next file
-  starts a new segment.
+- **A removed, duplicated or reordered whole segment, or whole rotated file, is not
+  detected.** Dropping a rotated file from the middle of a set goes unnoticed
+  whenever the next file starts a new segment, and the same file passed twice
+  verifies.
+- **Downgrading breaks verification.** An older version appends unchained records
+  after chained ones, which is a break from that point on. Rotate the file before
+  downgrading.
+- **A server that can append to its log but not read it** writes every record, but
+  each restart is an `unreadable_log` segment start: exit `3`, never a clean pass.
 - **A damaged line may hide an unknown number of lost records**, not only the one
   being written at the crash: replacing the end of a file with garbage and letting
   the server restart looks the same. Hence exit `3` rather than `0`.
