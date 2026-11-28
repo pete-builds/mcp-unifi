@@ -1,5 +1,5 @@
 {
-  "tool_count": 141,
+  "tool_count": 142,
   "tools": [
     {
       "description": "Return credentials expiring within ``days_ahead`` days.\n\nSide effects: None (read-only).\n\nIterates ``list_credentials`` client-side and filters to those whose\n``expires_at`` (epoch milliseconds) falls inside the window\n``[now, now + days_ahead]``. Each entry includes ``days_until_expiry``\nso the LLM can sort and summarise without re-doing the math.\nCredentials with no ``expires_at`` (typical for mobile credentials)\nare left out and only counted in ``no_expiry_count``. Two more lists\nkeep nothing hidden: ``already_expired`` holds credentials whose\n``expires_at`` is already in the past (with ``days_since_expiry``),\nand ``unparseable_expiry`` holds credentials whose ``expires_at`` is\npresent but is not an epoch-millisecond number (a string, seconds, 0),\nso a bad value is reported rather than skipped.\n\nExample: audit_expiring_credentials(days_ahead=14)",
@@ -1371,6 +1371,21 @@
         "type": "object"
       },
       "name": "delete_wlan"
+    },
+    {
+      "description": "Diagnose a whole site in one call: verdict, findings, and what to check next.\n\nCall this FIRST for \"is my network healthy?\" or \"what is wrong?\". It\nreads devices, site health, clients, alarms and IPS detections, runs\nfixed rules (no AI), and returns ``verdict`` (healthy, degraded,\ncritical, unknown), ``findings`` (each with ``observed`` facts and\ntheir source, ``inferred``, ``confidence``, ``limitations``, and\n``next`` tool calls), ``not_evaluated``, ``checks`` and\n``thresholds``. A failed read is never read as clean: its rules are\nlisted as not evaluated and the verdict is never healthy (only a\nroute this firmware lacks is exempt). Use the granular tools named\nin ``next`` to investigate further.\n\nSide effects: None (read-only, five reads).\n\nExample: diagnose_site(controller=\"default\")",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "controller": {
+            "default": "default",
+            "description": "Name of the UniFi controller to target. Defaults to\n``\"default\"``.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "diagnose_site"
     },
     {
       "description": "Fetch one Access device's full record by ID.\n\nSide effects: None (read-only).\n\nSame shape as one entry from ``list_access_devices``. Useful for\nchecking firmware version, online status, or hub assignment on a\nspecific reader.\n\nExample: get_access_device(device_id=\"dev...\", controller=\"default\")",
