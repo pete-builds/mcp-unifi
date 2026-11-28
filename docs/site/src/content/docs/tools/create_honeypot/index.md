@@ -31,7 +31,7 @@ create_honeypot(network_id="65f...", ip="10.0.50.2")
 
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `network_id` | `string` | yes | — | The ``_id`` from ``list_networks`` for the VLAN the honeypot should live on. |
+| `network_id` | `string` | yes | — | The ``_id`` (or ``legacy_id``) from ``list_networks`` for the VLAN the honeypot should live on. Written into the entry as given. |
 | `ip` | `string` | yes | — | Unallocated IPv4 address inside the target network. |
 | `controller` | `string` | no | "default" | Name of the UniFi controller to target. Defaults to ``"default"``. |
 | `dry_run` | `boolean` | no | false | Preview the change without applying it. |

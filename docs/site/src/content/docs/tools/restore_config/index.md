@@ -13,18 +13,49 @@ Side effects:
   an ordered create/delete plan. Deletes run first (firewall_rules,
   port_forwards, wlans, dhcp_leases, port_profiles, networks);
   creates run second in the reverse order, with firewall groups
-  after networks. No update path in this version: drifted fields
-  show up as a delete + create pair (or stay put when names match).
-  Extra firewall groups are never deleted.
+  after networks, and zone policies last. Only zone policies are
+  ever updated in place; for everything else drifted fields show up
+  as a delete + create pair (or stay put when names match). Extra
+  firewall groups are never deleted.
 - References: a recreated network or group gets a new id, and every
   restored record pointing at one (WLAN, lease, port profile,
-  firewall rule) is remapped to it. A record whose reference cannot
+  firewall rule) is remapped to it. A lease pointing at its network
+  by ``legacy_id`` (UniFi Network 11) is remapped the same way, to
+  the network's ``_id``; a recreated network or WLAN gets new
+  ``legacy_id`` and ``external_id`` values from the controller,
+  which restore never sends. What a Network 11 controller stores for
+  a lease written with the network's UUID ``_id`` (kept, converted to
+  the legacy id, or refused) has not been verified live. That
+  includes a restore onto the same controller of a lease the backup
+  holds by legacy id: it is written back with the UUID, not the
+  legacy id it had. A record whose reference cannot
   be resolved, and any name both sides hold with a duplicate on
   either, appears as a ``blocked`` action and is not written.
-- Not covered: Zone-Based Firewall policies and zones, routes,
-  traffic rules, content filters, dynamic DNS, AP groups and site
-  settings are not in a backup and are left as they are; the plan
-  lists them under ``not_restored``.
+- Zone-Based Firewall policies: matched by name plus source and
+  destination zone (names repeat across zone pairs). A missing
+  policy is created and a changed one updated, through the
+  Integration API, with zones and networks mapped by name to this
+  site's ids. An update puts every field back to the backup's
+  value, clearing a description, connection-state filter or IPsec
+  filter the backup's policy does not have. A controller-managed
+  policy is never created, changed or deleted, zones are never
+  written, and a policy on the site but not in the backup is
+  reported, never deleted. A policy pointing at a zone or network
+  this site lacks, one the Integration API body cannot express
+  exactly (a schedule, an IPsec or group match), one whose site copy
+  runs on a schedule, and any name plus zone pair the backup holds
+  more than once is a ``blocked`` action and is not written. So is
+  a policy naming a network that is not in that zone here.
+- Zone-wide policies are backed up but never restored: a side that
+  matches every network in a zone (no network or address list)
+  covers whatever that zone holds, and restore cannot prove a zone
+  matched by name holds the same networks here. Each is ``blocked``
+  with a pointer to ``create_firewall_policy``. A
+  backup with no ``firewall_policies`` section leaves every policy
+  as it is.
+- Not covered: routes, traffic rules, content filters, dynamic DNS,
+  AP groups and site settings are not in a backup and are left as
+  they are; the plan lists them under ``not_restored``.
 - Cross-controller restore: if the envelope's ``controller``
   differs from the target, the restore proceeds and the response
   includes a warning.
@@ -34,13 +65,24 @@ Side effects:
   known-string SSID is never broadcast and a VPN tunnel is never
   stood up on a public pre-shared key. The operator must reset each
   secret and re-enable manually.
-- Mutates controller state. Use dry_run=True to preview the change
-  without applying.
+- Defaults to a dry run: a call with ``dry_run`` left at its default
+  returns the plan (``would_apply``) and writes nothing and mints no
+  token. Pass ``dry_run=False`` to get a preview with a one-time
+  token; nothing is written until ``confirm_destructive_action``
+  runs it.
+- At confirm, a zone policy the plan updates is re-read first; one
+  that changed since the preview is refused (not written, counted
+  in the summary and named in a warning).
+- Zone policy order: restore does not reorder. The plan warns when
+  it creates or updates in a zone pair that holds other user
+  policies, and when matched policies sit in a different order than
+  in the backup, since the first match wins.
 - Rollback: if any sub-step fails, all prior creates are reverted
-  in reverse order and the response includes ``partial`` and
-  ``rolled_back`` keys. Deletes that already ran are NOT undone
-  (no copy was kept); the response reports them so the operator
-  can re-run with ``dry_run`` to inspect the residual gap.
+  in reverse order, updated zone policies are put back, and the
+  response includes ``partial`` and ``rolled_back`` keys. Deletes
+  that already ran are NOT undone (no copy was kept); the response
+  reports them so the operator can re-run with ``dry_run`` to
+  inspect the residual gap.
 
 Zone-based sites: legacy ``firewall_rules`` in the backup are not
 replayed onto a site running the Zone-Based Firewall. They appear in
@@ -61,6 +103,6 @@ restore_config(backup_json=snapshot, dry_run=True)
 |---|---|---|---|---|
 | `backup_json` | `string` | yes | — | The envelope JSON string from ``backup_config``. |
 | `controller` | `string` | no | "default" | Name of the UniFi controller to target. Defaults to ``"default"``. |
-| `dry_run` | `boolean` | no | false | Preview the change without applying it. Returns the predicted change set. |
+| `dry_run` | `boolean` | no | true | ``True`` (default) returns the plan and writes nothing. ``False`` returns a preview with a confirm token. |
 
 <!-- Generated by scripts/generate_tool_manifest.py. Do not edit by hand. -->

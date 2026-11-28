@@ -8,11 +8,17 @@ from __future__ import annotations
 import json
 
 import httpx
+import pytest
 import respx
 from fastmcp import FastMCP
 
 from mcp_unifi.clients.stubs import StubState
 from tests.network.conftest import BASE, _call
+
+#: A caller may name a network by its UUID ``_id`` or by its ``legacy_id``
+#: (UniFi Network 11 keeps the old ObjectId there, issue #219). The stub tests
+#: that pass a network reference run once per form.
+REF_KEYS = pytest.mark.parametrize("ref_key", ["_id", "legacy_id"])
 
 # ---------------------------------------------------------------------------
 # Stub mode
@@ -25,8 +31,12 @@ async def test_list_dhcp_leases_stub(stub_server: FastMCP) -> None:
     assert all(lease.get("use_fixedip") for lease in leases)
 
 
-async def test_create_static_dhcp_lease_stub(stub_server: FastMCP, stub_state: StubState) -> None:
-    net_id = stub_state.list_networks()[0]["_id"]
+@REF_KEYS
+async def test_create_static_dhcp_lease_stub(
+    stub_server: FastMCP, stub_state: StubState, ref_key: str
+) -> None:
+    net = stub_state.list_networks()[0]
+    net_id = net[ref_key]
     result = await _call(
         stub_server,
         "create_static_dhcp_lease",
@@ -41,6 +51,8 @@ async def test_create_static_dhcp_lease_stub(stub_server: FastMCP, stub_state: S
     assert result["mac"] == "11:22:33:44:55:66"
     assert result["fixed_ip"] == "192.168.1.42"
     assert result["use_fixedip"] is True
+    # Either form resolves to the network; its _id is what is sent.
+    assert result["network_id"] == net["_id"]
 
 
 async def test_delete_static_dhcp_lease_stub(stub_server: FastMCP, stub_state: StubState) -> None:
@@ -69,6 +81,22 @@ async def test_delete_static_dhcp_lease_missing(stub_server: FastMCP) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _mock_networks() -> None:
+    """Networks ``n0`` and ``n1``: lease writes resolve the caller's
+    ``network_id`` against ``list_networks`` before sending anything."""
+    respx.get(f"{BASE}/rest/networkconf").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"_id": "n0", "legacy_id": "6a0525dd18ec98252c8a0000", "name": "LAN"},
+                    {"_id": "n1", "legacy_id": "6a0525dd18ec98252c8a0001", "name": "IoT"},
+                ]
+            },
+        )
+    )
+
+
 @respx.mock
 async def test_real_list_dhcp_leases(real_server: FastMCP) -> None:
     respx.get(f"{BASE}/list/user").mock(
@@ -89,6 +117,12 @@ async def test_real_list_dhcp_leases(real_server: FastMCP) -> None:
 
 @respx.mock
 async def test_real_create_static_dhcp_lease(real_server: FastMCP) -> None:
+    _mock_networks()
+    respx.get(f"{BASE}/list/user").mock(
+        return_value=httpx.Response(
+            200, json={"data": [{"_id": "u9", "mac": "aa:bb:cc:dd:ee:ff", "use_fixedip": True}]}
+        )
+    )
     respx.post(f"{BASE}/rest/user").mock(
         return_value=httpx.Response(200, json={"data": [{"_id": "u9"}]})
     )
@@ -134,6 +168,7 @@ async def test_real_create_static_dhcp_lease_mac_used_names_the_update_tool(
     """A client the controller already knows answers ``api.err.MacUsed`` on
     create. The error must point at ``update_static_dhcp_lease`` rather than
     leave the caller to guess (issue #124, item 7)."""
+    _mock_networks()
     respx.post(f"{BASE}/rest/user").mock(
         return_value=httpx.Response(
             400, json={"meta": {"rc": "error", "msg": "api.err.MacUsed"}, "data": []}
@@ -154,13 +189,15 @@ async def test_real_create_static_dhcp_lease_mac_used_names_the_update_tool(
 # ---------------------------------------------------------------------------
 
 
+@REF_KEYS
 async def test_update_static_dhcp_lease_converts_known_client_stub(
-    stub_server: FastMCP, stub_state: StubState
+    stub_server: FastMCP, stub_state: StubState, ref_key: str
 ) -> None:
     # Pick a known client that's not already a fixed-IP lease.
     client = stub_state.list_clients()[0]
     mac = client["mac"]
-    net_id = stub_state.list_networks()[0]["_id"]
+    net = stub_state.list_networks()[0]
+    net_id = net[ref_key]
     result = await _call(
         stub_server,
         "update_static_dhcp_lease",
@@ -176,6 +213,8 @@ async def test_update_static_dhcp_lease_converts_known_client_stub(
     assert result["name"] == "promoted"
     # _id should match the original client record (no new user created).
     assert result["_id"] == client["_id"]
+    # The client had no network binding, so the network's _id is sent.
+    assert result["network_id"] == net["_id"]
 
 
 async def test_update_static_dhcp_lease_updates_existing_lease_stub(
@@ -213,10 +252,12 @@ async def test_update_static_dhcp_lease_unknown_mac_returns_error_stub(
     assert "create_static_dhcp_lease" in result["error"]
 
 
+@REF_KEYS
 async def test_update_static_dhcp_lease_dry_run_stub(
-    stub_server: FastMCP, stub_state: StubState
+    stub_server: FastMCP, stub_state: StubState, ref_key: str
 ) -> None:
-    net_id = stub_state.list_networks()[0]["_id"]
+    net = stub_state.list_networks()[0]
+    net_id = net[ref_key]
     result = await _call(
         stub_server,
         "update_static_dhcp_lease",
@@ -231,12 +272,14 @@ async def test_update_static_dhcp_lease_dry_run_stub(
     assert result["would_update"]["mac"] == "aa:bb:cc:00:00:01"
     assert result["would_update"]["patch"]["fixed_ip"] == "192.168.1.55"
     assert result["would_update"]["patch"]["use_fixedip"] is True
+    assert result["would_update"]["patch"]["network_id"] == net["_id"]
 
 
+@REF_KEYS
 async def test_update_static_dhcp_lease_local_dns_record_stub(
-    stub_server: FastMCP, stub_state: StubState
+    stub_server: FastMCP, stub_state: StubState, ref_key: str
 ) -> None:
-    net_id = stub_state.list_networks()[0]["_id"]
+    net_id = stub_state.list_networks()[0][ref_key]
     result = await _call(
         stub_server,
         "update_static_dhcp_lease",
@@ -254,6 +297,7 @@ async def test_update_static_dhcp_lease_local_dns_record_stub(
 
 @respx.mock
 async def test_real_update_static_dhcp_lease(real_server: FastMCP) -> None:
+    _mock_networks()
     respx.get(f"{BASE}/list/user").mock(
         return_value=httpx.Response(
             200,
@@ -298,6 +342,7 @@ async def test_real_update_static_dhcp_lease(real_server: FastMCP) -> None:
 
 @respx.mock
 async def test_real_update_static_dhcp_lease_unknown_mac(real_server: FastMCP) -> None:
+    _mock_networks()
     respx.get(f"{BASE}/list/user").mock(return_value=httpx.Response(200, json={"data": []}))
     result = await _call(
         real_server,
@@ -334,7 +379,9 @@ async def test_real_update_static_dhcp_lease_without_network_id_sends_none(
     real_server: FastMCP,
 ) -> None:
     """Issue #219: ``network_id`` is optional. Left out, the key is not sent,
-    so the record keeps the network it has. Given, it is still sent."""
+    so the record keeps the network it has. Given (and different from the
+    stored one), it is still sent."""
+    _mock_networks()
     respx.get(f"{BASE}/list/user").mock(
         return_value=httpx.Response(
             200, json={"data": [{"_id": "u42", "mac": "d0:11:e5:03:f6:3a", "network_id": "n0"}]}

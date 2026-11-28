@@ -8,9 +8,8 @@ draft: false
 
 Create a legacy-ruleset firewall rule on the controller.
 
-Not for Network 11. From 11.0.97 every site runs the Zone-Based
-Firewall and the legacy ruleset is gone; use
-``create_firewall_policy`` there.
+On Zone-Based Firewall sites (every site on UniFi Network 11) this tool
+refuses; use create_firewall_policy.
 
 Side effects:
 - Adds a new rule into the named ``ruleset`` at the given

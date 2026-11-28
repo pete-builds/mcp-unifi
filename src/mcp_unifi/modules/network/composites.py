@@ -44,11 +44,14 @@ from mcp_unifi.modules._params import (
     BoundedText,
 )
 from mcp_unifi.modules.network._common import (
+    NetworkRefError,
     check_composite_subnet,
     format_json,
     make_err,
     normalize_ip_subnet,
     resolve_default_ap_group,
+    resolve_network_ref,
+    same_network,
     subnet_to_dhcp,
     subnet_to_network_form,
     upsert_dhcp_lease,
@@ -145,7 +148,11 @@ _LEASE_KEYS = ("use_fixedip", "fixed_ip", "network_id", "name")
 
 
 async def _restore_lease(
-    backend: Backend, lease_id: str, prior: dict[str, Any], payload: dict[str, Any]
+    backend: Backend,
+    lease_id: str,
+    prior: dict[str, Any],
+    payload: dict[str, Any],
+    networks: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """Put back what this call changed on a user record that existed before it.
 
@@ -154,6 +161,11 @@ async def _restore_lease(
     cleared (issue #124). A key the record did not have before cannot be
     removed through ``PUT /rest/user``, so it is listed in ``not_restored``
     instead of guessed at.
+
+    ``network_id`` is compared by the network it names, not by its string:
+    on Network 11 a reservation made before the migration stores its
+    network's ``legacy_id`` while the call writes the UUID ``_id``, and the
+    two naming the same network is no change to undo.
     """
     restore: dict[str, Any] = {}
     not_restored: list[str] = []
@@ -161,7 +173,11 @@ async def _restore_lease(
         if key not in payload:
             continue
         if key in prior:
-            if prior[key] != payload[key]:
+            if key == "network_id":
+                changed = not same_network(networks, prior[key], payload[key])
+            else:
+                changed = prior[key] != payload[key]
+            if changed:
                 restore[key] = prior[key]
         elif key == "use_fixedip":
             restore[key] = False
@@ -545,6 +561,16 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
           for ``mac`` gets its previous values back instead.
         - ``ip`` must be an IPv4 address and every port 1-65535; anything else
           is refused before the first write, ``dry_run`` included.
+        - ``network_id`` may be the network's ``_id`` or its ``legacy_id``
+          from ``list_networks`` (UniFi Network 11 gives a network a UUID
+          ``_id`` and keeps its old ObjectId as ``legacy_id``, which older
+          reservations still store). It is resolved before the first write,
+          ``dry_run`` included: a reference naming no network, or more than
+          one, is refused. The lease is written with the network's ``_id``,
+          unless the MAC's existing record already points at that network
+          in either form, in which case ``network_id`` is not sent and the
+          binding is left as it is. What a Network 11 controller stores for
+          a lease written with the UUID ``_id`` has not been verified live.
 
         Example: provision_homelab_service(name="plex", mac="aa:bb:cc:00:00:01", ip="10.50.0.10", network_id="65f...", ports=[32400], wan_expose=False)
 
@@ -554,7 +580,8 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             mac: Client MAC address (e.g. ``"aa:bb:cc:00:00:01"``).
             ip: IPv4 address to reserve (must fall inside the network's
                 subnet).
-            network_id: ``_id`` of the network/VLAN this service lives on.
+            network_id: ``_id`` or ``legacy_id`` of the network/VLAN this
+                service lives on.
             ports: TCP ports the service listens on (e.g. ``[80, 443]``).
                 Empty creates only the lease.
             wan_expose: ``True`` also creates port-forward rules so the
@@ -574,11 +601,18 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         if bad_ports:
             return err(f"port(s) {bad_ports} out of range (1-65535); nothing was created")
 
+        try:
+            backend = resolve_backend(registry, controller)
+            network, networks = await resolve_network_ref(backend, network_id)
+        except NetworkRefError as exc:
+            return err(f"{exc}; nothing was created")
+        except UniFiError as exc:
+            return err(str(exc))
         lease_payload: dict[str, Any] = {
             "mac": mac,
             "use_fixedip": True,
             "fixed_ip": ip,
-            "network_id": network_id,
+            "network_id": network["_id"],
             "name": name,
         }
         fw_payload: dict[str, Any] | None = None
@@ -610,6 +644,16 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                 )
 
         if dry_run:
+            # Same rule as step 1 of the real call: an existing record that
+            # already points at this network keeps its reference untouched.
+            try:
+                existing = await backend.find_user_by_mac(mac)
+            except UniFiError as exc:
+                return err(str(exc))
+            if existing is not None and same_network(
+                networks, existing.get("network_id"), network["_id"]
+            ):
+                lease_payload.pop("network_id")
             would_create: dict[str, Any] = {"lease": lease_payload}
             if fw_payload is not None:
                 if await _dry_run_zone_based(controller):
@@ -641,7 +685,6 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             )
 
         try:
-            backend = resolve_backend(registry, controller)
             zone_based = fw_payload is not None and await site_is_zone_based(backend)
         except UniFiError as exc:
             return err(str(exc))
@@ -676,7 +719,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
                     # The record was there before this call: undo the edit,
                     # never clear a reservation someone else made.
                     actions.append(
-                        await _restore_lease(backend, lease_id, prior_user, lease_payload)
+                        await _restore_lease(backend, lease_id, prior_user, lease_payload, networks)
                     )
             logger.warning(
                 "provision_homelab_service rolled back",
@@ -705,6 +748,14 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
             found = await backend.find_user_by_mac(mac)
             # A copy: the stub hands back its live record, which the upsert edits.
             prior_user = copy.deepcopy(found) if found is not None else None
+            if prior_user is not None and same_network(
+                networks, prior_user.get("network_id"), network["_id"]
+            ):
+                # The record already points at this network, perhaps by its
+                # legacy_id (a reservation made before Network 11). Sending
+                # the UUID would rewrite an unchanged binding, so it is left
+                # out and the record keeps the reference it has.
+                lease_payload.pop("network_id")
             created["lease"] = await upsert_dhcp_lease(backend, lease_payload)
         except UniFiError as exc:
             return await _fail("lease", exc)
@@ -714,7 +765,7 @@ def register(mcp: FastMCP, settings: Settings, registry: ControllerRegistry) -> 
         if fw_payload is not None and zone_based:
             try:
                 body = await service_policy(
-                    backend, name=name, network_id=network_id, ip=ip, ports=ports
+                    backend, name=name, network_id=network["_id"], ip=ip, ports=ports
                 )
                 created["firewall_policy"] = await backend.create_v1_firewall_policy(body)
             except (UniFiError, PolicyBodyError) as exc:
