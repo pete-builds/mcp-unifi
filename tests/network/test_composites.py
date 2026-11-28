@@ -47,6 +47,17 @@ def _mock_lan_networks() -> None:
     )
 
 
+def _mock_lease_network() -> None:
+    """Register network ``n1``, which provision_homelab_service resolves the
+    caller's ``network_id`` against before anything is written."""
+    respx.get(f"{BASE}/rest/networkconf").mock(
+        return_value=httpx.Response(
+            200,
+            json={"data": [{"_id": "n1", "legacy_id": "6a0525dd18ec98252c8a0001", "name": "LAN"}]},
+        )
+    )
+
+
 # ---------------------------------------------------------------------------
 # create_iot_network — stub
 # ---------------------------------------------------------------------------
@@ -574,6 +585,7 @@ async def test_create_guest_network_rollback_on_vlan_failure(
 async def test_real_provision_homelab_service_full_flow(real_server: FastMCP) -> None:
     # The lease step is an upsert: it looks the MAC up first and creates
     # only when the controller has no user record for it (issue #124).
+    _mock_lease_network()
     respx.get(f"{BASE}/list/user").mock(return_value=httpx.Response(200, json={"data": []}))
     respx.post(f"{BASE}/rest/user").mock(
         return_value=httpx.Response(200, json={"data": [{"_id": "lease1"}]})
@@ -607,6 +619,7 @@ async def test_real_provision_homelab_service_rolls_back_on_pf_failure(
 ) -> None:
     # The lease step is an upsert: it looks the MAC up first and creates
     # only when the controller has no user record for it (issue #124).
+    _mock_lease_network()
     respx.get(f"{BASE}/list/user").mock(return_value=httpx.Response(200, json={"data": []}))
     respx.post(f"{BASE}/rest/user").mock(
         return_value=httpx.Response(200, json={"data": [{"_id": "lease-x"}]})
@@ -957,10 +970,6 @@ async def test_provision_homelab_service_for_a_known_client_upserts_the_lease(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Network 11: lease network_id is the network's legacy_id; fixed in the legacy_id PR",
-)
 async def test_provision_rollback_restores_a_reservation_that_existed_before(
     stub_server: FastMCP, stub_state: StubState
 ) -> None:

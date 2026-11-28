@@ -29,6 +29,16 @@ Side effects:
   for ``mac`` gets its previous values back instead.
 - ``ip`` must be an IPv4 address and every port 1-65535; anything else
   is refused before the first write, ``dry_run`` included.
+- ``network_id`` may be the network's ``_id`` or its ``legacy_id``
+  from ``list_networks`` (UniFi Network 11 gives a network a UUID
+  ``_id`` and keeps its old ObjectId as ``legacy_id``, which older
+  reservations still store). It is resolved before the first write,
+  ``dry_run`` included: a reference naming no network, or more than
+  one, is refused. The lease is written with the network's ``_id``,
+  unless the MAC's existing record already points at that network
+  in either form, in which case ``network_id`` is not sent and the
+  binding is left as it is. What a Network 11 controller stores for
+  a lease written with the UUID ``_id`` has not been verified live.
 
 ## Example
 
@@ -43,7 +53,7 @@ provision_homelab_service(name="plex", mac="aa:bb:cc:00:00:01", ip="10.50.0.10",
 | `name` | `string` | yes | — | Display name (used for both the lease and the firewall rule, e.g. ``"plex"``). |
 | `mac` | `string` | yes | — | Client MAC address (e.g. ``"aa:bb:cc:00:00:01"``). |
 | `ip` | `string` | yes | — | IPv4 address to reserve (must fall inside the network's subnet). |
-| `network_id` | `string` | yes | — | ``_id`` of the network/VLAN this service lives on. |
+| `network_id` | `string` | yes | — | ``_id`` or ``legacy_id`` of the network/VLAN this service lives on. |
 | `ports` | `array | null` | no | null | TCP ports the service listens on (e.g. ``[80, 443]``). Empty creates only the lease. |
 | `wan_expose` | `boolean` | no | false | ``True`` also creates port-forward rules so the service is reachable from the WAN. Default ``False`` (LAN-only). |
 | `controller` | `string` | no | "default" | Name of the UniFi controller to target. Defaults to ``"default"``. |

@@ -7,6 +7,120 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-11-28
+
+> **UniFi Network 11.** Network 11.0.97 moved every site to the Zone-Based
+> Firewall, and record ids are now UUIDs with the old ObjectId kept as
+> `legacy_id`. This release makes the server safe on that firmware: backups
+> carry the firewall again, the legacy rule tools refuse instead of writing
+> where nothing reads them, and network references accept either id.
+>
+> **Behaviour changes to check before upgrading:** the legacy
+> `create_firewall_rule`, `update_firewall_rule` and `delete_firewall_rule`
+> tools now refuse on Zone-Based Firewall sites, which is every site on
+> Network 11 (use the `*_firewall_policy` tools); `restore_config` now
+> defaults to `dry_run=True` (pass `dry_run=False` for the preview plus
+> confirm token); the real `create_static_dhcp_lease` and
+> `update_static_dhcp_lease` calls return a summary with new keys alongside
+> the record's own fields; and those tools' dry runs, plus
+> `provision_homelab_service`'s, now read the controller. Details under
+> Changed and Fixed.
+
+### Added
+
+- `diagnose_site`: one read-only call that diagnoses a whole site. It reads
+  devices, site health, clients, alarms and IPS detections, runs ten fixed
+  rules with stable ids (`device.offline`, `device.not_connected`,
+  `device.high_cpu`, `device.high_memory`, `device.upgradable`, `wan.down`,
+  `health.subsystem_not_ok`, `wifi.weak_signal_clients`, `alarms.active`,
+  `threats.detected`), and returns a verdict (`healthy`, `degraded`,
+  `critical`, `unknown`), findings that keep observed controller values apart
+  from the rule's conclusion, the rules it could not evaluate and why, and the
+  next tool to call, addressed to the diagnosed controller. No model, no new
+  endpoint, deterministic output. A failed read, a failed IPS route or a
+  malformed row never reads as healthy. See ADR 0010.
+
+### Changed
+
+- `restore_config` now defaults to `dry_run=True`: a call with defaults
+  returns the plan, writes nothing and mints no token. Pass `dry_run=False`
+  for the preview plus confirm token, then `confirm_destructive_action` to
+  apply.
+- `create_static_dhcp_lease`, `update_static_dhcp_lease` and
+  `provision_homelab_service` accept a network's `_id` or `legacy_id`, refuse
+  an unknown or ambiguous reference before writing (dry run included), and
+  send the network's `_id`. An existing binding to the same network is left
+  untouched.
+- `update_static_dhcp_lease` and `create_static_dhcp_lease` real calls now
+  return the dry run's summary shape plus what was applied, instead of only
+  the controller's write response (which can be `{}`). New keys: `dry_run`
+  (`false`), `controller`, `updated` (`{mac, user_id, patch}`) or `created`
+  (`{dhcp_lease: payload}`), `sent_fields`, `record` (the user record re-read
+  after the write, `null` if it could not be read), `summary`,
+  `read_back_error` (only when the read-back failed; the write is not
+  reported as failed), and on update with a `network_id`, `network_binding`
+  (`{requested, _id, name, network_id_sent, reason}`, also in the dry run).
+  Additive: the record's own fields stay at the top level. Reported by
+  MarkusNiGit in #219.
+- The `create_static_dhcp_lease`, `update_static_dhcp_lease` and
+  `provision_homelab_service` dry runs now read the controller: the network
+  list (to resolve `network_id`), and for update and provision a MAC lookup.
+  A dry run fails if the controller is unreachable.
+- `restore_config` writes a lease's `network_id` as the target network's UUID
+  `_id`, including a lease the backup holds by `legacy_id` restored onto the
+  same controller. What a Network 11 controller stores for that write is not
+  verified live.
+- Stub mode returns Network 11 record shapes: UUID `_id`s, `legacy_id` on
+  networks and WLANs, a static lease's `network_id` as the network's
+  `legacy_id`.
+- Tool descriptions and docs state that Network 11.0.97 and later run the
+  Zone-Based Firewall on every site and that the legacy firewall rule tools
+  apply only to older consoles. The `list_events` and `list_alarms`
+  descriptions no longer say the log fails on Network 10.5 and 10.6. New
+  "UniFi Network 11" section in the README and on the docs site.
+
+### Fixed
+
+- `backup_config` carries Zone-Based Firewall policies again (operator-created
+  only) and the zones they use, with zones, networks and firewall groups stored
+  by name. Since Network 11 every site is zone-based, so backups previously held
+  no firewall at all. `restore_config` recreates or updates those policies
+  through the Integration API, matching on name plus source and destination
+  zone and mapping ids by name on the target. An update puts every field back
+  to the backup's value, and a policy edited after the preview is refused at
+  confirm (counted and named). Zone-wide policies are backed up but not
+  restored, because restore cannot prove a zone holds the same networks on the
+  target. A policy naming a network that is not in its zone on the target is
+  held back. Restore warns where evaluation order may differ and never
+  reorders. It never writes a controller-managed policy or a zone, never
+  deletes a policy, and blocks with a reason any policy that references
+  something the site lacks or that cannot be written exactly, whose copy on the
+  site runs on a schedule, whose network, zone or group name is shared on the
+  backed-up site, and any name plus zone pair the backup holds twice. Backups
+  without the new sections restore as before.
+- `create_firewall_rule`, `update_firewall_rule` and `delete_firewall_rule`
+  refuse on Zone-Based Firewall sites (every site on UniFi Network 11) with an
+  error pointing at `create_firewall_policy` / `update_firewall_policy` /
+  `delete_firewall_policy`, instead of writing into the legacy rule store. The
+  delete refuses again at confirm time if the site migrated after the preview,
+  and `restore_config` re-checks at confirm before applying legacy firewall
+  rule changes. Legacy, unsupported and `UNIFI_WRITE_API=private` sites are
+  unchanged.
+- Integration API (v1) writes wait 60 s instead of 15 s, outlasting the
+  up-to-40 s request stall fixed in UniFi Network 11.1.58. A v1 write that
+  still times out reports that its outcome is unknown and to check with the
+  matching list or get tool before retrying; it is never replayed on the
+  private API.
+- Static leases that store their network by `legacy_id` (UniFi Network 11)
+  resolve to their network everywhere: `restore_config` restores them instead
+  of blocking them and remaps them to the target network's `_id`;
+  `provision_homelab_service` rollback no longer treats the legacy and UUID
+  forms of the same network as a change; honeypot lookups find the network in
+  either form. Reported by MarkusNiGit in #219.
+- `restore_config` no longer sends a backed-up record's `legacy_id` or
+  `external_id` when it creates a network or WLAN; both are
+  controller-assigned.
+
 ## [0.30.0] - 2026-11-24
 
 > **Breaking: `list_events` and `list_alarms` return an object, not a bare

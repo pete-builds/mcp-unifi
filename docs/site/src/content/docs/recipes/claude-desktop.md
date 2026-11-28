@@ -26,7 +26,7 @@ The recommended first config. It reads your own gateway and cannot change anythi
       "command": "uvx",
       "args": [
         "--from",
-        "git+https://github.com/pete-builds/mcp-unifi@v0.30.0",
+        "git+https://github.com/pete-builds/mcp-unifi@v0.31.0",
         "mcp-unifi"
       ],
       "env": {

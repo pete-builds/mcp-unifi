@@ -281,18 +281,22 @@ def test_set_port_state_unknown_port(stub_state: StubState) -> None:
     assert stub_state.set_port_state(switch_mac, 999, enable=False) is None
 
 
-def test_dhcp_lease_crud(stub_state: StubState) -> None:
+@pytest.mark.parametrize("ref_key", ["_id", "legacy_id"])
+def test_dhcp_lease_crud(stub_state: StubState, ref_key: str) -> None:
+    """A lease's ``network_id`` is the network's UUID ``_id`` or, for one made
+    before Network 11, its ``legacy_id``; the stub keeps either as given."""
     net = stub_state.list_networks()[0]
     lease = stub_state.create_dhcp_lease(
         {
             "mac": "11:22:33:44:55:66",
             "fixed_ip": "192.168.1.50",
-            "network_id": net["_id"],
+            "network_id": net[ref_key],
             "name": "Pi",
             "use_fixedip": True,
         }
     )
     assert "_id" in lease
+    assert lease["network_id"] == net[ref_key]
     assert any(item["_id"] == lease["_id"] for item in stub_state.list_dhcp_leases())
     assert stub_state.delete_dhcp_lease(lease["_id"]) is True
     assert stub_state.delete_dhcp_lease(lease["_id"]) is False
