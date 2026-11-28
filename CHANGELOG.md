@@ -15,13 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > carry the firewall again, the legacy rule tools refuse instead of writing
 > where nothing reads them, and network references accept either id.
 >
-> **Behaviour changes to check before upgrading:** `restore_config` now
+> **Behaviour changes to check before upgrading:** the legacy
+> `create_firewall_rule`, `update_firewall_rule` and `delete_firewall_rule`
+> tools now refuse on Zone-Based Firewall sites, which is every site on
+> Network 11 (use the `*_firewall_policy` tools); `restore_config` now
 > defaults to `dry_run=True` (pass `dry_run=False` for the preview plus
 > confirm token); the real `create_static_dhcp_lease` and
 > `update_static_dhcp_lease` calls return a summary with new keys alongside
 > the record's own fields; and those tools' dry runs, plus
 > `provision_homelab_service`'s, now read the controller. Details under
-> Changed.
+> Changed and Fixed.
 
 ### Added
 
@@ -70,6 +73,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Stub mode returns Network 11 record shapes: UUID `_id`s, `legacy_id` on
   networks and WLANs, a static lease's `network_id` as the network's
   `legacy_id`.
+- Tool descriptions and docs state that Network 11.0.97 and later run the
+  Zone-Based Firewall on every site and that the legacy firewall rule tools
+  apply only to older consoles. The `list_events` and `list_alarms`
+  descriptions no longer say the log fails on Network 10.5 and 10.6. New
+  "UniFi Network 11" section in the README and on the docs site.
 
 ### Fixed
 
@@ -112,7 +120,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `restore_config` no longer sends a backed-up record's `legacy_id` or
   `external_id` when it creates a network or WLAN; both are
   controller-assigned.
-<!-- #269 docs line to add -->
 
 ## [0.30.0] - 2026-11-24
 
