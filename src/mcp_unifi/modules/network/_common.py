@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any
 
 from mcp_unifi.config import Settings
@@ -179,6 +179,102 @@ async def resolve_default_ap_group(backend: Backend) -> list[str]:
             if isinstance(gid, str):
                 return [gid]
     return []
+
+
+# ---------------------------------------------------------------------------
+# Network references: ``_id`` or ``legacy_id``
+# ---------------------------------------------------------------------------
+
+
+class NetworkRefError(ValueError):
+    """A network reference that names more than one network.
+
+    Raised by :func:`find_network` instead of picking one. A reference that
+    names no network is not an error there (it returns ``None``); the caller
+    decides what an unknown reference means.
+    """
+
+
+def network_refs(network: object) -> tuple[str, ...]:
+    """Every id a network record answers to: its ``_id``, then its ``legacy_id``.
+
+    On UniFi Network 11 a network's ``_id`` is a UUID and its old 24-hex
+    ObjectId is kept as ``legacy_id``. Records written before the migration
+    still point at the network by that legacy id: on the maintainer's
+    gateway 5 of 6 static leases store ``network_id`` as the legacy id
+    (Network 11.0.99, probed 2026-11-27), and the issue #219 reporter saw the
+    same on a UDM-SE (Network 11.1.47). A reference in either form names the
+    same network.
+    """
+    if not isinstance(network, dict):
+        return ()
+    out: list[str] = []
+    for key in ("_id", "legacy_id"):
+        value = network.get(key)
+        if isinstance(value, str) and value and value not in out:
+            out.append(value)
+    return tuple(out)
+
+
+def find_network(networks: Iterable[object], ref: object) -> UniFiRecord | None:
+    """The network whose ``_id`` or ``legacy_id`` equals ``ref``, exactly.
+
+    ``None`` when ``ref`` is empty or not a string, or when no network
+    carries it. Raises :class:`NetworkRefError` when two different networks
+    (different ``_id``) both carry it, rather than guessing which one was
+    meant. This is the one place a lease's, client's or honeypot's
+    ``network_id`` is resolved to a network; nothing else compares a stored
+    reference with a network ``_id`` directly.
+    """
+    if not isinstance(ref, str) or not ref:
+        return None
+    matches: list[UniFiRecord] = []
+    for network in networks:
+        if not isinstance(network, dict) or ref not in network_refs(network):
+            continue
+        if not any(m.get("_id") == network.get("_id") for m in matches):
+            matches.append(network)
+    if len(matches) > 1:
+        names = ", ".join(repr(m.get("name") or m.get("_id")) for m in matches)
+        raise NetworkRefError(f"network reference {ref!r} matches more than one network ({names})")
+    return matches[0] if matches else None
+
+
+def same_network(networks: Iterable[object], a: object, b: object) -> bool:
+    """True when references ``a`` and ``b`` name the same network.
+
+    Equal non-empty strings always do. Otherwise both must resolve, through
+    :func:`find_network`, to the same record: a lease storing a network's
+    legacy id and a caller passing that network's UUID ``_id`` are the same
+    binding, not a change. An unknown or ambiguous reference is never the
+    same as anything but itself.
+    """
+    if isinstance(a, str) and a and a == b:
+        return True
+    pool = list(networks)
+    try:
+        net_a = find_network(pool, a)
+        net_b = find_network(pool, b)
+    except NetworkRefError:
+        return False
+    return net_a is not None and net_b is not None and net_a.get("_id") == net_b.get("_id")
+
+
+async def resolve_network_ref(backend: Backend, ref: str) -> tuple[UniFiRecord, list[UniFiRecord]]:
+    """Resolve a caller's network reference (``_id`` or ``legacy_id``) for a write.
+
+    Returns ``(network, every_network)`` so the caller can compare a stored
+    reference without reading the list twice. Raises :class:`NetworkRefError`
+    for a reference that names no network or more than one, so a write never
+    goes out with a network id the controller does not have.
+    """
+    networks = [n for n in await backend.list_networks() if isinstance(n, dict)]
+    network = find_network(networks, ref)
+    if network is None or not isinstance(network.get("_id"), str):
+        raise NetworkRefError(
+            f"network {ref!r} not found: pass the _id or legacy_id of a network from list_networks"
+        )
+    return network, networks
 
 
 async def upsert_dhcp_lease(backend: Backend, payload: dict[str, Any]) -> UniFiRecord:

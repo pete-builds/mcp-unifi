@@ -17,6 +17,24 @@ Side effects:
 - Mutates controller state. Use dry_run=True to preview the change
   without applying.
 
+Network reference: ``network_id`` may be the network's ``_id`` or
+its ``legacy_id`` from ``list_networks`` (UniFi Network 11 gives a
+network a UUID ``_id`` and keeps its old ObjectId as ``legacy_id``).
+It is resolved before anything is written: a reference that names no
+network, or more than one, is refused, ``dry_run`` included. The
+network's ``_id`` is what is sent. What a Network 11 controller
+stores for a new lease written with the UUID ``_id`` (kept, converted
+to the legacy id, or refused) has not been verified live.
+
+Returns: the dry run answers ``{"dry_run": true, "controller",
+"would_create": {"dhcp_lease": payload}, "summary"}``. The real call
+answers the same shape for what was applied: ``{"dry_run": false,
+"controller", "created": {"dhcp_lease": payload}, "sent_fields":
+[...], "record": <the user record re-read after the write>,
+"summary"}``, plus ``read_back_error`` if that read failed. The top
+level also keeps the created record's fields (``_id``, ``fixed_ip``,
+...), as before.
+
 ## Example
 
 ```python
@@ -29,7 +47,7 @@ create_static_dhcp_lease(mac="aa:bb:cc:00:00:01", ip="10.50.0.10", network_id="6
 |---|---|---|---|---|
 | `mac` | `string` | yes | — | Client MAC address (e.g. ``"aa:bb:cc:00:00:01"``). |
 | `ip` | `string` | yes | — | IPv4 address to reserve. |
-| `network_id` | `string` | yes | — | ``_id`` of the network/VLAN this client lives on. |
+| `network_id` | `string` | yes | — | ``_id`` or ``legacy_id`` of the network/VLAN this client lives on. |
 | `name` | `string` | no | "" | Friendly display name (optional). |
 | `hostname` | `string` | no | "" | DHCP hostname (optional). |
 | `controller` | `string` | no | "default" | Name of the UniFi controller to target. Defaults to ``"default"``. |

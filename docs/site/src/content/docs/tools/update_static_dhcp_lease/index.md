@@ -19,16 +19,41 @@ no reservation, use ``update_clients``.
 
 Side effects:
 - Sets ``use_fixedip=true`` and pins ``fixed_ip`` on the user record.
-- ``network_id`` is sent only when given. Left out, the record keeps
-  the network it already has, as the Art-of-WiFi client's
-  ``edit_client_fixedip`` treats it. Omitting it is not live-verified.
+- ``network_id`` is sent only when given and different. Left out,
+  the record keeps the network it already has, as the Art-of-WiFi
+  client's ``edit_client_fixedip`` treats it. Omitting it is not
+  live-verified.
 - If ``local_dns_record`` is supplied, also sets
   ``local_dns_record_enabled=true`` so the name resolves on the LAN
   (controller version permitting).
 - Mutates controller state. Use dry_run=True to preview the change
   without applying.
 - If no user record exists for ``mac``, the call fails with a clear
-  error. In that case use ``create_static_dhcp_lease`` instead.
+  error, ``dry_run`` included. In that case use
+  ``create_static_dhcp_lease`` instead.
+
+Network reference: ``network_id`` may be the network's ``_id`` or
+its ``legacy_id`` from ``list_networks``. On UniFi Network 11 a
+network's ``_id`` is a UUID and its old ObjectId is kept as
+``legacy_id``, and older reservations still store that legacy id as
+their ``network_id``. The reference is resolved before anything is
+written: one that names no network, or more than one, is refused. If
+the record already points at that network, in either form,
+``network_id`` is not sent at all, so an unchanged binding is never
+rewritten. Otherwise the network's ``_id`` is sent. What a Network 11
+controller stores when a lease is written with the UUID ``_id`` (kept,
+converted to the legacy id, or refused) has not been verified live.
+
+Returns: the dry run answers ``{"dry_run": true, "controller",
+"would_update": {"mac", "patch"}, "summary"}``. The real call answers
+the same shape for what was applied: ``{"dry_run": false,
+"controller", "updated": {"mac", "user_id", "patch"}, "sent_fields":
+[...], "record": <the user record re-read after the write>,
+"summary"}``, plus ``read_back_error`` if that read failed. With
+``network_id`` given, both also carry ``network_binding``: the network it
+resolved to and whether ``network_id`` was sent. The top level also
+keeps the written record's fields (``_id``, ``fixed_ip``, ...), filled
+in from the re-read when the controller answers the write with ``{}``.
 
 ## Example
 
@@ -42,7 +67,7 @@ update_static_dhcp_lease(mac="d0:11:e5:03:f6:3a", fixed_ip="192.168.1.50", netwo
 |---|---|---|---|---|
 | `mac` | `string` | yes | — | Client MAC address (e.g. ``"d0:11:e5:03:f6:3a"``). |
 | `fixed_ip` | `string` | yes | — | IPv4 address to pin. Must be inside the network's subnet. |
-| `network_id` | `string` | no | "" | ``_id`` of the network/VLAN the IP belongs to (optional). Leave it out to keep the record's current network. |
+| `network_id` | `string` | no | "" | ``_id`` or ``legacy_id`` of the network/VLAN the IP belongs to (optional). Leave it out to keep the record's current network. |
 | `name` | `string` | no | "" | Friendly display name / hostname alias (optional). |
 | `local_dns_record` | `string` | no | "" | Local DNS name to resolve to ``fixed_ip`` (optional). When set, ``local_dns_record_enabled=true`` is also sent. |
 | `controller` | `string` | no | "default" | Name of the UniFi controller to target. Defaults to ``"default"``. |
