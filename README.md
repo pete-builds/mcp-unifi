@@ -12,7 +12,7 @@
 
 ## Install in Claude
 
-Paste this into Claude Desktop's config file, put in your gateway's address and API key, then fully quit and reopen Claude Desktop. It runs the v0.30.0 release through `uvx` (install [uv](https://docs.astral.sh/uv/) first), reads your own network, and cannot change anything on it.
+Paste this into Claude Desktop's config file, put in your gateway's address and API key, then fully quit and reopen Claude Desktop. It runs the v0.31.0 release through `uvx` (install [uv](https://docs.astral.sh/uv/) first), reads your own network, and cannot change anything on it.
 
 ```json
 {
@@ -21,7 +21,7 @@ Paste this into Claude Desktop's config file, put in your gateway's address and 
       "command": "uvx",
       "args": [
         "--from",
-        "git+https://github.com/pete-builds/mcp-unifi@v0.30.0",
+        "git+https://github.com/pete-builds/mcp-unifi@v0.31.0",
         "mcp-unifi"
       ],
       "env": {
@@ -50,7 +50,7 @@ claude mcp add --transport stdio --scope user unifi \
   --env MCP_UNIFI_READONLY=true \
   --env UNIFI_HOST=192.168.1.1 \
   --env UNIFI_API_KEY=<your-local-api-key> \
-  -- uvx --from git+https://github.com/pete-builds/mcp-unifi@v0.30.0 mcp-unifi
+  -- uvx --from git+https://github.com/pete-builds/mcp-unifi@v0.31.0 mcp-unifi
 ```
 
 **What has been tested where.** The `uvx` route: tested on macOS (Apple silicon) in stub mode. Windows: not tested yet. The one-click `.dxt` bundle on the releases page: built on Linux, and it fails at startup on macOS (and, for the same reason, cannot work on Windows). It is built for Linux x86_64 only, where Claude Desktop is in beta, and it has not been tried there. Details under [Install](#install).
