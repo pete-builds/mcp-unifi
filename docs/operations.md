@@ -532,7 +532,7 @@ bytes per record, mean 1,105 bytes**. Per tool, median bytes per record:
 | `list_firewall_rules` | 465 |
 
 The table was measured on audit schema 1. Schema 2 adds `event_id`,
-`operation_id`, `chain_start`, `prev_hash` and `hash` (`docs/decisions/audit-records-are-correlated-and-hash-chained.md`): a fixed
+`operation_id`, `chain_start`, `prev_hash` and `hash` (ADR 0011): a fixed
 **278 bytes per record** on the stub, so add that to every row.
 
 At roughly 1 KB per call, 10,000 tool calls is about 10 MB. A chatty agent

@@ -1,6 +1,6 @@
-# Audit records carry an operation id and form a hash chain
+# 0011. Audit records carry an operation id and form a hash chain
 
-**Status:** Accepted (audit schema `"2"`). Number to be assigned at merge: ADR 0010 is taken by an open pull request (#270), so this record is named by topic until then.
+**Status:** Accepted (audit schema `"2"`)
 
 ## Context
 

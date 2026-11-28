@@ -31,7 +31,7 @@ never a secret that was scrubbed before the write. ``tests/test_audit_chain.py``
 pins two fixed vectors.
 
 What this proves, and what it does not, is set out in
-``docs/decisions/audit-records-are-correlated-and-hash-chained.md``. In
+``docs/decisions/0011-audit-records-are-correlated-and-hash-chained.md``. In
 short: it detects an edit, a deletion or a reordering inside a chain segment by
 someone who does not recompute the chain. It does not stop someone with write
 access from rewriting the whole file, and it cannot detect records cut off the

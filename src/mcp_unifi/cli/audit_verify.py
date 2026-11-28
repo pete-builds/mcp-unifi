@@ -13,7 +13,7 @@ expected head checks out, when given), ``1`` at the first broken link or a
 failed anchor or head check, ``2`` when a file cannot be read.
 
 What a pass means, and what it cannot mean, is in
-``docs/decisions/audit-records-are-correlated-and-hash-chained.md`` and
+``docs/decisions/0011-audit-records-are-correlated-and-hash-chained.md`` and
 the audit guide. The short form: a pass says no record inside a chain segment
 was edited, removed or reordered by someone who did not recompute the chain.
 On its own it says nothing about records cut off the end of a segment: the end

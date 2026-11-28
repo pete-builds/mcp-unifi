@@ -22,7 +22,8 @@ accepted costs**. A decision with no downside listed has not been examined.
 | [0007](0007-hardening-is-opt-in-unless-the-hole-has-no-legitimate-configuration.md) | Hardening that narrows a working install is opt-in; hardening that closes a hole with no legitimate configuration is mandatory | Accepted |
 | [0008](0008-network-and-wlan-writes-use-the-integration-api.md) | Network and WLAN writes use the Integration API where they map onto it | Accepted |
 | [0009](0009-zone-policy-writes-use-the-integration-api-only.md) | Zone policy writes use the Integration API only, with no private fallback | Accepted; live test owed |
-| [unnumbered](audit-records-are-correlated-and-hash-chained.md) | Audit records carry an operation id and form a hash chain | Accepted |
+| [0010](0010-site-diagnosis-is-deterministic-rules-over-existing-reads.md) | Site diagnosis is deterministic rules over existing reads, with stable rule ids | Accepted; several fields not live-verified |
+| [0011](0011-audit-records-are-correlated-and-hash-chained.md) | Audit records carry an operation id and form a hash chain | Accepted |
 
 ## Template
 
