@@ -167,6 +167,9 @@ class FileSink:
     def __init__(self, path: str | os.PathLike[str]) -> None:
         self._path = Path(path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
+        #: True once this sink has written a complete line itself, so the
+        #: file is known to end in a newline.
+        self._tail_ok = False
 
     @property
     def path(self) -> Path:
@@ -181,10 +184,29 @@ class FileSink:
         await asyncio.to_thread(self._append, line)
 
     def _append(self, line: str) -> None:
+        # Runs under the audit lock. On this sink's first write, a file that
+        # does not end in a newline (a crash cut the last write off mid-line,
+        # or an editor dropped the final newline) gets one first. Otherwise the
+        # new record would be fused onto that last line and lost to every
+        # reader. resume_from_file reads the same last line either way, so the
+        # chain decision and the write agree.
+        prefix = "" if self._tail_ok else self._newline_if_unterminated()
         with self._path.open("a", encoding="utf-8") as fh:
-            fh.write(line)
+            fh.write(prefix + line)
             fh.flush()
             os.fsync(fh.fileno())
+        self._tail_ok = True
+
+    def _newline_if_unterminated(self) -> str:
+        try:
+            with self._path.open("rb") as fh:
+                fh.seek(0, os.SEEK_END)
+                if fh.tell() == 0:
+                    return ""
+                fh.seek(-1, os.SEEK_END)
+                return "" if fh.read(1) == b"\n" else "\n"
+        except FileNotFoundError:
+            return ""
 
     async def resume_chain(self) -> audit_chain.ChainResume:
         """Where the chain continues: the ``hash`` on the file's last line.
