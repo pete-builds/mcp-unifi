@@ -53,15 +53,42 @@ One new read-only tool, `diagnose_site`, in
   `critical` (`device.offline`, `wan.down`, `health.subsystem_not_ok`) is in
   `not_evaluated`, otherwise `degraded` on any warning, otherwise `healthy`,
   with one override: **a diagnosis is "blind" when any read failed for a
-  reason other than `UniFiUnsupportedError`, or any rule raised, and a blind
-  diagnosis that would have been `healthy` is `unknown` instead.**
+  reason other than `UniFiUnsupportedError`, one of the IPS read's two
+  constituent routes failed, or any rule raised, and a blind diagnosis that
+  would have been `healthy` is `unknown` instead.** It never softens a worse
+  verdict.
   `UniFiUnsupportedError` is what the client raises when a route does not
   exist on this firmware (`list_alarms` when the v2 critical log and the
   legacy fallback are both absent, `list_threat_detections` when both IPS
   routes answer 404/405); its rules are listed as not evaluated, the check
   carries `unsupported: true`, and it does not block `healthy` on its own.
-  When any read failed the top-level `next` is `get_console_health`, which
-  probes UniFi OS separately.
+  When any read or IPS route failed the top-level `next` is
+  `get_console_health`, which probes UniFi OS separately.
+- **Failure versus truncation.** The IPS read merges two routes and answers
+  `complete: false` both when a route failed and when one was cut at the scan
+  cap; its per-route `sources` entries say which (`ok: false` against
+  `more_available: true`). A failed route makes the diagnosis blind; a capped
+  one is a `partial` gap. The envelope does not say whether a failed route was
+  absent on this firmware (404/405) or broke: the status is only inside the
+  error text, which this tool does not parse. So every failed IPS route blocks
+  `healthy`, the fail-honest side, and `complete: false` with no readable
+  per-route explanation counts as a failure too. The alarm read is a single
+  route: a failure there raises, so its `window_fully_read: false`,
+  `more_available` and `total` above `returned` are all truncation (the scan
+  cap, or the controller stopping paging early) and stay `partial` gaps.
+- **Malformed rows.** A read whose list holds rows that are not JSON objects
+  keeps the object rows and counts the rest. Every rule reading that source
+  gets a `partial` gap ("N row(s) of <source> were not objects and were
+  skipped") and the check carries `skipped_rows`, so a mangled device row
+  cannot hide an offline device: for a critical-capable rule's source the
+  verdict is `unknown`, never `healthy`. This covers all five reads, including
+  the alarm and detection lists inside their envelopes.
+- **Next steps name the controller.** `build_report` stamps the controller the
+  diagnosis ran on into the arguments of every next step, finding-level and
+  top-level, in one place, so a rule cannot forget. Without it an agent
+  following `next` on a multi-site install would query, or act on, the
+  default site. Every tool a step can name takes `controller`; a test reads
+  that from each tool's registered schema.
 - **Contained failures.** Each read catches everything it raises: a
   `UniFiError` keeps this server's own cleaned message, anything else keeps
   only its class name (`unexpected TypeError`). Each rule runs inside its own
@@ -132,6 +159,10 @@ One new read-only tool, `diagnose_site`, in
 - An adopted device left unplugged keeps the site `critical` until it is
   reconnected or forgotten in the controller. That is deliberate: the
   controller still counts it as part of the site.
+- On a firmware that lacks one of the two IPS routes, every diagnosis reads
+  `unknown` rather than `healthy`, because the IPS envelope cannot tell an
+  absent route from a broken one. The fix, if it bites, is a per-route status
+  field in that envelope, not a guess here.
 - A transient 5xx on any one of the five reads turns a healthy site
   `unknown` for that call. Re-running is the remedy; the failed read is named.
 - A site with a missing `www` record, or a device with no numeric `state`,
