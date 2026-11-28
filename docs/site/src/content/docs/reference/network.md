@@ -113,10 +113,11 @@ update_clients(updates=[{"mac": "aa:bb:cc:00:00:02", "name": "Pete's iPhone"}, {
 **How to read the answer.**
 
 - `verdict` is `critical` when any finding is critical; `unknown` when a rule that can find a critical problem (`device.offline`, `wan.down`, `health.subsystem_not_ok`) could not run over everything it needs; `degraded` when there is a warning; otherwise `healthy`. Info findings never change it.
-- A diagnosis is never `healthy` when any of the five reads failed or any rule raised: what would have been `healthy` is `unknown`. The one exception is a route this firmware does not have (the client raises `UniFiUnsupportedError`, which `list_alarms` and `list_threat_detections` can): those rules are listed under `not_evaluated` as "not supported on this controller", the check carries `unsupported: true`, and the site can still be `healthy`.
-- A read that says it was cut short (more IPS detections or alarm entries than were returned, or a window not read to the end) is listed as a `partial` gap with the counts, and its findings say the counts are lower bounds.
+- A diagnosis is never `healthy` when any of the five reads failed, one of the two IPS routes behind `list_threat_detections` failed, or any rule raised: what would have been `healthy` is `unknown`. The one exception is a route this firmware does not have (the client raises `UniFiUnsupportedError`, which `list_alarms` and `list_threat_detections` can): those rules are listed under `not_evaluated` as "not supported on this controller", the check carries `unsupported: true`, and the site can still be `healthy`.
+- A read that says it was cut short (more IPS detections or alarm entries than were returned, an IPS route capped at the scan limit, or a window not read to the end) is listed as a `partial` gap with the counts, and its findings say the counts are lower bounds. A failed IPS route is not "cut short": the IPS envelope cannot say whether it was missing on this firmware or broken, so it blocks `healthy`.
+- Rows a read returns that are not objects are skipped and counted (`skipped_rows` in `checks`), and every rule reading that source lists a `partial` gap; for devices and site health that means `unknown`, never `healthy`.
 - An adopted device left unplugged keeps the site `critical` (`device.offline`) until it is reconnected or forgotten in the controller.
-- Each finding keeps `observed` (values read from the controller, each with the tool it came from) apart from `inferred` (the rule's conclusion). `next` names tools to call with their arguments.
+- Each finding keeps `observed` (values read from the controller, each with the tool it came from) apart from `inferred` (the rule's conclusion). `next` names tools to call with their arguments, always including the `controller` the diagnosis ran on.
 - `not_evaluated` lists every rule that did not run (`scope: "rule"`) or ran over only some devices or subsystems (`scope: "partial"`), with the reason. `rules_evaluated` lists the rest. A failed read is never read as a clean one: it appears in `checks` with its error, and the top-level `next` points at `get_console_health`.
 - Every string that comes from the controller (device names, models and types, firmware versions, alarm keys, IPS actions and categories) is treated as untrusted: it appears only in `subject` and `observed`, with control characters stripped and capped at 80 characters, never in `summary`, `inferred`, `limitations` or `not_evaluated`. A rule that raises is reported by its exception class only.
 - At most 10 findings per rule; any more are counted in `truncated`. `thresholds` echoes every threshold used. They are this project's conservative defaults, not Ubiquiti guidance.
@@ -155,8 +156,8 @@ update_clients(updates=[{"mac": "aa:bb:cc:00:00:02", "name": "Pete's iPhone"}, {
       "confidence": "high",
       "limitations": [],
       "next": [
-        { "tool": "get_device_stats", "args": { "mac": "f4:e2:c6:00:00:02" } },
-        { "tool": "list_events", "args": { "hours": 24 } }
+        { "tool": "get_device_stats", "args": { "controller": "default", "mac": "f4:e2:c6:00:00:02" } },
+        { "tool": "list_events", "args": { "controller": "default", "hours": 24 } }
       ]
     }
   ],
