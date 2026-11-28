@@ -219,7 +219,13 @@ The sink is checked when the server starts, not on the first tool call:
 
 ## Check the log for tampering
 
-Each record carries the hash of the record before it, so the records form a chain. `mcp-unifi-audit-verify` walks the file and reports the first place the chain does not hold:
+Each record carries the hash of the record before it, so the records form a chain. `mcp-unifi-audit-verify` walks the file and reports the first place the chain does not hold.
+
+**What it detects:** within one segment, an edited, removed, reordered or inserted record is detected, unless whoever changed the file also recomputed the hashes.
+
+**What it does not detect:** records removed from the end of a segment or the end of the file; a removed whole segment or whole rotated file; a full rewrite.
+
+A *segment* is a run of records chained one to the next. A new one starts on a fresh log, after an upgrade, after a crash mid-write, when the server restarts after a log was rotated, and at every process start on a stdout or syslog sink.
 
 ```bash
 mcp-unifi-audit-verify audit.jsonl
@@ -231,8 +237,8 @@ audit-verify: OK audit.jsonl
   chained records: 5
   segments: 1
     1. starts at audit.jsonl:1 (new_log)
-  head: 7e776f0c380f70f564509a3c1bea27f51f99eb0f3f7b19e4fd60f5c486af4644 (audit.jsonl:5)
-  not covered: records cut off after the head; check a head kept elsewhere with --anchor
+  last record hash: b146de1978f2872e91be9b8f3f1ee1074efabdafe49665f879ee7a54da5d53ac (audit.jsonl:5)
+  not covered: records before a segment start or after the last record, a removed whole segment or rotated file, and a full rewrite of the file
 ```
 
 With a record removed from the middle:
@@ -241,52 +247,54 @@ With a record removed from the middle:
 audit-verify: BROKEN at audit.jsonl:4
   reason: a record is missing: the record this one follows is not in the input (deleted, or a write was lost)
   verified through: audit.jsonl:3
-  records: 3
-  chained records: 3
-  segments: 1
-    1. starts at audit.jsonl:1 (new_log)
-  last verified hash: c6abe1734f7b40d1243d5b0fffdcac14b59bd0646e8b34ff0f46efb726363c6d (audit.jsonl:3)
 ```
 
-The exit status is `0` when the chain holds (and any `--anchor` or `--expect-head` check passes), `1` at the first break or a failed check, and `2` when a file cannot be read. `--json` prints one object instead (`ok`, `break`, `head_hash`, `segments`, `damaged_lines`, `failures` and counts), so `mcp-unifi-audit-verify audit.jsonl --json | jq -r .head_hash` prints just the head. Pass several files to check a rotated log as one chain, oldest first: `mcp-unifi-audit-verify audit.jsonl.1 audit.jsonl`.
+Every report lists where each segment starts and the last record's hash. Both are information about the file, not a promise: nothing in the file can show that records before a segment start, or after the last record, were not removed.
 
-### What a pass proves, and what it does not
+Exit status:
 
-**It detects** a record that was edited, removed, duplicated or moved *inside a chain segment* by someone who did not recompute the chain, and a line edited to repeat a key. The verifier names the line and the kind of break.
+| Code | Meaning |
+|---|---|
+| `0` | Verified. |
+| `1` | A break. The output names the first one. |
+| `2` | Usage error, or a file cannot be read. |
+| `3` | Verified, but damaged lines are present (see below). |
 
-**It does not stop** someone who can write to the file from rewriting the whole thing. SHA-256 is not a secret: anyone with write access can edit a record and recompute every hash after it, and the result verifies. The chain raises the cost of quiet tampering and catches careless or partial edits; it is not a signature.
+`--json` prints one object instead (`ok`, `break`, `segments`, `damaged_lines`, `head_hash` and counts). Pass several files to check a rotated log as one chain, oldest first: `mcp-unifi-audit-verify audit.jsonl.1 audit.jsonl`.
 
-**It cannot see records lost at the end of a segment.** A segment is a run of records chained one to the next. A new one starts on a fresh log, after an upgrade, after a crash mid-write, and at every process start on a stdout or syslog sink. Records cut off the end of a segment leave a shorter, still valid chain. That covers two places:
+### The limits, plainly
 
-- **The end of the file.** A file that lost its last ten records verifies.
-- **Just before every later segment start.** The verifier lists each one with "records lost immediately before this point are not detectable", so an `OK` is never a statement about those points.
+- **Anyone who can write the file can rewrite it.** SHA-256 is not a secret: an edit followed by recomputing every hash after it verifies. This is tamper evidence against edits that do not recompute the chain, not a signature.
+- **Records cut off the end of the file** leave a shorter chain that still verifies. So do records cut off the end of any segment, just before the next segment starts.
+- **A whole segment can go missing unnoticed**, for example a whole process run on a stdout or syslog sink.
+- **Dropping a whole rotated file from the middle of a set is not detected** whenever the next file starts a new segment, which it does if the server restarted after rotating. Do not rely on the verifier to tell you a rotated file is missing.
 
-**Check the end of the file against a head you kept.** Copy the `head` hash somewhere the server cannot write (a ticket, a chat message, a cron job that ships it to another host). Later:
+### Damaged lines
 
-```bash
-mcp-unifi-audit-verify audit.jsonl --anchor 7e776f0c380f70f564509a3c1bea27f51f99eb0f3f7b19e4fd60f5c486af4644
-```
-
-`--anchor` fails unless a verified record still carries that hash. Records written after it are fine and are counted (`anchor … found at audit.jsonl:5, 12 records after it`). If the tail was cut back past it, the command exits `1` with `ANCHOR NOT FOUND`. This covers the file up to the moment you took the copy, and nothing after it. For a file that is no longer written, such as a rotated one, `--expect-head <hash>` is stricter: it fails unless the verified head is exactly that hash.
-
-**A damaged line is where one record may have been lost.** If the server crashes partway through writing a record, the file ends in a cut-off line. When it next writes, it starts on a fresh line and begins a new segment marked `chain_start: "after_unreadable"`. The verifier reports the cut-off line as a warning rather than a break, counts it, and verifies everything after it:
+If the server crashes partway through writing a record, the file ends in a cut-off line. When it next writes, it starts on a fresh line and begins a new segment marked `chain_start: "after_unreadable"`. The verifier reports each cut-off line (two in a row if it crashed again before finishing that first record), verifies everything after it, and exits `3`:
 
 ```text
-audit-verify: OK audit.jsonl
-  WARNING: damaged line at audit.jsonl:4 (crash mid-write?): not a record; one record may have been lost here, and the chain restarts after it
+audit-verify: DAMAGED audit.jsonl (verified, with damaged lines; see below)
+  WARNING: damaged line at audit.jsonl:4 (crash mid-write?): not a record; an unknown number of records at this point may be missing
   records: 4
   chained records: 4
   damaged lines: 1
   segments: 2
     1. starts at audit.jsonl:1 (new_log)
-    2. starts at audit.jsonl:5 (after_unreadable): records lost immediately before this point are not detectable
+    2. starts at audit.jsonl:5 (after_unreadable)
 ```
 
-A line that is not JSON with no restart after it, and any line that is JSON but not a valid record, is a break.
+An unknown number of records may be missing at a damaged line, not just the one that was being written: anyone who replaced the end of the file with a line of garbage and then let the server restart produces exactly this picture. Treat exit `3` as "look at this", not as a pass.
+
+A line that is not JSON with no restart directly after it, any line that is JSON but not a valid record, and an `after_unreadable` record that does not directly follow such damage in the same file are all breaks.
+
+### Failed writes and concurrent writers
 
 **A failed write usually shows up as a missing record.** If the sink fails to write a record that was already hashed (a full disk, say), the next record still points at it, so the verifier reports a missing record at that spot. The server logged an ERROR for the failed write when it happened, so check the server log before treating it as tampering. If a record could not even be serialised, it is never hashed, nothing is written, and the chain carries on without a gap: the only trace is the ERROR in the server log.
 
 **One writer per file.** The server keeps the newest hash in memory and reads the file only once, when it first writes after starting. Two processes appending to one file fork the chain, and the verifier reports the first record where they cross. That includes `mcp-unifi-replay --real` while the server is running and both use the same file sink.
+
+**A server that cannot read its own log** when it starts begins a segment marked `after_unreadable` with no damage before it, which the verifier reports as a break: nothing before that point can be vouched for.
 
 ### Upgrading an existing log
 
@@ -303,13 +311,13 @@ audit-verify: OK audit.jsonl
 
 Unchained records carry no protection, and they are accepted only *before* the first chained record of a file. An unchained record after a chained one is a break: either someone stripped the hash fields from a record, or the server was downgraded to a version without the chain, and the verifier cannot tell which.
 
-A missing or empty file starts at `chain_start: "new_log"`. A file that ends without a final newline gets one before the server's first new record. When the server restarts after a log was rotated, the new file starts with `new_log` too, and verifying the old and new files together lists that as a second segment.
+A missing or empty file starts at `chain_start: "new_log"`, which is valid only as the first record of a file. A file that ends without a final newline gets one before the server's first new record. When the server restarts after a log was rotated, the new file starts with `new_log` too, and verifying the old and new files together lists it as a second segment.
 
 ### stdout and syslog sinks
 
 The chain is kept per process for every sink. A process writing to `stdout` or `syslog` cannot read back what it wrote before it restarted, so each process start begins a new segment, marked `chain_start: "process_start"`. To verify, collect the audit lines into a file with nothing else on them (for example `docker logs <container> 2>/dev/null > audit.jsonl`; strip any syslog prefix so each line is the JSON record alone) and run the verifier on it.
 
-A pass then means no record was edited, removed or reordered *inside* each process's run as your collector stored it. It says nothing about the **end** of each run: records lost just before a restart, or a whole run that is missing, cannot be detected, and the verifier lists every restart point. A transport that drops lines (syslog over UDP) shows up as missing records. Nothing in the log can prove a `process_start` really was a restart, so on these sinks the segment boundaries are taken on trust.
+The same guarantee applies inside each process's run as your collector stored it, and the same limits: records lost at the end of a run, or a whole run, are not detected. Nothing in the log can show that a `process_start` really was a restart, so on these sinks segment boundaries are taken on trust. A transport that drops lines (syslog over UDP) shows up as missing records.
 
 ## Replay
 

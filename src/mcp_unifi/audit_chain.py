@@ -32,10 +32,10 @@ pins two fixed vectors.
 
 What this proves, and what it does not, is set out in
 ``docs/decisions/0011-audit-records-are-correlated-and-hash-chained.md``. In
-short: it detects an edit, a deletion or a reordering inside a chain segment by
-someone who does not recompute the chain. It does not stop someone with write
-access from rewriting the whole file, and it cannot detect records cut off the
-end of a segment without a copy of a later hash kept somewhere else.
+short: within one segment, an edited, removed, reordered or inserted record is
+detected, unless whoever changed the file also recomputed the hashes. What is
+not detected: records removed from the end of a segment or the end of the
+file; a removed whole segment or whole rotated file; a full rewrite.
 
 This module is deliberately free of any import from :mod:`mcp_unifi.audit` so
 the verifier CLI can load it without building a sink.
@@ -72,8 +72,10 @@ CHAIN_START_NEW_LOG = "new_log"
 #: Valid only right after an unchained record.
 CHAIN_START_AFTER_UNCHAINED = "after_unchained"
 #: The last line in the file could not be read as a chained record. Valid only
-#: right after a line that is not JSON at all (crash damage), or as the first
-#: record of a file.
+#: directly after one or more lines of the same file that are not JSON at all
+#: (crash damage). The writer also uses it when the last line is JSON but not a
+#: valid record, or when the file cannot be read; the verifier rejects both,
+#: because the line before it is already a break or nothing can be vouched for.
 CHAIN_START_AFTER_UNREADABLE = "after_unreadable"
 #: The sink is not a file this process can read back (stdout, syslog), so
 #: every process start begins a new segment. Valid anywhere: nothing in the
@@ -208,8 +210,15 @@ def resume_from_file(path: Path) -> ChainResume:
     if last is None:
         return ChainResume(GENESIS_HASH, CHAIN_START_NEW_LOG)
     try:
-        payload = loads_record(last.decode("utf-8-sig"))
-    except ValueError:  # bad JSON, bad UTF-8, or a duplicate key
+        text = last.decode("utf-8-sig")
+    except ValueError:
+        return ChainResume(GENESIS_HASH, CHAIN_START_AFTER_UNREADABLE)
+    if not text.strip():
+        # Only a byte-order mark: the file holds no records at all.
+        return ChainResume(GENESIS_HASH, CHAIN_START_NEW_LOG)
+    try:
+        payload = loads_record(text)
+    except ValueError:  # bad JSON or a duplicate key
         return ChainResume(GENESIS_HASH, CHAIN_START_AFTER_UNREADABLE)
     if not isinstance(payload, dict):
         return ChainResume(GENESIS_HASH, CHAIN_START_AFTER_UNREADABLE)
@@ -260,19 +269,15 @@ class VerifyReport:
     #: Records lost immediately before any segment start after the first are
     #: not detectable, and the CLI says so for each one.
     segment_starts: list[tuple[str, str | None]] = field(default_factory=list)
-    #: Locations of lines that are not JSON at all and are followed by a
-    #: writer restart (``after_unreadable``): a crash mid-write. One record
-    #: may have been lost at each.
+    #: Locations of lines that are not JSON at all, in a run that ends with a
+    #: writer restart (``after_unreadable``): a crash mid-write. An unknown
+    #: number of records may be missing at each such point.
     damaged: list[str] = field(default_factory=list)
     #: ``hash`` of the last chained record that verified, and where it is.
     head_hash: str | None = None
     head_where: str | None = None
     #: The last location that verified, so a break can say "fine up to here".
     verified_through: str | None = None
-    #: Where the ``anchor`` hash was found among verified records, and how many
-    #: chained records follow it. ``None`` when not asked for, or not found.
-    anchor_where: str | None = None
-    records_after_anchor: int = 0
     broken: ChainBreak | None = None
 
     @property
@@ -290,8 +295,6 @@ class VerifyReport:
             "head_hash": self.head_hash,
             "head_at": self.head_where,
             "verified_through": self.verified_through,
-            "anchor_at": self.anchor_where,
-            "records_after_anchor": self.records_after_anchor,
             "break": (
                 None
                 if self.broken is None
@@ -396,13 +399,16 @@ def _segment_start_problem(entry: _Entry, before: _Entry | None) -> str | None:
         if before is not None and before.kind == _UNCHAINED:
             return None
         return "a segment start that says it follows an unchained record, but none is before it"
-    # after_unreadable
-    if before is None or before.kind == _NOT_JSON:
+    # after_unreadable: only directly after crash damage in the same file.
+    if before is not None and before.kind == _NOT_JSON:
         return None
-    return "a segment start that says it follows an unreadable line, but none is before it"
+    return (
+        "an after_unreadable segment start with no unreadable line directly before it in "
+        "the same file: records above it were removed, or it was moved"
+    )
 
 
-def verify_lines(lines: Iterable[Line], *, anchor: str | None = None) -> VerifyReport:
+def verify_lines(lines: Iterable[Line]) -> VerifyReport:
     """Walk ``lines`` in order and report the first place the chain breaks.
 
     Blank lines are ignored, and so is a byte-order mark at the start of a
@@ -415,12 +421,10 @@ def verify_lines(lines: Iterable[Line], *, anchor: str | None = None) -> VerifyR
       carry a ``chain_start`` label.
     * A genesis record (``prev_hash`` all zeros) begins a segment, and its
       ``chain_start`` label must fit where it is (see the constants above).
-    * A line that is not JSON at all is crash damage when the next record is
-      an ``after_unreadable`` segment start: it is listed in ``damaged`` and
-      verification continues. Any other unreadable line is a break.
-
-    With ``anchor``, also records where that hash sits among the verified
-    records and how many chained records follow it.
+    * A run of one or more lines that are not JSON at all is crash damage
+      when the next line of the same file is an ``after_unreadable`` segment
+      start: each is listed in ``damaged`` and verification continues. Any
+      other unreadable line is a break.
     """
     report = VerifyReport()
     entries = list(_entries(lines))
@@ -450,14 +454,7 @@ def verify_lines(lines: Iterable[Line], *, anchor: str | None = None) -> VerifyR
             chained_in_file = False
 
         if entry.kind == _NOT_JSON:
-            nxt = entries[idx + 1] if idx + 1 < len(entries) else None
-            if (
-                nxt is not None
-                and nxt.source == entry.source
-                and nxt.kind == _CHAINED
-                and nxt.linked == GENESIS_HASH
-                and nxt.chain_start == CHAIN_START_AFTER_UNREADABLE
-            ):
+            if _restart_follows_damage(entries, idx):
                 close_run()
                 report.damaged.append(entry.where)
                 prev = None
@@ -537,15 +534,32 @@ def verify_lines(lines: Iterable[Line], *, anchor: str | None = None) -> VerifyR
         report.head_hash = entry.stored
         report.head_where = entry.where
         report.verified_through = entry.where
-        if anchor is not None:
-            if entry.stored == anchor:
-                report.anchor_where = entry.where
-                report.records_after_anchor = 0
-            elif report.anchor_where is not None:
-                report.records_after_anchor += 1
 
     close_run()
     return report
+
+
+def _restart_follows_damage(entries: list[_Entry], idx: int) -> bool:
+    """True when the non-JSON run starting at ``idx`` ends in a writer restart.
+
+    The run is every consecutive non-JSON line of the same file (a second
+    crash while writing the first record after a crash leaves two). The line
+    after it must be, in the same file, a record at the genesis hash labelled
+    ``after_unreadable``. Whether that record's own hash holds is checked when
+    the walk reaches it, like any other record's.
+    """
+    source = entries[idx].source
+    j = idx
+    while j < len(entries) and entries[j].kind == _NOT_JSON and entries[j].source == source:
+        j += 1
+    if j >= len(entries):
+        return False
+    nxt = entries[j]
+    return (
+        nxt.source == source
+        and nxt.linked == GENESIS_HASH
+        and nxt.chain_start == CHAIN_START_AFTER_UNREADABLE
+    )
 
 
 def _explain_link(

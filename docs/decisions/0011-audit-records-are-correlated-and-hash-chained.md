@@ -40,7 +40,13 @@ knowing anything about correlation.
 - `AuditLog.emit` defaults both ids, so records from `scoping.py` are complete
   with no change to that file.
 
-**Hash chain.** Every record carries `prev_hash` and `hash`.
+**Hash chain.** The guarantee, stated once and nowhere stronger: within one
+segment, an edited, removed, reordered or inserted record is detected, unless
+whoever changed the file also recomputed the hashes. What is not detected:
+records removed from the end of a segment or the end of the file; a removed whole
+segment or whole rotated file; a full rewrite.
+
+Every record carries `prev_hash` and `hash`.
 `hash = SHA-256(canonical JSON of the record without hash)`, as 64 lowercase hex
 characters. Canonical means: object keys sorted by code point at every level and
 never repeated; `separators=(",", ":")`, so no whitespace; `ensure_ascii=True`, so
@@ -76,25 +82,31 @@ so it can be re-implemented elsewhere.
   edited record, a line with a repeated JSON key (at any depth: a parser keeps
   the last copy, so a repeat hides one value from the hash check), a missing
   record, a reordered or duplicated one, a stripped hash, a segment start whose
-  label does not fit where it sits, or an unreadable line. It prints the head
-  hash, and every segment start after the first with a note that records lost
-  just before it are not detectable.
+  label does not fit where it sits, or an unreadable line. As information only,
+  it prints where every segment starts and the last record's hash, and closes
+  with a line naming what is not covered. Exit codes: `0` verified, `1` break,
+  `2` usage, `3` verified with damaged lines.
 - Segment-start labels are checked where the log can check them: `new_log` only as
   the first record of a file (so a rotated log whose server then restarted
-  verifies as two segments), `after_unchained` only right after an unchained
-  record, `after_unreadable` only right after a line that is not JSON or as the
-  first record of a file, and nothing else. `process_start` is accepted anywhere,
-  because nothing in a stdout or syslog log can show that a process really
-  restarted there. A record that continues the chain must carry no label.
+  verifies as two segments), `after_unchained` only directly after an unchained
+  record, `after_unreadable` only directly after one or more non-JSON lines of the
+  same file, and nothing else. `process_start` is accepted anywhere, because
+  nothing in a stdout or syslog log can show that a process really restarted
+  there. A record that continues the chain must carry no label. The writer uses
+  `new_log` for a missing or empty file (or one holding only a byte-order mark),
+  and `after_unreadable` after a non-JSON last line. It also uses
+  `after_unreadable` when the last line is JSON but not a valid record, or when
+  it cannot read the file at all; the verifier rejects both, because the line
+  before is already a break, or nothing before it can be vouched for.
 - Records with no chain fields and schema `"1"` are counted as unchained, not as a
   break, but only before the first chained record of their file (the upgrade).
   After one, they are a break: otherwise stripping the hash fields would hide an
   edit.
-- A line that is not JSON and is followed by an `after_unreadable` segment start is
-  crash damage: it is reported as a warning, counted, and verification continues.
-- `--anchor <hash>` fails unless a verified record carries a head the operator kept
-  elsewhere earlier, and `--expect-head <hash>` fails unless the verified head is
-  exactly that hash (for files no longer written).
+- A run of one or more non-JSON lines directly followed by an `after_unreadable`
+  segment start in the same file is crash damage (two lines when the server crashed
+  again while writing its first record after a crash). Each is reported and
+  counted, verification continues, and the exit code is `3`, not `0`, because an
+  unknown number of records may be missing there.
 - Replay's real mode used to mark its records by rewriting `client_id` in a sink
   wrapper after the fact. That would now break the chain, so the mark moved into
   `AuditLog(client_id_override=...)`, applied before sealing.
@@ -110,12 +122,17 @@ The schema version moved from `"1"` to `"2"`. Every added field has a default, s
   it adds key handling and rotation without changing who can forge. Worth revisiting
   if the key can live somewhere the server process cannot read back, such as a
   hardware token or a remote signer.
-- **External anchoring built in** (periodically shipping the head hash to another
-  host, a transparency log, or object storage with retention locks). It is the only
-  thing that detects a truncated tail or a full rewrite. Lost for this change on
-  scope: it needs a destination, credentials and a schedule, and every homelab
-  deployment would configure it differently. The verifier prints the head hash so an
-  operator can ship it with whatever they already run.
+- **External copies of the chain built in** (periodically shipping the latest hash
+  to another host, a transparency log, or object storage with retention locks).
+  That is what it would take to notice records removed from the end of the file,
+  or a full rewrite. Lost for this change on scope: it needs a destination,
+  credentials and a schedule, and every homelab deployment would configure it
+  differently.
+- **A verifier flag that checks a hash kept elsewhere is still in the file.** Built
+  during review and removed: a legitimate segment start (the server restarting
+  after a line of garbage) let a file whose earlier records had been cut pass it.
+  Making that check sound needs more than the file can provide, so this record
+  makes no claim about the end of the file at all.
 - **A database (SQLite with triggers, or an append-only table).** Gives queries and
   can refuse updates at the engine level, but only against a writer who goes through
   the engine; the file underneath is as editable as JSONL. It would also replace the
@@ -136,20 +153,23 @@ The schema version moved from `"1"` to `"2"`. Every added field has a default, s
 - **It is tamper evidence, not tamper resistance.** Anyone who can write the file
   can recompute the chain. The chain catches edits by people or tools that do not
   recompute it, and partial or careless edits by those who try.
-- **Records lost at the end of a segment are undetectable** from the file alone.
-  That is the end of the file, and the point just before every later segment start:
-  a crash, an upgrade, a restart after rotation, and every process start on stdout
-  or syslog. The verifier lists each such point rather than let an `OK` imply it
-  was checked. For the end of the file, a head kept elsewhere and checked with
-  `--anchor` covers everything up to the moment it was copied.
-- **A damaged line may hide one lost record**, the one being written when the
-  server crashed. It is reported, not counted as a break.
+- **Records removed from the end of a segment or the end of the file are not
+  detected.** Segment ends sit before every later segment start: a crash, an
+  upgrade, a restart after rotation, and every process start on stdout or syslog.
+  The verifier lists every segment start and ends each report with what is not
+  covered, rather than let an `OK` imply those points were checked.
+- **A removed whole segment, or a whole rotated file, is not detected.** Dropping a
+  rotated file from the middle of a set goes unnoticed whenever the next file
+  starts a new segment.
+- **A damaged line may hide an unknown number of lost records**, not only the one
+  being written at the crash: replacing the end of a file with garbage and letting
+  the server restart looks the same. Hence exit `3` rather than `0`.
 - **One writer per file.** Two processes appending to one file fork the chain. That
   includes `mcp-unifi-replay --real` against the running server's file sink. The
   verifier reports the fork; it does not tolerate it.
-- **For stdout and syslog** a pass covers the inside of each process's run as the
-  collector stored it, not its end. Records lost just before a restart, and a whole
-  missing run, are invisible, and a lossy transport reads as missing records.
+- **For stdout and syslog** the guarantee applies within each process's run as the
+  collector stored it. Records lost at the end of a run, and a whole missing run,
+  are not detected, and a lossy transport reads as missing records.
 - **A failed write reads as a missing record**, so a full disk produces a break. The
   server log has the matching ERROR. A record that could not be serialised leaves no
   gap at all, only that ERROR.
@@ -166,6 +186,6 @@ The schema version moved from `"1"` to `"2"`. Every added field has a default, s
 
 Revisit when either of these is true: the audit file is shipped off the host as it
 is written (a remote sink with retention), at which point the remote copy is the
-anchor and the in-file chain matters less; or the server gains a key it cannot
+evidence and the in-file chain matters less; or the server gains a key it cannot
 read back from the same filesystem as the log, at which point signing records
 beats chaining them.

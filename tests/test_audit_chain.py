@@ -10,8 +10,8 @@ Three things are proven here:
   non-JSON values all verify.
 * **The verifier can fail.** Each kind of tampering it claims to detect has a
   test of its own that edits a real log and requires the verifier to name the
-  right line. The limits are pinned too: a truncated tail verifies, because the
-  chain alone cannot see it.
+  right line. The limits are pinned too: records cut off the end of a segment
+  are not detected, and the tests say so rather than imply otherwise.
 """
 
 from __future__ import annotations
@@ -387,8 +387,8 @@ async def test_a_crash_mid_write_then_restart_leaves_a_damaged_line_not_a_break(
 
     The restarted writer must start its record on a line of its own, or the
     record is fused onto the fragment and lost to every reader. The verifier
-    then reports the fragment as damage, where one record may have been lost,
-    and goes on to verify everything after it.
+    then reports the fragment as damage, where an unknown number of records may
+    be missing, verifies everything after it, and exits 3, not 0.
     """
     path = tmp_path / "a.jsonl"
     await _write_log(path, 2)
@@ -407,10 +407,16 @@ async def test_a_crash_mid_write_then_restart_leaves_a_damaged_line_not_a_break(
     assert report.damaged == [f"{path}:3"]
     assert report.chained == 4
 
-    assert audit_verify.main([str(path)]) == 0
+    assert audit_verify.main([str(path)]) == audit_verify.EXIT_DAMAGED == 3
     out = capsys.readouterr().out
-    assert f"WARNING: damaged line at {path}:3 (crash mid-write?)" in out
+    assert out.startswith(f"audit-verify: DAMAGED {path}")
+    assert (
+        f"WARNING: damaged line at {path}:3 (crash mid-write?): not a record; an unknown "
+        "number of records at this point may be missing" in out
+    )
     assert "damaged lines: 1" in out
+    assert "one record" not in out
+    assert json.loads(_json_out(path, capsys))["damaged_lines"] == [f"{path}:3"]
 
 
 async def test_a_damaged_line_without_a_restart_after_it_is_a_break(tmp_path: Path) -> None:
@@ -705,12 +711,8 @@ async def test_unchained_records_after_chained_ones_are_a_break(tmp_path: Path) 
     assert report.broken.reason.startswith("unchained record after chained records")
 
 
-async def test_a_truncated_tail_is_not_detectable(tmp_path: Path) -> None:
-    """Pinned limitation: the chain alone cannot see records cut off the end.
-
-    The verifier's head hash is the defence: an operator who copied it
-    elsewhere finds that it no longer appears in the file.
-    """
+async def test_records_cut_off_the_end_are_not_detected(tmp_path: Path) -> None:
+    """Pinned limitation: a shorter chain is still a valid chain."""
     path = tmp_path / "a.jsonl"
     lines = await _write_log(path, 4)
     head = json.loads(lines[-1])["hash"]
@@ -757,13 +759,9 @@ async def test_rotation_then_restart_is_a_segment_start_not_a_break(
     assert audit_verify.main([str(older), str(newer)]) == 0
     out = capsys.readouterr().out
     assert "segments: 2" in out
-    assert (
-        f"starts at {newer}:1 (new_log): records lost immediately before this point "
-        "are not detectable" in out
-    )
-    # The first segment start carries no such note: the start of the input is
-    # checked (a missing head is a break).
-    assert f"starts at {older}:1 (new_log)\n" in out
+    assert f"    1. starts at {older}:1 (new_log)\n" in out
+    assert f"    2. starts at {newer}:1 (new_log)\n" in out
+    assert out.rstrip().endswith(NOT_COVERED)
 
 
 def test_blank_lines_are_ignored() -> None:
@@ -788,8 +786,12 @@ async def test_cli_reports_ok_and_prints_the_head_hash(
     assert audit_verify.main([str(path)]) == 0
     out = capsys.readouterr().out
     assert out.startswith(f"audit-verify: OK {path}")
-    assert f"head: {head} ({path}:2)" in out
+    assert f"last record hash: {head} ({path}:2)" in out
     assert "unchained records (written before the chain existed): 1" in out
+    assert f"    1. starts at {path}:2 (after_unchained)\n" in out
+    assert out.rstrip().endswith(NOT_COVERED)
+    for overclaim in ("anchor", "expect-head", "covers"):
+        assert overclaim not in out
 
     assert audit_verify.main([str(path), "--json"]) == 0
     summary = json.loads(capsys.readouterr().out)
@@ -834,28 +836,24 @@ def _forge(record: dict[str, Any]) -> str:
     return json.dumps(record, sort_keys=True)
 
 
-async def test_a_duplicate_key_cannot_fake_the_anchored_head(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """The review's repro: cut the last two records and graft the old head on.
+async def test_a_duplicate_hash_key_is_a_break(tmp_path: Path) -> None:
+    """Cut the last two records and graft the old last hash onto the new last line.
 
     A JSON parser keeps the last of two equal keys, so a duplicate ``hash`` key
-    added at the front of the new last line is invisible to the hash check and
-    puts the anchored head's text back into the file.
+    added at the front of a line is invisible to the hash check while putting
+    another record's hash text into the file.
     """
     path = tmp_path / "a.jsonl"
     lines = await _write_log(path, 5)
-    anchored_head = json.loads(lines[-1])["hash"]
+    old_last = json.loads(lines[-1])["hash"]
     kept = lines[:-2]
-    kept[-1] = '{"hash": "' + anchored_head + '", ' + kept[-1][1:]
+    kept[-1] = '{"hash": "' + old_last + '", ' + kept[-1][1:]
     _put_lines(path, kept)
 
     report = _verify(path)
     assert report.broken is not None
     assert report.broken.where == f"{path}:3"
     assert "duplicate key" in report.broken.reason
-    assert audit_verify.main([str(path), "--expect-head", anchored_head]) == 1
-    capsys.readouterr()
 
 
 async def test_a_duplicate_key_at_any_depth_is_a_break(tmp_path: Path) -> None:
@@ -868,31 +866,6 @@ async def test_a_duplicate_key_at_any_depth_is_a_break(tmp_path: Path) -> None:
     assert report.broken is not None
     assert report.broken.where == f"{path}:2"
     assert "duplicate key" in report.broken.reason
-
-
-async def test_expect_head_and_anchor(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    path = tmp_path / "a.jsonl"
-    lines = await _write_log(path, 4)
-    head = json.loads(lines[-1])["hash"]
-    earlier = json.loads(lines[1])["hash"]
-
-    # --expect-head: the head must be exactly this hash.
-    assert audit_verify.main([str(path), "--expect-head", head]) == 0
-    assert audit_verify.main([str(path), "--expect-head", earlier]) == 1
-    assert "HEAD MISMATCH" in capsys.readouterr().out
-
-    # --anchor: this hash must still be a verified record; later records may follow.
-    assert audit_verify.main([str(path), "--anchor", earlier]) == 0
-    assert f"anchor {earlier} found at {path}:2, 2 records after it" in capsys.readouterr().out
-
-    # Cut the tail back past the anchor: both checks now fail.
-    _put_lines(path, lines[:1])
-    assert _verify(path).ok, "a truncated tail is still a valid chain on its own"
-    assert audit_verify.main([str(path), "--anchor", earlier]) == 1
-    out = capsys.readouterr().out
-    assert "ANCHOR NOT FOUND" in out
-    assert out.startswith(f"audit-verify: FAILED {path} (the chain itself is intact")
-    assert audit_verify.main([str(path), "--expect-head", head]) == 1
 
 
 @pytest.mark.parametrize("field_name", [f.name for f in dataclasses.fields(AuditEvent)])
@@ -1003,7 +976,7 @@ async def test_a_segment_start_mid_chain_must_carry_a_label_that_fits(
         assert report.broken is not None and report.broken.where == f"{path}:3"
 
 
-@pytest.mark.parametrize("chain_start", ["bogus", None])
+@pytest.mark.parametrize("chain_start", ["bogus", None, CHAIN_START_AFTER_UNREADABLE])
 async def test_the_first_record_must_carry_a_known_label(
     tmp_path: Path, chain_start: str | None
 ) -> None:
@@ -1080,3 +1053,184 @@ def test_canonical_form_of_floats_is_pinned() -> None:
     assert record_hash(record) == hashlib.sha256(expected).hexdigest()
     # And the values survive the trip through the file unchanged.
     assert audit_chain.canonical_bytes(audit_chain.normalize(record)) == expected
+
+
+# ---------------------------------------------------------------------------
+# Review round 2
+# ---------------------------------------------------------------------------
+
+NOT_COVERED = audit_verify.NOT_COVERED
+
+
+def _json_out(path: Path, capsys: pytest.CaptureFixture[str]) -> str:
+    audit_verify.main([str(path), "--json"])
+    return capsys.readouterr().out
+
+
+async def test_garbage_then_restart_then_deleting_everything_above_is_a_break(
+    tmp_path: Path,
+) -> None:
+    """The second review's repro, with genuine writer output throughout.
+
+    Append any non-JSON line to a live log, wait for a restart (the server
+    writes a real after_unreadable record), then delete everything above that
+    record. after_unreadable as the first line of a file must not pass.
+    """
+    path = tmp_path / "a.jsonl"
+    await _write_log(path, 3)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write("garbage\n")
+    log = AuditLog(sink=FileSink(path))
+    await _emit(log, 3)
+    await _emit(log, 4)
+    lines = path.read_text().splitlines()
+    assert json.loads(lines[4])["chain_start"] == CHAIN_START_AFTER_UNREADABLE
+
+    report = _report_for(path, lines[4:])
+    assert report.broken is not None
+    assert report.broken.where == f"{path}:1"
+    assert "after_unreadable" in report.broken.reason
+
+
+async def test_after_unreadable_after_a_parseable_line_is_a_break(tmp_path: Path) -> None:
+    path = tmp_path / "a.jsonl"
+    lines = await _write_log(path, 1)
+    restart = _genesis(lines[0], CHAIN_START_AFTER_UNREADABLE)
+    report = _report_for(path, [_legacy_line(), restart])
+    assert report.broken is not None and report.broken.where == f"{path}:2"
+
+
+@pytest.mark.parametrize("content", ["garbage\n", "garbage\nmore garbage", '{"ts": "x'])
+async def test_a_file_holding_only_non_json_gets_after_unreadable_and_verifies(
+    tmp_path: Path, content: str
+) -> None:
+    """The writer's honest label, and the verifier agrees: damage, not a break."""
+    path = tmp_path / "a.jsonl"
+    path.write_text(content)
+    log = AuditLog(sink=FileSink(path))
+    await _emit(log, 0)
+
+    lines = path.read_text().splitlines()
+    assert json.loads(lines[-1])["chain_start"] == CHAIN_START_AFTER_UNREADABLE
+    report = _verify(path)
+    assert report.ok, report.broken
+    assert len(report.damaged) == len(lines) - 1
+
+
+@pytest.mark.parametrize("content", [b"\xef\xbb\xbf", b"\xef\xbb\xbf\n\n"])
+async def test_a_file_holding_only_a_byte_order_mark_is_a_new_log(
+    tmp_path: Path, content: bytes
+) -> None:
+    path = tmp_path / "a.jsonl"
+    path.write_bytes(content)
+    assert resume_from_file(path).chain_start == CHAIN_START_NEW_LOG
+    log = AuditLog(sink=FileSink(path))
+    await _emit(log, 0)
+    report = _verify(path)
+    assert report.ok, report.broken
+    assert report.segment_starts[0][1] == CHAIN_START_NEW_LOG
+
+
+async def test_two_crashes_in_a_row_leave_two_damaged_lines(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A second crash while writing the first record after a crash."""
+    path = tmp_path / "a.jsonl"
+    await _write_log(path, 2)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write('{"ts": "2026-11-27T00:00:00.000Z", "tool": "list_dev')  # crash 1
+    with path.open("a", encoding="utf-8") as fh:
+        # What the restarted writer gets out before crash 2: its newline, then
+        # part of its first record.
+        fh.write('\n{"args": {}, "chain_start": "after_unrea')
+    log = AuditLog(sink=FileSink(path))
+    await _emit(log, 9)
+
+    report = _verify(path)
+    assert report.ok, report.broken
+    assert report.damaged == [f"{path}:3", f"{path}:4"]
+    assert audit_verify.main([str(path)]) == 3
+    assert "damaged lines: 2" in capsys.readouterr().out
+
+
+async def test_replacing_the_last_record_with_garbage_is_not_a_clean_pass(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "a.jsonl"
+    lines = await _write_log(path, 3)
+    _put_lines(path, [*lines[:-1], "garbage"])
+    log = AuditLog(sink=FileSink(path))
+    await _emit(log, 9)
+
+    assert audit_verify.main([str(path)]) == 3
+    assert "an unknown number of records" in capsys.readouterr().out
+
+
+async def test_damage_needs_a_restart_in_the_same_file(tmp_path: Path) -> None:
+    """A fragment at the end of one file is not excused by the next file's start."""
+    older, newer = tmp_path / "a.jsonl.1", tmp_path / "a.jsonl"
+    lines = await _write_log(older, 2)
+    _put_lines(older, [*lines, "garbage"])
+    restart = _genesis((await _write_log(tmp_path / "x.jsonl", 1))[0], CHAIN_START_AFTER_UNREADABLE)
+    _put_lines(newer, [restart])
+
+    report = _verify([older, newer])
+    assert report.broken is not None
+    assert report.broken.where == f"{older}:3"
+
+
+async def test_damage_needs_a_genesis_restart_after_it(tmp_path: Path) -> None:
+    """A fragment followed by a record labelled after_unreadable that continues the chain."""
+    path = tmp_path / "a.jsonl"
+    lines = await _write_log(path, 3)
+    relabelled = json.loads(lines[2])
+    relabelled["chain_start"] = CHAIN_START_AFTER_UNREADABLE
+    report = _report_for(path, [lines[0], lines[1], "garbage", _forge(relabelled)])
+    assert report.broken is not None
+    assert report.broken.where == f"{path}:3"
+    assert report.broken.reason.startswith("unreadable line")
+
+
+@pytest.mark.parametrize("label", [CHAIN_START_PROCESS_START, CHAIN_START_NEW_LOG, None])
+async def test_damage_needs_the_after_unreadable_label(tmp_path: Path, label: str | None) -> None:
+    path = tmp_path / "a.jsonl"
+    lines = await _write_log(path, 3)
+    report = _report_for(path, [lines[0], "garbage", _genesis(lines[1], label)])
+    assert report.broken is not None
+    assert report.broken.where == f"{path}:2"
+
+
+@pytest.mark.parametrize("before", ["unchained", "damaged"])
+async def test_new_log_is_valid_only_as_the_first_record_of_a_file(
+    tmp_path: Path, before: str
+) -> None:
+    path = tmp_path / "a.jsonl"
+    lines = await _write_log(path, 1)
+    first = _legacy_line() if before == "unchained" else "garbage"
+    report = _report_for(path, [first, lines[0]])
+    assert report.broken is not None
+    assert report.broken.where == f"{path}:{1 if before == 'damaged' else 2}"
+    # The same record as the first line of its file is fine.
+    assert _report_for(path, [lines[0]]).ok
+
+
+def test_a_server_that_cannot_read_its_own_log_starts_a_segment_the_verifier_rejects(
+    tmp_path: Path,
+) -> None:
+    """Pinned: an unreadable file cannot be vouched for, so the restart is a break.
+
+    resume_from_file never raises. A directory stands in for a file the
+    server cannot read.
+    """
+    assert resume_from_file(tmp_path).chain_start == CHAIN_START_AFTER_UNREADABLE
+
+
+async def test_damage_then_an_edited_restart_is_reported_as_the_edit(tmp_path: Path) -> None:
+    path = tmp_path / "a.jsonl"
+    lines = await _write_log(path, 3)
+    restart = json.loads(_genesis(lines[1], CHAIN_START_AFTER_UNREADABLE))
+    restart["tool"] = "delete_vlan"  # edited after sealing
+    report = _report_for(path, [lines[0], "garbage", json.dumps(restart, sort_keys=True)])
+    assert report.broken is not None
+    assert report.broken.where == f"{path}:3"
+    assert report.broken.reason.startswith("edited record")
