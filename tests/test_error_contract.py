@@ -546,3 +546,45 @@ async def test_composite_rollback_failure_is_an_error_with_secrets_redacted(
         assert GUEST_SECRET not in result.content[0].text
     assert new.structured_content == json.loads(new.content[0].text)
     assert GUEST_SECRET not in json.dumps(new.structured_content)
+
+
+# ---------------------------------------------------------------------------
+# diagnose_site: a failed read inside a successful diagnosis is not an error
+# ---------------------------------------------------------------------------
+
+
+async def test_diagnose_site_with_a_failed_read_is_a_success(
+    stub_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The read's error sits inside ``checks``; the diagnosis itself succeeded.
+
+    tests/test_error_envelope_producers.py exempts ``check["error"] = ...`` in
+    ``build_report`` by name. This proves at runtime that the exemption is
+    right: the result is not an envelope and must not set isError.
+    """
+
+    async def clients_fail(_self: Any) -> Any:
+        raise UniFiError("HTTP 500 reading clients")
+
+    monkeypatch.setattr(StubBackend, "list_clients", clients_fail)
+    server = build_server(stub_settings.model_copy(update={"mcp_transport": "stdio"}))
+    old = await server.call_tool("diagnose_site", {})
+    async with Client(server) as client:
+        new = await client.call_tool("diagnose_site", {}, raise_on_error=False)
+    for result in (old, new):
+        assert result.is_error is False
+        payload = json.loads(result.content[0].text)
+        assert "error" not in payload
+        failed = [c for c in payload["checks"] if not c["ok"]]
+        assert [c["source"] for c in failed] == ["list_clients"], payload["checks"]
+        assert "HTTP 500 reading clients" in failed[0]["error"]
+
+
+async def test_diagnose_site_unknown_controller_is_an_error(stub_settings: Settings) -> None:
+    server = build_server(stub_settings.model_copy(update={"mcp_transport": "stdio"}))
+    old = await server.call_tool("diagnose_site", {"controller": NOPE})
+    async with Client(server) as client:
+        new = await client.call_tool("diagnose_site", {"controller": NOPE}, raise_on_error=False)
+    for result, era in ((old, "text-only era"), (new, "structured era")):
+        env = _assert_envelope(result, where=f"diagnose_site unknown controller ({era})")
+        assert "nope" in env["error"]

@@ -22,7 +22,14 @@ Each one must also carry ``"stub_mode"``, unless it is
 
 * a logging ``extra=`` mapping, which is a log record, never tool output; or
 * nested in a list, a per-item container or another dict, and listed in
-  :data:`NESTED_ALLOWLIST` with the reason it is not a top-level result.
+  :data:`NESTED_ALLOWLIST` with the reason it is not a top-level result; or
+* a module-level constant named in :data:`LOOKUP_TABLES` (a table keyed by a
+  controller status word, never returned); or
+* a ``var["error"] = ...`` store into the exact variable named in
+  :data:`PER_ITEM_STORES` (a per-item record inside a successful result).
+
+The last two are keyed by name, not by enclosing function, so another
+``error`` payload added to the same module or function is still checked.
 
 WHAT THIS CANNOT SEE
 --------------------
@@ -56,6 +63,23 @@ NESTED_ALLOWLIST: dict[tuple[str, str], str] = {
     ("modules/network/clients.py", "update_clients"): "per-item results entries",
 }
 
+#: ``(file, module-level constant name)`` -> why that constant is a lookup
+#: table and not a payload. Only a dict assigned straight to that name at
+#: module level matches; a stale entry fails the test.
+LOOKUP_TABLES: dict[tuple[str, str], str] = {
+    ("modules/network/diagnose.py", "_STATUS_RANK"): "status-word rank table, never returned",
+    ("modules/network/diagnose.py", "_STATUS_SEVERITY"): "status-word severity map, never returned",
+}
+
+#: ``(file, enclosing function, variable)`` -> why ``variable["error"] = ...``
+#: there is a per-item record. Only that variable in that function matches, so
+#: an envelope built any other way in the same function is still checked.
+PER_ITEM_STORES: dict[tuple[str, str, str], str] = {
+    # One entry per read in diagnose_site's ``checks`` list of a successful
+    # diagnosis, like get_console_health's probe errors.
+    ("modules/network/diagnose.py", "build_report", "check"): "per-read checks entry",
+}
+
 #: The producers that must be found, so the test cannot pass by scanning
 #: nothing. ``(file, innermost function, outer function or "")``.
 KNOWN_PRODUCERS: frozenset[tuple[str, str, str]] = frozenset(
@@ -82,6 +106,8 @@ class Site:
     has_stub_mode: bool
     is_log_extra: bool
     nested: bool
+    constant: str | None = None  # module-level ``NAME = {...}`` target
+    store_target: str | None = None  # ``name`` in ``name["error"] = ...``
 
     @property
     def where(self) -> str:
@@ -140,6 +166,22 @@ def _is_nested(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> bool:
     )
 
 
+def _module_constant(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> str | None:
+    """The name a dict is assigned to at module level, else None."""
+    parent = parents.get(node)
+    if isinstance(parent, ast.AnnAssign) and parent.value is node:
+        targets: list[ast.expr] = [parent.target]
+    elif isinstance(parent, ast.Assign) and parent.value is node:
+        targets = list(parent.targets)
+    else:
+        return None
+    if not isinstance(parents.get(parent), ast.Module):
+        return None
+    if len(targets) == 1 and isinstance(targets[0], ast.Name):
+        return targets[0].id
+    return None
+
+
 def _sites() -> list[Site]:
     sites: list[Site] = []
     for path in SCANNED:
@@ -155,7 +197,18 @@ def _sites() -> list[Site]:
             ):
                 # ``x["error"] = ...``: the container's other keys are not
                 # visible here, so it never counts as carrying stub_mode.
-                sites.append(Site(rel, node.lineno, _functions(node, parents), False, False, False))
+                target = node.value.id if isinstance(node.value, ast.Name) else None
+                sites.append(
+                    Site(
+                        rel,
+                        node.lineno,
+                        _functions(node, parents),
+                        False,
+                        False,
+                        False,
+                        store_target=target,
+                    )
+                )
                 continue
             keys = _keys(node)
             if not keys or "error" not in keys:
@@ -168,6 +221,7 @@ def _sites() -> list[Site]:
                     "stub_mode" in keys,
                     _is_log_extra(node, parents),
                     _is_nested(node, parents),
+                    constant=_module_constant(node, parents),
                 )
             )
     return sites
@@ -188,13 +242,26 @@ def test_every_error_payload_carries_stub_mode() -> None:
     """A failure envelope without stub_mode would reach clients with isError false."""
     offenders: list[str] = []
     used: set[tuple[str, str]] = set()
+    used_tables: set[tuple[str, str]] = set()
+    used_stores: set[tuple[str, str, str]] = set()
     for site in _sites():
         if site.has_stub_mode or site.is_log_extra:
             continue
-        key = (site.file, site.functions[0] if site.functions else "")
+        func = site.functions[0] if site.functions else ""
+        key = (site.file, func)
         if site.nested and key in NESTED_ALLOWLIST:
             used.add(key)
             continue
+        if not site.functions and site.constant is not None:
+            table = (site.file, site.constant)
+            if table in LOOKUP_TABLES:
+                used_tables.add(table)
+                continue
+        if site.store_target is not None:
+            store = (site.file, func, site.store_target)
+            if store in PER_ITEM_STORES:
+                used_stores.add(store)
+                continue
         offenders.append(site.where)
     assert offenders == [], (
         "these build an 'error' payload without 'stub_mode', so the response middleware "
@@ -203,6 +270,10 @@ def test_every_error_payload_carries_stub_mode() -> None:
     )
     stale = set(NESTED_ALLOWLIST) - used
     assert not stale, f"NESTED_ALLOWLIST entries that match nothing: {sorted(stale)}"
+    stale_tables = set(LOOKUP_TABLES) - used_tables
+    assert not stale_tables, f"LOOKUP_TABLES entries that match nothing: {sorted(stale_tables)}"
+    stale_stores = set(PER_ITEM_STORES) - used_stores
+    assert not stale_stores, f"PER_ITEM_STORES entries that match nothing: {sorted(stale_stores)}"
 
 
 def test_nested_rule_does_not_exempt_a_top_level_payload() -> None:
@@ -224,3 +295,33 @@ def test_nested_rule_does_not_exempt_a_top_level_payload() -> None:
     assert sorted(shapes) == [(False, False), (False, True), (True, False), (True, False)]
     call = ast.parse("dict(error='x')").body[0].value  # type: ignore[attr-defined]
     assert _keys(call) == {"error"}
+
+
+def test_name_keyed_exemptions_do_not_cover_their_neighbours() -> None:
+    """Control: the two name-keyed tables exempt exactly the named target."""
+    source = (
+        "_STATUS_RANK = {'error': 0}\n"  # listed constant
+        "OTHER = {'error': 'x'}\n"  # module constant, not listed
+        "def build_report():\n"
+        "    check['error'] = 'x'\n"  # listed store
+        "    report['error'] = 'x'\n"  # same function, other variable
+        "    local = {'error': 'x'}\n"  # same function, a literal
+    )
+    tree = ast.parse(source)
+    parents = _parents(tree)
+    constants = sorted(
+        str(_module_constant(n, parents))
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Dict) and "error" in (_keys(n) or set())
+    )
+    # ``local`` sits inside a function, so it is not a module constant.
+    assert constants == ["None", "OTHER", "_STATUS_RANK"]
+    stores = sorted(
+        n.value.id
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Subscript)
+        and isinstance(n.ctx, ast.Store)
+        and isinstance(n.value, ast.Name)
+    )
+    assert stores == ["check", "report"]
+    assert ("modules/network/diagnose.py", "build_report", "report") not in PER_ITEM_STORES
