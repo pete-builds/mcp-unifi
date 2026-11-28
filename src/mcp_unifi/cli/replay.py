@@ -105,20 +105,6 @@ class _DiscardSink:
         return None
 
 
-class _ReplayMarkedSink:
-    """Write to the configured sink, marking each record as a replayed call."""
-
-    def __init__(self, inner: audit.Sink) -> None:
-        self._inner = inner
-
-    async def write(self, event: AuditEvent) -> None:
-        event.client_id = REPLAY_CLIENT_ID
-        await self._inner.write(event)
-
-    async def aclose(self) -> None:
-        await self._inner.aclose()
-
-
 def _build_server(*, stub_mode: bool) -> Any:
     """Build the in-process server replay calls, and point the audit log at the right sink.
 
@@ -134,10 +120,16 @@ def _build_server(*, stub_mode: bool) -> Any:
     from mcp_unifi.server import build_server  # local import on purpose
 
     settings = Settings(stub_mode=stub_mode, log_format="text", mcp_transport="stdio")
-    sink: audit.Sink = (
-        _DiscardSink() if stub_mode else _ReplayMarkedSink(audit.get_audit_log().sink)
-    )
-    audit.set_audit_log(AuditLog(sink=sink))
+    if stub_mode:
+        audit.set_audit_log(AuditLog(sink=_DiscardSink()))
+    else:
+        # The replay mark is applied by the audit log before the record is
+        # hashed. A sink wrapper that rewrote ``client_id`` on the way out
+        # (how this used to work) would write a record whose hash no longer
+        # matches it, and every replayed record would read as tampered.
+        audit.set_audit_log(
+            AuditLog(sink=audit.get_audit_log().sink, client_id_override=REPLAY_CLIENT_ID)
+        )
     return build_server(settings)
 
 

@@ -52,6 +52,11 @@ Design notes
   client. Another client presenting the token gets the same answer as an
   unknown token, and the token is left in place, so a wrong-client attempt
   can neither execute the owner's change nor cancel it.
+* Each pending action remembers the ``event_id`` of the audited preview call
+  that queued it, as ``operation_id``. ``confirm_destructive_action`` files
+  its own audit record under that id, so the preview and the executed change
+  share one ``operation_id`` in the log. The id lives here, server side, and
+  never in the token: the token stays an opaque UUID4.
 * Identity for this check comes from :func:`current_client_id`, not the
   audit helper. The audit helper turns a failed lookup into ``None`` so
   logging never breaks; here that would make two failed lookups look like
@@ -68,6 +73,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from mcp_unifi.modules._audit import current_operation_id
 from mcp_unifi.modules.network._common import dump_json
 from mcp_unifi.redaction import redact
 
@@ -135,6 +141,9 @@ class PendingAction:
             ``None`` when there is no authenticated client (stdio, auth off).
         issuer_known: False when the identity lookup failed at preview time.
             Such a token can never be confirmed; the caller previews again.
+        operation_id: ``event_id`` of the audited preview call that queued
+            this action, or ``None`` when it was queued outside an audited
+            call (tests, direct registry use). The confirm record carries it.
     """
 
     token: str
@@ -145,6 +154,7 @@ class PendingAction:
     executor: Callable[[], Awaitable[str]] = field(repr=False)
     issuer: str | None = None
     issuer_known: bool = True
+    operation_id: str | None = None
 
     def expires_at_iso(self) -> str:
         """Return ``expires_at`` formatted as ISO 8601 UTC."""
@@ -242,6 +252,7 @@ class PendingActionsRegistry:
             executor=executor,
             issuer=issuer,
             issuer_known=issuer_known,
+            operation_id=current_operation_id(),
         )
         self._actions[token] = pending
         return pending
